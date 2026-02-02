@@ -146,6 +146,8 @@ All critical decisions have been finalized:
 8. **English/Chinese only** - No localization
 9. **Basic animations** - No advanced effects
 10. **No sound** - Silent gameplay
+11. **Ace level failure counter** - 3 failed attempts (losses or 1-4 wins) drops team from Ace to Level 2
+12. **Ace win requirement** - Must finish 1-3 or better to win game at Ace level (1-4 win insufficient)
 
 ---
 

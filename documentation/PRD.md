@@ -74,7 +74,7 @@ A minimal, fast Guan Dan card game for iOS where players with existing rules kno
 - **1-4 win:** +1 level (4 gives card to 1)
 - **1-3 win:** +2 levels (4 gives card to 1)
 - **1-2 win (双上):** +3 levels (4 gives to 1, 3 gives to 2)
-- First hand: Always level 2
+- First round: Always level 2
 
 #### Tribute Card Distribution (Who Gives to Whom)
 - **1-4 win:** 4th place player gives card to 1st place player
@@ -86,7 +86,7 @@ A minimal, fast Guan Dan card game for iOS where players with existing rules kno
 - If 4 gave ♠K and 3 gave ♠Q → Player 4 goes first
 - If both gave same card (e.g., both gave ♠K) → Randomly choose one to go first
 
-#### Tribute System (2nd hand onwards)
+#### Tribute System (2nd round onwards)
 - Losers give highest non-wild card to winners
 - Winners return unwanted cards in exchange
 - Exception: If players hold both red jokers, tribute cancelled
@@ -94,19 +94,31 @@ A minimal, fast Guan Dan card game for iOS where players with existing rules kno
 
 ### 3.3 Leader Selection (Tribute-Based) ✅
 
-**First Hand:**
+**First Round:**
 - Random player chosen by server
 
-**Subsequent Hands (After Tribute):**
-- **Leader determined by who gave the highest tribute card**
-- If 4 gave ♠K and 3 gave ♠Q → Player 4 leads (highest card given)
-- If both gave identical cards → Randomly select one to lead
-- This replaces the old "winner leads" rule
+**Subsequent Rounds (After Tribute):**
 
-**For 1-2 Win Scenario:**
-- Player 4 gives card to Player 1, Player 3 gives card to Player 2
-- Compare: if 4's card > 3's card → Player 4 leads
-- If equal → Random selection
+**For 1-2 Finish (Two Tribute Exchanges):**
+- Player 4 gives card to Player 1
+- Player 3 gives card to Player 2
+- **Leader = player who gave HIGHEST tribute card**
+  - If 4's card > 3's card → Player 4 leads
+  - If 3's card > 4's card → Player 3 leads
+  - If equal cards → Random selection between them
+
+**For 1-3 and 1-4 Finish (One Tribute Exchange):**
+- Only Player 4 gives card (to Player 1)
+- **If Player 4 has both red jokers 🔴🔴:**
+  - Tribute cancelled (no exchange)
+  - Player 1 (previous round winner) leads next round
+- **If Player 4 does NOT have both red jokers:**
+  - Tribute proceeds (Player 4 gives highest non-wild card to Player 1)
+  - Player 4 leads next round (they gave the only tribute card)
+
+**If Tribute Cancelled (Red Jokers):**
+- Previous round winner leads
+- If first round, random selection
 
 ### 3.4 Complete Game Rules Reference (Detailed)
 
@@ -269,17 +281,61 @@ This section provides comprehensive rule specifications for implementation. All 
   - **1-4 finish** (same team 1st & 4th): +1 level
 - No other patterns possible (round ends when one team gets 1st & 2nd)
 
-**Round End Conditions:**
-- Round ends IMMEDIATELY when ONE TEAM finishes 1st & 2nd
-- If NS team gets positions 1 & 2 → round ends, game freezes
-- Remaining EW players don't continue playing
-- 3rd/4th order determined later via tribute card comparison (see Tribute System)
+**Round End Conditions (All Patterns):**
+- Round ends when **3 players have finished** (run out of cards)
+- 4th player's remaining cards are irrelevant - 4th place is automatic
+- **Exception:** 1-2 finish may end when one team gets 1st & 2nd (before 3 players finish)
+
+**Finish Pattern Examples:**
+
+**1-2 Finish (Same team 1st & 2nd):**
+- P1(NS) finishes 1st, P3(NS) finishes 2nd → round ends immediately
+- P2 and P4 don't continue - 3rd/4th determined by tribute cards (see Section 3.4.6)
+
+**1-3 Finish:**
+- P1(NS) finishes 1st → 0 cards left
+- P2(EW) finishes 2nd → 0 cards left
+- P3(NS) finishes 3rd → 0 cards left
+- Round ends, P4(EW) is automatically 4th place (even if they have 10+ cards remaining)
+
+**1-4 Finish:**
+- P1(NS) finishes 1st → 0 cards left
+- P2(EW) finishes 2nd → 0 cards left
+- P3(NS) finishes 3rd → 0 cards left
+- Round ends, P4(EW) is automatically 4th place
 
 **Teams Start at Same Level:**
 - Both partnerships always start at level 2
 - Levels can diverge throughout game
 - No catch-up mechanics (intended)
-- Game ends when one team reaches and WINS at Ace level
+
+**Ace Level Rules (Special End-Game Mechanic):**
+
+**Winning at Ace:**
+- Team at Ace level must finish **1-3 or better** to win the game
+- **1-4 finish at Ace:** Team stays at Ace, game continues (insufficient victory)
+- **1-2 or 1-3 finish at Ace:** Game ends, team wins!
+
+**Ace Failure Counter:**
+- Each team at Ace has a "failure counter" (starts at 0)
+- **Counter increments +1 when:**
+  - Team loses round at Ace (any finish pattern except 1-3 or 1-2)
+  - Team wins 1-4 at Ace (not good enough for game victory)
+- **Counter reaches 3:** Team drops from Ace to Level 2 (complete reset)
+- **Counter resets to 0 when:**
+  - Team wins 1-3 or 1-2 at Ace (game ends)
+  - Team drops to level 2
+
+**Ace Level Examples:**
+- Team at Ace: Loses round → counter = 1, stays at Ace
+- Team at Ace: Wins 1-4 → counter = 2, stays at Ace (1-4 not sufficient)
+- Team at Ace: Wins 1-3 → Game ends, team wins!
+- Team at Ace: Loss, Loss, Loss → counter = 3 → drop to Level 2
+
+**Strategic Implications:**
+- At Ace level, 1-4 win is NOT considered success (counts as failure)
+- Teams have maximum 3 attempts to achieve 1-3+ finish before reset
+- Prevents indefinite stalemate at Ace level
 
 #### 3.4.6 Tribute System (Complete Rules)
 
@@ -295,10 +351,13 @@ This section provides comprehensive rule specifications for implementation. All 
 - **1-2 finish:** 4th gives to 1st, 3rd gives to 2nd (two exchanges)
 
 **Tribute Cancellation:**
-- If ONE loser has both red jokers (🔴🔴) → ALL tributes cancelled
+- If losers COLLECTIVELY have both red jokers → ALL tributes cancelled
+- **Collective possession examples:**
+  - **Scenario 1:** One loser has 🔴🔴 → tribute cancelled
+  - **Scenario 2:** Two losers each have 🔴 → tribute cancelled (collective)
 - Applies to entire tribute phase (both exchanges in 1-2 win)
 - Joker power hierarchy: Red jokers (100) > Level cards (98)
-- If cancelled: Skip directly to leader selection
+- If cancelled: Skip directly to leader selection (previous round winner leads)
 
 **3rd/4th Place Determination (1-2 Finish Only):**
 - For 1-2 finish: Round ends before 3rd/4th finish naturally
@@ -401,6 +460,7 @@ This section provides comprehensive rule specifications for implementation. All 
 
 ### 4.2 Disconnect & Reconnection ✅
 
+**During Gameplay (Active Turns):**
 - **Disconnect Detection:** Player AFK after 30 seconds
 - **Reconnect Window:** 30 seconds to rejoin
 - **If Reconnects:** Game resumes from exact state
@@ -408,6 +468,14 @@ This section provides comprehensive rule specifications for implementation. All 
   - All players returned to lobby
   - Notification: "[Player X] disconnected - game cancelled"
   - Session not saved
+
+**During Tribute Phase:**
+- If player disconnects while selecting tribute card:
+  - **No 30-second countdown**
+  - **No game cancellation**
+  - Server auto-selects their highest non-wild card
+  - Game continues normally after auto-selection
+- Rationale: Tribute is deterministic (highest card rule) so can be safely automated
 
 ### 4.3 Game Actions
 

@@ -689,6 +689,44 @@ eas submit --platform ios
 - Duplicate plays: Server deduplicates
 - Race conditions: Server enforces strict turn order
 
+### Server Rejection of Client Plays
+
+**Scenario:** Client-validated play is rejected by server due to state desync
+
+**Causes:**
+- Network latency causes client to have stale game state
+- Client thinks it's their turn, server knows it's not
+- Client validation bug (rare edge case)
+- Player attempts to play out of turn
+
+**Handling:**
+1. Server returns error: `{ error: "INVALID_PLAY", reason: "Not your turn", gameState: {...} }`
+2. Client receives rejection
+3. Display to user: "Connection issue - refreshing game state"
+4. Force client to re-sync from server's authoritative state
+5. Update all UI components with fresh state
+6. Resume gameplay from corrected state
+
+**Implementation:**
+```typescript
+onServerRejection(error: ServerError) {
+  // Show user-friendly message
+  showToast("Connection issue - refreshing game state");
+
+  // Force re-sync from server
+  const freshState = await fetchGameState();
+  gameStore.setState(freshState);
+
+  // Log for debugging (but don't show to user)
+  console.error("Server rejection:", error);
+}
+```
+
+**User Experience:**
+- Never show technical error messages ("Invalid play rejected")
+- Always treat as network sync issue to avoid frustration
+- Game continues seamlessly after refresh
+
 ### Crash Recovery
 - Game state auto-saved after every turn
 - If app crashes: Rejoin room to resume

@@ -15,31 +15,42 @@ import torch
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from guandan.q_network import QNetwork, get_device
+from guandan.q_network import QNetworkLSTM, get_device
 from guandan.train import evaluate
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate Guan Dan agent")
     parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--opponent", type=str, default="random", choices=["random", "heuristic"])
+    parser.add_argument("--opponent", type=str, default="random", choices=["random", "greedy", "heuristic", "strategic"])
     parser.add_argument("--games", type=int, default=1000)
+    parser.add_argument("--lstm-hidden", type=int, default=128)
+    parser.add_argument("--mlp-hidden", type=int, default=512)
     args = parser.parse_args()
 
     device = get_device()
     print(f"Device: {device}")
 
-    q_net = QNetwork().to(device)
+    q_lead = QNetworkLSTM(lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden).to(device)
+
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=True)
-    q_net.load_state_dict(ckpt["model_state_dict"])
-    q_net.eval()
+    q_lead.load_state_dict(ckpt["lead_state_dict"])
+    q_follow.load_state_dict(ckpt["follow_state_dict"])
+    q_lead.eval()
+    q_follow.eval()
 
     print(f"Loaded checkpoint: {args.checkpoint}")
     if "episode" in ckpt:
         print(f"  Trained for {ckpt['episode']} episodes")
 
-    wr = evaluate(q_net, device, n_games=args.games, opponent=args.opponent)
-    print(f"\nWin rate vs {args.opponent}: {wr:.1%} ({args.games} games)")
+    result = evaluate(q_lead, q_follow, device, n_games=args.games, opponent=args.opponent)
+    print(f"\nResults vs {args.opponent} ({args.games} games):")
+    print(f"  Win rate:   {result['winrate']:.1%}")
+    print(f"  Avg reward: {result['avg_reward']:+.2f}")
+    print(f"  Finish 1-2: {result['finish_12']}")
+    print(f"  Finish 1-3: {result['finish_13']}")
+    print(f"  Finish 1-4: {result['finish_14']}")
 
 
 if __name__ == "__main__":

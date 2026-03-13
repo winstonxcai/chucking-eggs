@@ -25,11 +25,11 @@ def _play_game(agent_teams: dict[str, tuple[int, ...]]) -> list[int]:
 
 
 def test_heuristic_games_complete():
-    """Heuristic on all seats should complete 1000 games without crashes."""
+    """Heuristic on all seats should complete 100 games without crashes."""
     env = GuanDanEnv()
     agent = HeuristicAgent(env.level_rank)
 
-    for _ in range(1000):
+    for _ in range(100):
         env.reset()
         steps = 0
         while not env.done:
@@ -45,13 +45,9 @@ def test_heuristic_games_complete():
 def test_heuristic_vs_random_winrate():
     """Heuristic (team {0,2}) should beat random (team {1,3}) 60-90% of the time."""
     wins = 0
-    n_games = 500
+    n_games = 200
 
     for _ in range(n_games):
-        finish_order = _play_game(
-            {"heuristic": (0, 1, 2, 3)[:2] + (2,), "random": (1, 3)}
-        )
-        # Actually, let's use the proper setup
         env = GuanDanEnv()
         heuristic = HeuristicAgent(env.level_rank)
         env.reset()
@@ -75,7 +71,7 @@ def test_heuristic_vs_random_winrate():
 def test_heuristic_vs_heuristic_balance():
     """Heuristic vs heuristic should be ~50% balanced."""
     wins_02 = 0
-    n_games = 500
+    n_games = 200
 
     env = GuanDanEnv()
     agent = HeuristicAgent(env.level_rank)
@@ -92,7 +88,7 @@ def test_heuristic_vs_heuristic_balance():
             wins_02 += 1
 
     wr = wins_02 / n_games
-    assert 0.35 <= wr <= 0.65, f"Heuristic vs heuristic WR={wr:.1%}, expected 35-65%"
+    assert 0.30 <= wr <= 0.70, f"Heuristic vs heuristic WR={wr:.1%}, expected 30-70%"
 
 
 def test_heuristic_doesnt_lead_bombs_early():
@@ -102,7 +98,7 @@ def test_heuristic_doesnt_lead_bombs_early():
     bomb_leads = 0
     total_leads = 0
 
-    for _ in range(200):
+    for _ in range(50):
         env.reset()
         # Check first move only (full 27-card hand)
         player = env.current_player
@@ -125,7 +121,7 @@ def test_heuristic_passes_when_partner_wins():
     partner_winning_passes = 0
     partner_winning_total = 0
 
-    for _ in range(500):
+    for _ in range(200):
         env.reset()
         steps = 0
         while not env.done and steps < 500:

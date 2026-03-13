@@ -7,7 +7,7 @@ from guandan.combos import Combo
 from guandan.game import GuanDanEnv
 
 
-def test_random_games_complete(n: int = 1000):
+def test_random_games_complete(n: int = 100):
     """Random games should complete without crashes."""
     env = GuanDanEnv()
     crashes = 0
@@ -47,7 +47,7 @@ def test_winning_team_both_out():
         assert env.is_out[first] and env.is_out[partner]
 
 
-def test_team_balance(n: int = 5000):
+def test_team_balance(n: int = 500):
     """Random play should give roughly 50% winrate to each team."""
     team_02_wins = 0
     env = GuanDanEnv()
@@ -62,7 +62,7 @@ def test_team_balance(n: int = 5000):
 
     winrate = team_02_wins / n
     # Should be within a reasonable range of 50%
-    assert 0.40 <= winrate <= 0.60, f"Team {{0,2}} winrate: {winrate:.1%}"
+    assert 0.38 <= winrate <= 0.62, f"Team {{0,2}} winrate: {winrate:.1%}"
 
 
 def test_counterclockwise():

@@ -32,6 +32,13 @@ from .game import GuanDanEnv
 from .q_network import QNetworkLSTM, get_device
 from .replay import ReplayBuffer
 
+# (opponent_name, promotion_threshold, consecutive_evals_needed)
+CURRICULUM = [
+    ("random", 0.70, 3),
+    ("greedy", 0.65, 3),
+    ("heuristic", None, None),
+]
+
 
 class _TeeLogger:
     """Write to both stdout and a log file."""
@@ -83,8 +90,12 @@ def play_episode(
     q_follow: QNetworkLSTM,
     epsilon: float,
     device: torch.device,
+    opponent=None,
 ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float]]:
     """Play one full game, collect transitions, assign terminal rewards.
+
+    RL agent plays seats {0,2}. If opponent is provided, it plays seats {1,3};
+    otherwise all 4 seats use the RL agent (self-play).
 
     Returns list of (state, action, history, hist_len, reward) tuples.
     """
@@ -95,6 +106,12 @@ def play_episode(
 
     while not env.done:
         player = env.current_player
+
+        # Opponent seats
+        if opponent is not None and player in (1, 3):
+            env.step(opponent.act(env, player))
+            continue
+
         legal = env.legal_moves()
         is_leading = env.current_trick is None
 
@@ -273,21 +290,38 @@ def train(args: argparse.Namespace) -> None:
 
     env = GuanDanEnv(level_rank=Rank.TWO)
 
-    eps_start, eps_end = 0.25, 0.02
-    eps_decay_episodes = int(args.episodes * 0.67)
-    best_heuristic_wr = 0.0
+    eps_start, eps_end = 0.30, 0.05
+    eps_decay_episodes = int(args.episodes * 0.85)
+    best_wr = 0.0
     evals_without_improvement = 0
     t0 = time.time()
+
+    # Curriculum state
+    if args.no_curriculum:
+        curriculum_stage = len(CURRICULUM) - 1  # jump to final
+        for i, (name, _, _) in enumerate(CURRICULUM):
+            if name == args.eval_opponent:
+                curriculum_stage = i
+                break
+    else:
+        curriculum_stage = 0
+    consecutive_above = 0
+    current_opponent_name = CURRICULUM[curriculum_stage][0]
+    train_opponent = make_agent(current_opponent_name, env.level_rank)
 
     n_lead_params = sum(p.numel() for p in q_lead.parameters())
     n_follow_params = sum(p.numel() for p in q_follow.parameters())
     print(f"Lead params: {n_lead_params:,}  Follow params: {n_follow_params:,}")
+    print(f"Curriculum: {' → '.join(name for name, _, _ in CURRICULUM)}")
+    print(f"Starting vs: {current_opponent_name}")
 
     for ep in range(1, args.episodes + 1):
         frac = min(1.0, ep / eps_decay_episodes)
         epsilon = eps_start + (eps_end - eps_start) * frac
 
-        trans = play_episode(env, q_lead, q_follow, epsilon, device)
+        trans = play_episode(
+            env, q_lead, q_follow, epsilon, device, opponent=train_opponent
+        )
         for s, a, h, hl, G in trans:
             buffer.push(s, a, h, hl, G)
 
@@ -306,13 +340,13 @@ def train(args: argparse.Namespace) -> None:
         if ep % args.eval_interval == 0:
             result = evaluate(
                 q_lead, q_follow, device,
-                n_games=args.eval_games, opponent=args.eval_opponent,
+                n_games=args.eval_games, opponent=current_opponent_name,
             )
             elapsed = time.time() - t0
             wr = result["winrate"]
 
-            if wr > best_heuristic_wr:
-                best_heuristic_wr = wr
+            if wr > best_wr:
+                best_wr = wr
                 evals_without_improvement = 0
             else:
                 evals_without_improvement += 1
@@ -324,9 +358,9 @@ def train(args: argparse.Namespace) -> None:
                 f"Ep {ep:>6d} | ε={epsilon:.3f} | "
                 f"L_lead={ll_str} L_follow={lf_str} | "
                 f"buf={len(buffer):>6d} | "
-                f"vs {args.eval_opponent}: {wr:.1%} "
+                f"vs {current_opponent_name}: {wr:.1%} "
                 f"(1-2:{result['finish_12']} 1-3:{result['finish_13']} 1-4:{result['finish_14']}) "
-                f"(best={best_heuristic_wr:.1%}, "
+                f"(best={best_wr:.1%}, "
                 f"pat={evals_without_improvement}/{args.patience}) | "
                 f"{elapsed:.0f}s"
             )
@@ -337,19 +371,42 @@ def train(args: argparse.Namespace) -> None:
                 "loss_lead": loss_lead,
                 "loss_follow": loss_follow,
                 "buffer_size": len(buffer),
-                "opponent": args.eval_opponent,
+                "curriculum_stage": curriculum_stage,
+                "opponent": current_opponent_name,
                 "winrate": result["winrate"],
                 "avg_reward": result["avg_reward"],
                 "finish_12": result["finish_12"],
                 "finish_13": result["finish_13"],
                 "finish_14": result["finish_14"],
-                "best_winrate": best_heuristic_wr,
+                "best_winrate": best_wr,
                 "elapsed_s": round(elapsed, 1),
             })
 
+            # Curriculum promotion check
+            _, threshold, required = CURRICULUM[curriculum_stage]
+            if threshold is not None and wr >= threshold:
+                consecutive_above += 1
+                if consecutive_above >= required:
+                    curriculum_stage += 1
+                    current_opponent_name = CURRICULUM[curriculum_stage][0]
+                    train_opponent = make_agent(
+                        current_opponent_name, env.level_rank
+                    )
+                    consecutive_above = 0
+                    best_wr = 0.0
+                    evals_without_improvement = 0
+                    print(
+                        f"\n{'='*60}\n"
+                        f"  PROMOTED to stage {curriculum_stage}: "
+                        f"vs {current_opponent_name}\n"
+                        f"{'='*60}\n"
+                    )
+            else:
+                consecutive_above = 0
+
             if evals_without_improvement >= args.patience:
                 print(
-                    f"Early stopping: no improvement in vs {args.eval_opponent} WR "
+                    f"Early stopping: no improvement in vs {current_opponent_name} WR "
                     f"for {args.patience} evals"
                 )
                 break
@@ -360,6 +417,7 @@ def train(args: argparse.Namespace) -> None:
             torch.save(
                 {
                     "episode": ep,
+                    "curriculum_stage": curriculum_stage,
                     "lead_state_dict": q_lead.state_dict(),
                     "follow_state_dict": q_follow.state_dict(),
                     "opt_lead_state_dict": opt_lead.state_dict(),
@@ -375,6 +433,7 @@ def train(args: argparse.Namespace) -> None:
     torch.save(
         {
             "episode": args.episodes,
+            "curriculum_stage": curriculum_stage,
             "lead_state_dict": q_lead.state_dict(),
             "follow_state_dict": q_follow.state_dict(),
             "opt_lead_state_dict": opt_lead.state_dict(),
@@ -383,16 +442,18 @@ def train(args: argparse.Namespace) -> None:
         final_path,
     )
     print(f"Training complete. Saved {final_path}")
+    print(f"Final curriculum stage: {curriculum_stage} ({current_opponent_name})")
 
     # Quick validation verdict
     if getattr(args, "quick", False):
         final_result = evaluate(
-            q_lead, q_follow, device, n_games=300, opponent="heuristic"
+            q_lead, q_follow, device, n_games=200, opponent="heuristic"
         )
         wr = final_result["winrate"]
         _append_metrics(run_dir, {
             "episode": args.episodes,
             "phase": "quick_validation",
+            "curriculum_stage": curriculum_stage,
             "opponent": "heuristic",
             "winrate": wr,
             "avg_reward": final_result["avg_reward"],
@@ -400,6 +461,7 @@ def train(args: argparse.Namespace) -> None:
         })
         print(f"\n=== QUICK VALIDATION RESULT ===")
         print(f"WR vs Heuristic @ {args.episodes} episodes: {wr:.1%}")
+        print(f"Curriculum reached: {current_opponent_name} (stage {curriculum_stage})")
         if wr >= 0.55:
             print("✓ LSTM is learning. Proceed with full overnight run:")
             print("  PYTHONPATH=src python -m guandan.train --episodes 30000")
@@ -450,6 +512,11 @@ def main() -> None:
              "print go/no-go verdict at end. ~4-5 hours on M1 Pro.",
     )
     parser.add_argument(
+        "--no-curriculum",
+        action="store_true",
+        help="Disable curriculum: train directly vs --eval-opponent.",
+    )
+    parser.add_argument(
         "--run-name",
         type=str,
         default=None,
@@ -463,6 +530,7 @@ def main() -> None:
     if args.quick:
         args.episodes = 8000
         args.eval_interval = 2000
+        args.eval_games = 100
 
     train(args)
 

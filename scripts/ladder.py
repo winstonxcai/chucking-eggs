@@ -5,9 +5,9 @@ and optionally MonteCarloBot. Prints a comparison table with deltas vs known
 Day 2 (flat MLP, no history) baselines.
 
 Usage:
-    python scripts/ladder.py --checkpoint model_final.pt
-    python scripts/ladder.py --checkpoint model_final.pt --skip-mc
-    python scripts/ladder.py --checkpoint model_final.pt --mc-sims 50 --mc-workers 8
+    python scripts/ladder.py --checkpoint runs/20260313_143000/model_final.pt
+    python scripts/ladder.py --checkpoint runs/20260313_143000/model_final.pt --skip-mc
+    python scripts/ladder.py --checkpoint runs/20260313_143000/model_final.pt --mc-sims 50 --mc-workers 8
 
 Expected runtime (M1 Pro, 8 cores):
     Without MC:  ~40 min

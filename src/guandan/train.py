@@ -7,8 +7,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import random
+import sys
 import time
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -27,6 +31,50 @@ from .encoding import (
 from .game import GuanDanEnv
 from .q_network import QNetworkLSTM, get_device
 from .replay import ReplayBuffer
+
+
+class _TeeLogger:
+    """Write to both stdout and a log file."""
+
+    def __init__(self, log_path: Path):
+        self._file = open(log_path, "a")
+        self._stdout = sys.stdout
+
+    def write(self, msg: str) -> int:
+        self._stdout.write(msg)
+        self._file.write(msg)
+        self._file.flush()
+        return len(msg)
+
+    def flush(self) -> None:
+        self._stdout.flush()
+        self._file.flush()
+
+    def close(self) -> None:
+        self._file.close()
+        sys.stdout = self._stdout
+
+
+def _setup_run_dir(args: argparse.Namespace) -> Path:
+    """Create runs/<run_name>/ directory, write config.json, set up tee logging."""
+    run_dir = Path("runs") / args.run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write config
+    config = {k: v for k, v in vars(args).items()}
+    config["start_time"] = datetime.now().isoformat()
+    (run_dir / "config.json").write_text(json.dumps(config, indent=2) + "\n")
+
+    # Tee stdout to train.log
+    sys.stdout = _TeeLogger(run_dir / "train.log")
+
+    return run_dir
+
+
+def _append_metrics(run_dir: Path, entry: dict) -> None:
+    """Append a metrics entry to metrics.json (one JSON object per line)."""
+    with open(run_dir / "metrics.jsonl", "a") as f:
+        f.write(json.dumps(entry) + "\n")
 
 
 def play_episode(
@@ -204,8 +252,11 @@ def evaluate(
 
 
 def train(args: argparse.Namespace) -> None:
+    run_dir = _setup_run_dir(args)
+
     device = get_device()
     print(f"Device: {device}")
+    print(f"Run dir: {run_dir}")
 
     q_lead = QNetworkLSTM(
         lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden
@@ -280,6 +331,22 @@ def train(args: argparse.Namespace) -> None:
                 f"{elapsed:.0f}s"
             )
 
+            _append_metrics(run_dir, {
+                "episode": ep,
+                "epsilon": round(epsilon, 4),
+                "loss_lead": loss_lead,
+                "loss_follow": loss_follow,
+                "buffer_size": len(buffer),
+                "opponent": args.eval_opponent,
+                "winrate": result["winrate"],
+                "avg_reward": result["avg_reward"],
+                "finish_12": result["finish_12"],
+                "finish_13": result["finish_13"],
+                "finish_14": result["finish_14"],
+                "best_winrate": best_heuristic_wr,
+                "elapsed_s": round(elapsed, 1),
+            })
+
             if evals_without_improvement >= args.patience:
                 print(
                     f"Early stopping: no improvement in vs {args.eval_opponent} WR "
@@ -289,7 +356,7 @@ def train(args: argparse.Namespace) -> None:
 
         # Save checkpoint
         if ep % args.save_interval == 0:
-            path = f"checkpoint_ep{ep}.pt"
+            path = run_dir / f"checkpoint_ep{ep}.pt"
             torch.save(
                 {
                     "episode": ep,
@@ -304,6 +371,7 @@ def train(args: argparse.Namespace) -> None:
             print(f"  Saved {path}")
 
     # Final save
+    final_path = run_dir / "model_final.pt"
     torch.save(
         {
             "episode": args.episodes,
@@ -312,9 +380,9 @@ def train(args: argparse.Namespace) -> None:
             "opt_lead_state_dict": opt_lead.state_dict(),
             "opt_follow_state_dict": opt_follow.state_dict(),
         },
-        "model_final.pt",
+        final_path,
     )
-    print("Training complete. Saved model_final.pt")
+    print(f"Training complete. Saved {final_path}")
 
     # Quick validation verdict
     if getattr(args, "quick", False):
@@ -322,6 +390,14 @@ def train(args: argparse.Namespace) -> None:
             q_lead, q_follow, device, n_games=300, opponent="heuristic"
         )
         wr = final_result["winrate"]
+        _append_metrics(run_dir, {
+            "episode": args.episodes,
+            "phase": "quick_validation",
+            "opponent": "heuristic",
+            "winrate": wr,
+            "avg_reward": final_result["avg_reward"],
+            "elapsed_s": round(time.time() - t0, 1),
+        })
         print(f"\n=== QUICK VALIDATION RESULT ===")
         print(f"WR vs Heuristic @ {args.episodes} episodes: {wr:.1%}")
         if wr >= 0.55:
@@ -335,6 +411,10 @@ def train(args: argparse.Namespace) -> None:
             print("  1. python scripts/test_mps_lstm.py")
             print("  2. Verify move_history is populated: print(len(env.move_history))")
             print("  3. Check LSTM gradients are non-zero")
+
+    # Restore stdout
+    if isinstance(sys.stdout, _TeeLogger):
+        sys.stdout.close()
 
 
 def main() -> None:
@@ -369,7 +449,16 @@ def main() -> None:
         help="Quick validation mode: cap at 8000 episodes, eval every 2000, "
              "print go/no-go verdict at end. ~4-5 hours on M1 Pro.",
     )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Name for this run (default: auto-generated timestamp)",
+    )
     args = parser.parse_args()
+
+    if args.run_name is None:
+        args.run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if args.quick:
         args.episodes = 8000

@@ -2,9 +2,11 @@
 
 Usage:
     from guandan.agents import make_agent, RandomBot, StrategicBot, MonteCarloBot
+    from guandan.agents import RLAgentLSTM
 
     agent = make_agent("strategic", level_rank=Rank.TWO)
     mc = make_agent("monte_carlo", level_rank=Rank.TWO, n_sims=50, n_workers=8)
+    rl = RLAgentLSTM(q_lead, q_follow, device)
     combo = agent.act(env, player)
 """
 
@@ -16,6 +18,7 @@ from .greedy_bot import GreedyBot
 from .heuristic_bot import HeuristicBot
 from .monte_carlo_bot import MonteCarloBot
 from .random_bot import RandomBot
+from .rl_agent import RLAgentLSTM
 from .strategic_bot import StrategicBot
 
 __all__ = [
@@ -25,6 +28,7 @@ __all__ = [
     "HeuristicBot",
     "StrategicBot",
     "MonteCarloBot",
+    "RLAgentLSTM",
     "AGENT_REGISTRY",
     "make_agent",
 ]

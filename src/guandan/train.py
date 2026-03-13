@@ -253,16 +253,15 @@ def train(args: argparse.Namespace) -> None:
 
         # Evaluate and log
         if ep % args.eval_interval == 0:
-            r = evaluate(
-                q_lead, q_follow, device, n_games=args.eval_games, opponent="random"
-            )
-            h = evaluate(
-                q_lead, q_follow, device, n_games=args.eval_games, opponent="heuristic"
+            result = evaluate(
+                q_lead, q_follow, device,
+                n_games=args.eval_games, opponent=args.eval_opponent,
             )
             elapsed = time.time() - t0
+            wr = result["winrate"]
 
-            if h["winrate"] > best_heuristic_wr:
-                best_heuristic_wr = h["winrate"]
+            if wr > best_heuristic_wr:
+                best_heuristic_wr = wr
                 evals_without_improvement = 0
             else:
                 evals_without_improvement += 1
@@ -274,9 +273,8 @@ def train(args: argparse.Namespace) -> None:
                 f"Ep {ep:>6d} | ε={epsilon:.3f} | "
                 f"L_lead={ll_str} L_follow={lf_str} | "
                 f"buf={len(buffer):>6d} | "
-                f"vs Rand: {r['winrate']:.1%} | "
-                f"vs Heur: {h['winrate']:.1%} "
-                f"(1-2:{h['finish_12']} 1-3:{h['finish_13']} 1-4:{h['finish_14']}) "
+                f"vs {args.eval_opponent}: {wr:.1%} "
+                f"(1-2:{result['finish_12']} 1-3:{result['finish_13']} 1-4:{result['finish_14']}) "
                 f"(best={best_heuristic_wr:.1%}, "
                 f"pat={evals_without_improvement}/{args.patience}) | "
                 f"{elapsed:.0f}s"
@@ -284,7 +282,7 @@ def train(args: argparse.Namespace) -> None:
 
             if evals_without_improvement >= args.patience:
                 print(
-                    f"Early stopping: no improvement in vs Heuristic WR "
+                    f"Early stopping: no improvement in vs {args.eval_opponent} WR "
                     f"for {args.patience} evals"
                 )
                 break
@@ -318,26 +316,65 @@ def train(args: argparse.Namespace) -> None:
     )
     print("Training complete. Saved model_final.pt")
 
+    # Quick validation verdict
+    if getattr(args, "quick", False):
+        final_result = evaluate(
+            q_lead, q_follow, device, n_games=300, opponent="heuristic"
+        )
+        wr = final_result["winrate"]
+        print(f"\n=== QUICK VALIDATION RESULT ===")
+        print(f"WR vs Heuristic @ {args.episodes} episodes: {wr:.1%}")
+        if wr >= 0.55:
+            print("✓ LSTM is learning. Proceed with full overnight run:")
+            print("  PYTHONPATH=src python -m guandan.train --episodes 30000")
+        elif wr >= 0.48:
+            print("~ Marginal improvement. Consider running to 15K before deciding.")
+            print("  PYTHONPATH=src python -m guandan.train --episodes 15000")
+        else:
+            print("✗ Not improving. Check debugging checklist before continuing:")
+            print("  1. python scripts/test_mps_lstm.py")
+            print("  2. Verify move_history is populated: print(len(env.move_history))")
+            print("  3. Check LSTM gradients are non-zero")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train Guan Dan DMC agent")
     parser.add_argument("--episodes", type=int, default=30000)
-    parser.add_argument("--batch-size", type=int, default=512)
+    parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--buffer-size", type=int, default=500_000)
-    parser.add_argument("--eval-interval", type=int, default=500)
-    parser.add_argument("--eval-games", type=int, default=200)
+    parser.add_argument("--eval-interval", type=int, default=2000)
+    parser.add_argument("--eval-games", type=int, default=300)
+    parser.add_argument(
+        "--eval-opponent",
+        type=str,
+        default="heuristic",
+        choices=["random", "greedy", "heuristic", "strategic"],
+        help="Opponent for mid-training eval (default: heuristic). "
+             "Full ladder eval: use scripts/ladder.py after training.",
+    )
     parser.add_argument("--save-interval", type=int, default=5000)
     parser.add_argument("--lstm-hidden", type=int, default=128)
-    parser.add_argument("--mlp-hidden", type=int, default=256)
-    parser.add_argument("--train-steps", type=int, default=1)
+    parser.add_argument("--mlp-hidden", type=int, default=512)
+    parser.add_argument("--train-steps", type=int, default=4)
     parser.add_argument(
         "--patience",
         type=int,
         default=20,
-        help="Early stop after N evals with no heuristic WR improvement",
+        help="Early stop after N evals with no improvement",
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Quick validation mode: cap at 8000 episodes, eval every 2000, "
+             "print go/no-go verdict at end. ~4-5 hours on M1 Pro.",
     )
     args = parser.parse_args()
+
+    if args.quick:
+        args.episodes = 8000
+        args.eval_interval = 2000
+
     train(args)
 
 

@@ -34,8 +34,8 @@ from .replay import ReplayBuffer
 
 # (opponent_name, promotion_threshold, consecutive_evals_needed)
 CURRICULUM = [
-    ("random", 0.70, 3),
-    ("greedy", 0.65, 3),
+    ("random", 0.65, 2),
+    ("greedy", 0.60, 2),
     ("heuristic", None, None),
 ]
 
@@ -529,7 +529,7 @@ def main() -> None:
 
     if args.quick:
         args.episodes = 8000
-        args.eval_interval = 2000
+        args.eval_interval = 1000
         args.eval_games = 100
 
     train(args)

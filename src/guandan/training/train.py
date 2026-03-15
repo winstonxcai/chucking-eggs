@@ -467,10 +467,10 @@ def train(args: argparse.Namespace) -> None:
             print("  PYTHONPATH=src python -m guandan.train --episodes 30000")
         elif wr >= 0.48:
             print("~ Marginal improvement. Consider running to 15K before deciding.")
-            print("  PYTHONPATH=src python -m guandan.train --episodes 15000")
+            print("  PYTHONPATH=src python -m guandan.training.train --episodes 15000")
         else:
             print("✗ Not improving. Check debugging checklist before continuing:")
-            print("  1. python scripts/test_mps_lstm.py")
+            print("  1. python scripts/diagnose_device.py")
             print("  2. Verify move_history is populated: print(len(env.move_history))")
             print("  3. Check LSTM gradients are non-zero")
 

@@ -14,8 +14,8 @@ import numpy as np
 import torch
 
 from ..cards import Rank
-from ..encoding import encode_action, encode_history, encode_state
-from ..q_network import get_device
+from ..training.encoding import encode_action, encode_history, encode_state
+from ..training.q_network import get_device
 from .base import Agent
 
 

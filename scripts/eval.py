@@ -15,8 +15,8 @@ import torch
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from guandan.q_network import QNetworkLSTM, get_device
-from guandan.train import evaluate
+from guandan.training.q_network import QNetworkLSTM, get_device
+from guandan.training.train import evaluate
 
 
 def main() -> None:

@@ -1,7 +1,7 @@
 """DMC training loop for Guan Dan — LSTM + lead/follow split.
 
 Usage:
-    python -m guandan.train --episodes 30000 --eval-interval 500
+    python -m guandan.training.train --episodes 30000 --eval-interval 500
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .agents import make_agent
-from .cards import Rank
+from ..agents import make_agent
+from ..cards import Rank
 from .encoding import (
     ACTION_DIM,
     D_MOVE,
@@ -28,7 +28,7 @@ from .encoding import (
     encode_history,
     encode_state,
 )
-from .game import GuanDanEnv
+from ..game import GuanDanEnv
 from .q_network import QNetworkLSTM, get_device
 from .replay import ReplayBuffer
 
@@ -151,9 +151,9 @@ def play_episode(
     rewards = env.get_rewards()
     all_trans = []
     for player, tlist in transitions.items():
-        G = rewards[player]
+        mc_return = rewards[player]
         for s, a, h, hl in tlist:
-            all_trans.append((s, a, h, hl, G))
+            all_trans.append((s, a, h, hl, mc_return))
     return all_trans
 
 
@@ -322,8 +322,8 @@ def train(args: argparse.Namespace) -> None:
         trans = play_episode(
             env, q_lead, q_follow, epsilon, device, opponent=train_opponent
         )
-        for s, a, h, hl, G in trans:
-            buffer.push(s, a, h, hl, G)
+        for s, a, h, hl, mc_return in trans:
+            buffer.push(s, a, h, hl, mc_return)
 
         # Gradient steps — both networks train on shared buffer
         loss_lead = None

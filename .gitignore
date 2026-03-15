@@ -30,3 +30,6 @@ htmlcov/
 # IDE
 .vscode/
 .idea/
+
+# Claude Code
+.claude/

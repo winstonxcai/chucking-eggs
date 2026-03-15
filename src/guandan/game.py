@@ -34,6 +34,7 @@ class GuanDanEnv:
         self.finish_order: list[int] = []
         self.is_out: list[bool] = [False] * 4
         self.done: bool = False
+        self.move_history: list[tuple[int, Combo]] = []
 
     # ─── Seat helpers ───────────────────────────────────
 
@@ -115,6 +116,7 @@ class GuanDanEnv:
     def step(self, combo: Combo) -> tuple[int, bool]:
         """Execute a play. Returns (next_current_player, done)."""
         player = self.current_player
+        self.move_history.append((player, combo))
 
         if combo.type == ComboType.PASS:
             return self._handle_pass(player)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from ..cards import BOMB_TYPES, ComboType, Rank, is_wild, level_order_key
 from ..combos import generate_all_leads, generate_responses
-from ..heuristic import HandPlan, _breaks_bomb, _find_combo, _pass_combo
+from .heuristic_bot import HandPlan, _breaks_bomb, _find_combo, _pass_combo
 from .base import Agent
 
 # Types where level_order_key applies for comparison.

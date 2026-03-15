@@ -15,7 +15,7 @@ import copy
 from multiprocessing import Pool
 
 from ..cards import BOMB_TYPES, ComboType, Rank, level_order_key
-from ..heuristic import _pass_combo
+from .heuristic_bot import _pass_combo
 from .base import Agent
 from .greedy_bot import GreedyBot
 

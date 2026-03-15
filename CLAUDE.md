@@ -1,0 +1,39 @@
+# Project Overview
+
+Guan Dan (掼蛋) RL agent — full game engine + Deep Monte Carlo training with LSTM Q-network and curriculum learning (random -> greedy -> heuristic opponents).
+
+# Repo Structure
+
+```
+src/guandan/          — Python package (pip-installable via hatch)
+  cards.py, combos.py, game.py  — Core game engine
+  agents/             — Agent hierarchy (random, greedy, heuristic, strategic, MC, RL)
+  training/           — RL training (encoding, q_network, replay, train)
+scripts/              — Evaluation, diagnostics, Modal launcher
+tests/                — Pytest tests
+paper/                — Writeups and archived dev logs
+runs/                 — Experiment outputs (gitignored)
+```
+
+# Common Commands
+
+- Run tests: `uv run pytest tests/ -v`
+- Smoke train: `./scripts/run_e2e.sh --train-only`
+- Full train: `PYTHONPATH=src python -m guandan.training.train --episodes 30000`
+- Quick validation: `PYTHONPATH=src python -m guandan.training.train --quick`
+- Evaluate: `PYTHONPATH=src python scripts/eval.py --checkpoint <path> --opponent heuristic --games 500`
+- Device diagnostic: `PYTHONPATH=src python scripts/diagnose_device.py`
+- Ladder eval: `PYTHONPATH=src python scripts/ladder.py --checkpoint <path>`
+- Modal GPU train: `./scripts/run_e2e.sh --modal`
+
+# Conventions
+
+- Python 3.10+, dependencies: numpy, torch. Dev: pytest. Optional: modal.
+- Snake_case everywhere, `_bot` suffix for agent classes.
+- All agents implement `Agent.act(env, player) -> Combo`.
+- Training outputs go to `runs/<run_name>/` with `config.json`, `metrics.jsonl`, `train.log`.
+- Use `--quick` flag for smoke testing (~4-5 hours on M1 Pro, 8000 episodes).
+- Encoding dimensions: state=417, action=160, history_move=83.
+- Curriculum stages: random (65% win gate) -> greedy (60% win gate) -> heuristic (terminal).
+- `uv run` is the standard runner; `PYTHONPATH=src` needed when invoking modules directly.
+- E2E script (`scripts/run_e2e.sh`) is the single entry point with skip flags.

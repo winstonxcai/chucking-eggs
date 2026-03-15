@@ -4,7 +4,7 @@ import random
 
 from guandan.cards import BOMB_TYPES, ComboType, Rank
 from guandan.game import GuanDanEnv
-from guandan.heuristic import HeuristicAgent
+from guandan.agents.heuristic_bot import HeuristicAgent
 
 
 def _play_game(agent_teams: dict[str, tuple[int, ...]]) -> list[int]:

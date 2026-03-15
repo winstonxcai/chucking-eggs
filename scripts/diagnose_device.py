@@ -3,7 +3,7 @@
 Run this BEFORE starting any training run to catch MPS/CUDA issues early.
 
 Usage:
-    PYTHONPATH=src python scripts/test_mps_lstm.py
+    PYTHONPATH=src python scripts/diagnose_device.py
 
 Tests:
     1. LSTM forward on device with full history (T=15)
@@ -22,8 +22,8 @@ import torch.nn as nn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from guandan.encoding import ACTION_DIM, D_MOVE, MAX_HISTORY, STATE_DIM
-from guandan.q_network import QNetworkLSTM, get_device
+from guandan.training.encoding import ACTION_DIM, D_MOVE, MAX_HISTORY, STATE_DIM
+from guandan.training.q_network import QNetworkLSTM, get_device
 
 LSTM_HIDDEN = 128
 PASS = "✓ PASS"

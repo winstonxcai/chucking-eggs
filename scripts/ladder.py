@@ -35,7 +35,7 @@ from guandan.agents import (
 )
 from guandan.cards import Rank
 from guandan.game import GuanDanEnv
-from guandan.q_network import QNetworkLSTM, get_device
+from guandan.training.q_network import QNetworkLSTM, get_device
 
 # ─── Day 2 baselines (flat MLP, no history) ──────────────────────────────────
 # These are the known results from Day 2 training to use as the comparison point.

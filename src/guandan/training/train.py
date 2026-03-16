@@ -11,6 +11,7 @@ import json
 import random
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -157,6 +158,27 @@ def play_episode(
     return all_trans
 
 
+def _episode_worker(
+    lead_sd: dict,
+    follow_sd: dict,
+    lstm_hidden: int,
+    mlp_hidden: int,
+    epsilon: float,
+    opponent_name: str,
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float]]:
+    """Run one episode in a subprocess with CPU inference."""
+    device = torch.device("cpu")
+    q_lead = QNetworkLSTM(lstm_hidden=lstm_hidden, hidden=mlp_hidden).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=lstm_hidden, hidden=mlp_hidden).to(device)
+    q_lead.load_state_dict(lead_sd)
+    q_follow.load_state_dict(follow_sd)
+    q_lead.eval()
+    q_follow.eval()
+    env = GuanDanEnv(level_rank=Rank.TWO)
+    opp = make_agent(opponent_name, env.level_rank)
+    return play_episode(env, q_lead, q_follow, epsilon, device, opponent=opp)
+
+
 def train_step(
     q_net: QNetworkLSTM,
     buf: ReplayBuffer,
@@ -291,7 +313,7 @@ def train(args: argparse.Namespace) -> None:
     env = GuanDanEnv(level_rank=Rank.TWO)
 
     eps_start, eps_end = 0.30, 0.05
-    eps_decay_episodes = int(args.episodes * 0.85)
+    eps_decay_episodes = int(args.episodes * 0.55)
     best_wr = 0.0
     evals_without_improvement = 0
     t0 = time.time()
@@ -315,20 +337,51 @@ def train(args: argparse.Namespace) -> None:
     print(f"Curriculum: {' → '.join(name for name, _, _ in CURRICULUM)}")
     print(f"Starting vs: {current_opponent_name}")
 
-    for ep in range(1, args.episodes + 1):
-        frac = min(1.0, ep / eps_decay_episodes)
+    # Parallel episode collection setup
+    n_workers = args.n_workers
+    use_parallel = n_workers > 1
+    pool = ProcessPoolExecutor(max_workers=n_workers) if use_parallel else None
+
+    def _sync_weights():
+        return (
+            {k: v.cpu() for k, v in q_lead.state_dict().items()},
+            {k: v.cpu() for k, v in q_follow.state_dict().items()},
+        )
+
+    if use_parallel:
+        lead_sd, follow_sd = _sync_weights()
+
+    ep = 0
+    last_eval_ep = 0
+    last_save_ep = 0
+    while ep < args.episodes:
+        batch_size_ep = min(n_workers, args.episodes - ep)
+        frac = min(1.0, (ep + 1) / eps_decay_episodes)
         epsilon = eps_start + (eps_end - eps_start) * frac
 
-        trans = play_episode(
-            env, q_lead, q_follow, epsilon, device, opponent=train_opponent
-        )
-        for s, a, h, hl, mc_return in trans:
-            buffer.push(s, a, h, hl, mc_return)
+        if use_parallel:
+            futures = [
+                pool.submit(
+                    _episode_worker, lead_sd, follow_sd,
+                    args.lstm_hidden, args.mlp_hidden,
+                    epsilon, current_opponent_name,
+                )
+                for _ in range(batch_size_ep)
+            ]
+            for f in futures:
+                for s, a, h, hl, mc_return in f.result():
+                    buffer.push(s, a, h, hl, mc_return)
+        else:
+            trans = play_episode(
+                env, q_lead, q_follow, epsilon, device, opponent=train_opponent
+            )
+            for s, a, h, hl, mc_return in trans:
+                buffer.push(s, a, h, hl, mc_return)
 
-        # Gradient steps — both networks train on shared buffer
+        # Gradient steps — scale with batch size
         loss_lead = None
         loss_follow = None
-        for _ in range(args.train_steps):
+        for _ in range(args.train_steps * batch_size_ep):
             ll = train_step(q_lead, buffer, opt_lead, args.batch_size, device)
             lf = train_step(q_follow, buffer, opt_follow, args.batch_size, device)
             if ll is not None:
@@ -336,8 +389,15 @@ def train(args: argparse.Namespace) -> None:
             if lf is not None:
                 loss_follow = lf
 
+        # Sync weights to workers after training steps
+        if use_parallel:
+            lead_sd, follow_sd = _sync_weights()
+
+        ep += batch_size_ep
+
         # Evaluate and log
-        if ep % args.eval_interval == 0:
+        if ep - last_eval_ep >= args.eval_interval:
+            last_eval_ep = ep
             result = evaluate(
                 q_lead, q_follow, device,
                 n_games=args.eval_games, opponent=current_opponent_name,
@@ -395,6 +455,7 @@ def train(args: argparse.Namespace) -> None:
                     consecutive_above = 0
                     best_wr = 0.0
                     evals_without_improvement = 0
+                    buffer.clear()
                     print(
                         f"\n{'='*60}\n"
                         f"  PROMOTED to stage {curriculum_stage}: "
@@ -412,7 +473,8 @@ def train(args: argparse.Namespace) -> None:
                 break
 
         # Save checkpoint
-        if ep % args.save_interval == 0:
+        if ep - last_save_ep >= args.save_interval:
+            last_save_ep = ep
             path = run_dir / f"checkpoint_ep{ep}.pt"
             torch.save(
                 {
@@ -427,6 +489,9 @@ def train(args: argparse.Namespace) -> None:
                 path,
             )
             print(f"  Saved {path}")
+
+    if pool is not None:
+        pool.shutdown(wait=False)
 
     # Final save
     final_path = run_dir / "model_final.pt"
@@ -464,7 +529,7 @@ def train(args: argparse.Namespace) -> None:
         print(f"Curriculum reached: {current_opponent_name} (stage {curriculum_stage})")
         if wr >= 0.55:
             print("✓ LSTM is learning. Proceed with full overnight run:")
-            print("  PYTHONPATH=src python -m guandan.train --episodes 30000")
+            print("  PYTHONPATH=src python -m guandan.training.train --episodes 30000")
         elif wr >= 0.48:
             print("~ Marginal improvement. Consider running to 15K before deciding.")
             print("  PYTHONPATH=src python -m guandan.training.train --episodes 15000")
@@ -483,10 +548,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train Guan Dan DMC agent")
     parser.add_argument("--episodes", type=int, default=30000)
     parser.add_argument("--batch-size", type=int, default=1024)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--buffer-size", type=int, default=500_000)
-    parser.add_argument("--eval-interval", type=int, default=2000)
-    parser.add_argument("--eval-games", type=int, default=300)
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--buffer-size", type=int, default=250_000)
+    parser.add_argument("--eval-interval", type=int, default=1000)
+    parser.add_argument("--eval-games", type=int, default=500)
     parser.add_argument(
         "--eval-opponent",
         type=str,
@@ -498,7 +563,7 @@ def main() -> None:
     parser.add_argument("--save-interval", type=int, default=5000)
     parser.add_argument("--lstm-hidden", type=int, default=128)
     parser.add_argument("--mlp-hidden", type=int, default=512)
-    parser.add_argument("--train-steps", type=int, default=4)
+    parser.add_argument("--train-steps", type=int, default=8)
     parser.add_argument(
         "--patience",
         type=int,
@@ -515,6 +580,12 @@ def main() -> None:
         "--no-curriculum",
         action="store_true",
         help="Disable curriculum: train directly vs --eval-opponent.",
+    )
+    parser.add_argument(
+        "--n-workers",
+        type=int,
+        default=4,
+        help="Number of parallel episode workers (1 = sequential, default: 4).",
     )
     parser.add_argument(
         "--run-name",

@@ -67,5 +67,10 @@ class ReplayBuffer:
             batch["return"] = batch["return"].to(device)
         return batch
 
+    def clear(self) -> None:
+        """Clear the buffer between curriculum stages."""
+        self.idx = 0
+        self.size = 0
+
     def __len__(self) -> int:
         return self.size

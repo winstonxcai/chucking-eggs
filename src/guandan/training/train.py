@@ -565,8 +565,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train Guan Dan DMC agent")
     parser.add_argument("--episodes", type=int, default=30000)
     parser.add_argument("--batch-size", type=int, default=1024)
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--buffer-size", type=int, default=250_000)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--buffer-size", type=int, default=500_000)
     parser.add_argument("--eval-interval", type=int, default=1000)
     parser.add_argument("--eval-games", type=int, default=500)
     parser.add_argument(
@@ -580,7 +580,7 @@ def main() -> None:
     parser.add_argument("--save-interval", type=int, default=5000)
     parser.add_argument("--lstm-hidden", type=int, default=128)
     parser.add_argument("--mlp-hidden", type=int, default=512)
-    parser.add_argument("--train-steps", type=int, default=8)
+    parser.add_argument("--train-steps", type=int, default=4)
     parser.add_argument(
         "--patience",
         type=int,

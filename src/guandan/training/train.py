@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from ..agents import make_agent
 from ..cards import Rank
@@ -224,7 +225,8 @@ def evaluate(
     finish_13 = 0
     finish_14 = 0
 
-    for _ in range(n_games):
+    for _ in tqdm(range(n_games), desc=f"eval vs {opponent}", unit="game",
+                  leave=False, file=sys.stderr, dynamic_ncols=True):
         env.reset()
         while not env.done:
             player = env.current_player
@@ -354,6 +356,10 @@ def train(args: argparse.Namespace) -> None:
     ep = 0
     last_eval_ep = 0
     last_save_ep = 0
+    pbar = tqdm(
+        total=args.episodes, unit="ep", file=sys.stderr,
+        dynamic_ncols=True, desc=f"vs {current_opponent_name}",
+    )
     while ep < args.episodes:
         batch_size_ep = min(n_workers, args.episodes - ep)
         frac = min(1.0, (ep + 1) / eps_decay_episodes)
@@ -394,6 +400,15 @@ def train(args: argparse.Namespace) -> None:
             lead_sd, follow_sd = _sync_weights()
 
         ep += batch_size_ep
+        pbar.update(batch_size_ep)
+        if loss_lead is not None:
+            pbar.set_postfix(
+                ε=f"{epsilon:.3f}",
+                loss=f"{(loss_lead + loss_follow) / 2:.4f}" if loss_follow is not None else f"{loss_lead:.4f}",
+                wr=f"{best_wr:.1%}",
+                buf=len(buffer),
+                vs=current_opponent_name,
+            )
 
         # Evaluate and log
         if ep - last_eval_ep >= args.eval_interval:
@@ -414,7 +429,7 @@ def train(args: argparse.Namespace) -> None:
             ll_str = f"{loss_lead:.4f}" if loss_lead is not None else "n/a"
             lf_str = f"{loss_follow:.4f}" if loss_follow is not None else "n/a"
 
-            print(
+            tqdm.write(
                 f"Ep {ep:>6d} | ε={epsilon:.3f} | "
                 f"L_lead={ll_str} L_follow={lf_str} | "
                 f"buf={len(buffer):>6d} | "
@@ -456,7 +471,8 @@ def train(args: argparse.Namespace) -> None:
                     best_wr = 0.0
                     evals_without_improvement = 0
                     buffer.clear()
-                    print(
+                    pbar.set_description(f"vs {current_opponent_name}")
+                    tqdm.write(
                         f"\n{'='*60}\n"
                         f"  PROMOTED to stage {curriculum_stage}: "
                         f"vs {current_opponent_name}\n"
@@ -466,7 +482,7 @@ def train(args: argparse.Namespace) -> None:
                 consecutive_above = 0
 
             if evals_without_improvement >= args.patience:
-                print(
+                tqdm.write(
                     f"Early stopping: no improvement in vs {current_opponent_name} WR "
                     f"for {args.patience} evals"
                 )
@@ -488,8 +504,9 @@ def train(args: argparse.Namespace) -> None:
                 },
                 path,
             )
-            print(f"  Saved {path}")
+            tqdm.write(f"  Saved {path}")
 
+    pbar.close()
     if pool is not None:
         pool.shutdown(wait=False)
 

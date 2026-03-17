@@ -36,7 +36,7 @@ from .replay import ReplayBuffer
 
 # (opponent_name, promotion_threshold, consecutive_evals_needed)
 CURRICULUM = [
-    ("random", 0.65, 2),
+    ("random", 0.63, 2),
     ("greedy", 0.60, 2),
     ("heuristic", None, None),
 ]
@@ -470,7 +470,8 @@ def train(args: argparse.Namespace) -> None:
                     consecutive_above = 0
                     best_wr = 0.0
                     evals_without_improvement = 0
-                    buffer.clear()
+                    if curriculum_stage == 1:  # entering greedy: wipe noisy random data
+                        buffer.clear()
                     pbar.set_description(f"vs {current_opponent_name}")
                     tqdm.write(
                         f"\n{'='*60}\n"
@@ -578,8 +579,8 @@ def main() -> None:
              "Full ladder eval: use scripts/ladder.py after training.",
     )
     parser.add_argument("--save-interval", type=int, default=5000)
-    parser.add_argument("--lstm-hidden", type=int, default=128)
-    parser.add_argument("--mlp-hidden", type=int, default=512)
+    parser.add_argument("--lstm-hidden", type=int, default=256)
+    parser.add_argument("--mlp-hidden", type=int, default=1024)
     parser.add_argument("--train-steps", type=int, default=4)
     parser.add_argument(
         "--patience",

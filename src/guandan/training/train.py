@@ -20,6 +20,7 @@ import torch
 from tqdm import tqdm
 
 from ..agents import make_agent
+from ..agents.heuristic_bot import HeuristicBot
 from ..cards import Rank
 from .encoding import (
     ACTION_DIM,
@@ -33,27 +34,6 @@ from .encoding import (
 from ..game import GuanDanEnv
 from .q_network import QNetworkLSTM, get_device
 from .replay import ReplayBuffer
-
-def get_opponent_mix(episode: int, total_episodes: int) -> dict[str, float]:
-    """Gradually shift from easy to hard opponents.
-
-    Schedule (for 50K episodes):
-      0-8%:    pure random         (0-4K)
-      8-16%:   random → greedy     (4K-8K)
-      16-50%:  greedy → heuristic  (8K-25K)
-      50-100%: pure heuristic      (25K-50K)
-    """
-    progress = episode / total_episodes
-    if progress < 0.08:
-        return {"random": 1.0}
-    elif progress < 0.16:
-        blend = (progress - 0.08) / 0.08
-        return {"random": 1.0 - blend, "greedy": blend}
-    elif progress < 0.50:
-        blend = (progress - 0.16) / 0.34
-        return {"greedy": 1.0 - blend, "heuristic": blend}
-    else:
-        return {"heuristic": 1.0}
 
 
 class _TeeLogger:
@@ -179,7 +159,7 @@ def _episode_worker(
     lstm_hidden: int,
     mlp_hidden: int,
     epsilon: float,
-    opponent_name: str,
+    opponent_name: str | None,
 ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float]]:
     """Run one episode in a subprocess with CPU inference."""
     device = torch.device("cpu")
@@ -190,7 +170,7 @@ def _episode_worker(
     q_lead.eval()
     q_follow.eval()
     env = GuanDanEnv(level_rank=Rank.TWO)
-    opp = make_agent(opponent_name, env.level_rank)
+    opp = make_agent(opponent_name, env.level_rank) if opponent_name else None
     return play_episode(env, q_lead, q_follow, epsilon, device, opponent=opp)
 
 
@@ -217,6 +197,102 @@ def train_step(
     optimizer.step()
 
     return loss.item()
+
+
+def pretrain_from_heuristic(
+    q_lead: QNetworkLSTM,
+    q_follow: QNetworkLSTM,
+    opt_lead: torch.optim.Optimizer,
+    opt_follow: torch.optim.Optimizer,
+    buffer: ReplayBuffer,
+    device: torch.device,
+    n_games: int = 5000,
+    batch_size: int = 1024,
+    train_steps_per_game: int = 2,
+    eval_interval: int = 500,
+    eval_games: int = 200,
+    run_dir: Path | None = None,
+) -> int:
+    """Pre-fill buffer with heuristic self-play, train Q-networks to imitate.
+
+    Returns the number of transitions pushed to the buffer.
+    """
+    level_rank = Rank.TWO
+    heuristic = HeuristicBot(level_rank)
+    env = GuanDanEnv(level_rank=level_rank)
+    total_trans = 0
+
+    print(f"\n{'='*60}")
+    print(f"  PHASE 1: Heuristic Imitation ({n_games} games)")
+    print(f"{'='*60}\n")
+
+    pbar = tqdm(range(1, n_games + 1), desc="pretrain", unit="game",
+                file=sys.stderr, dynamic_ncols=True)
+    for game in pbar:
+        env.reset()
+        transitions: dict[int, list[tuple[np.ndarray, np.ndarray, np.ndarray, int]]] = {
+            p: [] for p in range(4)
+        }
+
+        while not env.done:
+            player = env.current_player
+            action = heuristic.act(env, player)
+
+            state_enc = encode_state(env, player)
+            action_enc = encode_action(action, env.hands[player], level_rank)
+            history, hist_len = encode_history(env, player, level_rank)
+
+            transitions[player].append((state_enc, action_enc, history, hist_len))
+            env.step(action)
+
+        rewards = env.get_rewards()
+        for player, tlist in transitions.items():
+            mc_return = rewards[player]
+            for s, a, h, hl in tlist:
+                buffer.push(s, a, h, hl, mc_return)
+                total_trans += 1
+
+        # Train on buffer
+        loss_lead = loss_follow = None
+        for _ in range(train_steps_per_game):
+            ll = train_step(q_lead, buffer, opt_lead, batch_size, device)
+            lf = train_step(q_follow, buffer, opt_follow, batch_size, device)
+            if ll is not None:
+                loss_lead = ll
+            if lf is not None:
+                loss_follow = lf
+
+        if loss_lead is not None:
+            pbar.set_postfix(buf=len(buffer), loss=f"{(loss_lead + loss_follow) / 2:.4f}")
+
+        # Periodic eval
+        if game % eval_interval == 0:
+            result = evaluate(q_lead, q_follow, device, n_games=eval_games,
+                              opponent="heuristic")
+            tqdm.write(
+                f"Pretrain {game}/{n_games} | buf={len(buffer):,} | "
+                f"vs heuristic: {result['winrate']:.1%} "
+                f"(1-2:{result['finish_12']} 1-3:{result['finish_13']} "
+                f"1-4:{result['finish_14']})"
+            )
+            if run_dir is not None:
+                _append_metrics(run_dir, {
+                    "phase": "pretrain",
+                    "game": game,
+                    "buffer_size": len(buffer),
+                    "loss_lead": loss_lead,
+                    "loss_follow": loss_follow,
+                    "winrate": result["winrate"],
+                    "avg_reward": result["avg_reward"],
+                    "finish_12": result["finish_12"],
+                    "finish_13": result["finish_13"],
+                    "finish_14": result["finish_14"],
+                })
+
+    pbar.close()
+    print(f"Pretrain complete. Buffer: {len(buffer):,} transitions "
+          f"({total_trans:,} from heuristic games)")
+    return total_trans
 
 
 def evaluate(
@@ -328,17 +404,45 @@ def train(args: argparse.Namespace) -> None:
 
     env = GuanDanEnv(level_rank=Rank.TWO)
 
-    eps_start, eps_end = 0.30, 0.05
-    eps_decay_episodes = int(args.episodes * 0.55)
-    best_wr = 0.0
-    evals_without_improvement = 0
     t0 = time.time()
 
     n_lead_params = sum(p.numel() for p in q_lead.parameters())
     n_follow_params = sum(p.numel() for p in q_follow.parameters())
     print(f"Lead params: {n_lead_params:,}  Follow params: {n_follow_params:,}")
-    print(f"Opponent schedule: random → greedy → heuristic (mixed)")
+    print(f"Training: heuristic imitation → self-play")
     print(f"Eval opponent: heuristic")
+
+    # ── Phase 1: Heuristic Imitation ──────────────────────────
+    pretrain_trans = 0
+    if args.pretrain_games > 0:
+        pretrain_trans = pretrain_from_heuristic(
+            q_lead, q_follow, opt_lead, opt_follow, buffer, device,
+            n_games=args.pretrain_games, batch_size=args.batch_size,
+            eval_games=args.eval_games, run_dir=run_dir,
+        )
+        # Save pretrain checkpoint
+        pretrain_path = run_dir / "checkpoint_pretrain.pt"
+        torch.save({
+            "phase": "pretrain",
+            "pretrain_games": args.pretrain_games,
+            "lead_state_dict": q_lead.state_dict(),
+            "follow_state_dict": q_follow.state_dict(),
+            "opt_lead_state_dict": opt_lead.state_dict(),
+            "opt_follow_state_dict": opt_follow.state_dict(),
+        }, pretrain_path)
+        print(f"  Saved {pretrain_path}")
+
+    # ── Phase 2: Self-Play ────────────────────────────────────
+    print(f"\n{'='*60}")
+    print(f"  PHASE 2: Self-Play ({args.episodes} episodes)")
+    print(f"{'='*60}")
+    print(f"Buffer: {len(buffer):,} transitions "
+          f"({pretrain_trans:,} from pretrain, will be gradually replaced)\n")
+
+    eps_start, eps_end = 0.20, 0.05  # Lower start since network is warm
+    eps_decay_episodes = int(args.episodes * 0.85)
+    best_wr = 0.0
+    evals_without_improvement = 0
 
     # Parallel episode collection setup
     n_workers = args.n_workers
@@ -359,35 +463,29 @@ def train(args: argparse.Namespace) -> None:
     last_save_ep = 0
     pbar = tqdm(
         total=args.episodes, unit="ep", file=sys.stderr,
-        dynamic_ncols=True, desc="training",
+        dynamic_ncols=True, desc="self-play",
     )
     while ep < args.episodes:
         batch_size_ep = min(n_workers, args.episodes - ep)
         frac = min(1.0, (ep + 1) / eps_decay_episodes)
         epsilon = eps_start + (eps_end - eps_start) * frac
 
-        # Sample opponent from the current mix
-        mix = get_opponent_mix(ep, args.episodes)
-
+        # Self-play: opponent=None, all 4 seats use Q-network
         if use_parallel:
-            futures = []
-            for _ in range(batch_size_ep):
-                opp_name = random.choices(list(mix.keys()), list(mix.values()))[0]
-                futures.append(
-                    pool.submit(
-                        _episode_worker, lead_sd, follow_sd,
-                        args.lstm_hidden, args.mlp_hidden,
-                        epsilon, opp_name,
-                    )
+            futures = [
+                pool.submit(
+                    _episode_worker, lead_sd, follow_sd,
+                    args.lstm_hidden, args.mlp_hidden,
+                    epsilon, None,  # self-play
                 )
+                for _ in range(batch_size_ep)
+            ]
             for f in futures:
                 for s, a, h, hl, mc_return in f.result():
                     buffer.push(s, a, h, hl, mc_return)
         else:
-            opp_name = random.choices(list(mix.keys()), list(mix.values()))[0]
-            train_opponent = make_agent(opp_name, env.level_rank)
             trans = play_episode(
-                env, q_lead, q_follow, epsilon, device, opponent=train_opponent
+                env, q_lead, q_follow, epsilon, device, opponent=None
             )
             for s, a, h, hl, mc_return in trans:
                 buffer.push(s, a, h, hl, mc_return)
@@ -410,14 +508,11 @@ def train(args: argparse.Namespace) -> None:
         ep += batch_size_ep
         pbar.update(batch_size_ep)
         if loss_lead is not None:
-            # Show dominant opponent in the mix
-            dominant_opp = max(mix, key=mix.get)
             pbar.set_postfix(
                 ε=f"{epsilon:.3f}",
                 loss=f"{(loss_lead + loss_follow) / 2:.4f}" if loss_follow is not None else f"{loss_lead:.4f}",
                 wr=f"{best_wr:.1%}",
                 buf=len(buffer),
-                mix=dominant_opp,
             )
 
         # Evaluate and log
@@ -439,14 +534,10 @@ def train(args: argparse.Namespace) -> None:
             ll_str = f"{loss_lead:.4f}" if loss_lead is not None else "n/a"
             lf_str = f"{loss_follow:.4f}" if loss_follow is not None else "n/a"
 
-            # Format opponent mix for logging
-            mix_str = " ".join(f"{k}:{v:.0%}" for k, v in mix.items() if v > 0)
-
             tqdm.write(
                 f"Ep {ep:>6d} | ε={epsilon:.3f} | "
                 f"L_lead={ll_str} L_follow={lf_str} | "
                 f"buf={len(buffer):>6d} | "
-                f"mix=[{mix_str}] | "
                 f"vs heuristic: {wr:.1%} "
                 f"(1-2:{result['finish_12']} 1-3:{result['finish_13']} 1-4:{result['finish_14']}) "
                 f"(best={best_wr:.1%}, "
@@ -455,12 +546,12 @@ def train(args: argparse.Namespace) -> None:
             )
 
             _append_metrics(run_dir, {
+                "phase": "self-play",
                 "episode": ep,
                 "epsilon": round(epsilon, 4),
                 "loss_lead": loss_lead,
                 "loss_follow": loss_follow,
                 "buffer_size": len(buffer),
-                "opponent_mix": {k: round(v, 3) for k, v in mix.items() if v > 0},
                 "winrate": result["winrate"],
                 "avg_reward": result["avg_reward"],
                 "finish_12": result["finish_12"],
@@ -558,6 +649,12 @@ def main() -> None:
     parser.add_argument("--mlp-hidden", type=int, default=1024)
     parser.add_argument("--train-steps", type=int, default=4)
     parser.add_argument(
+        "--pretrain-games",
+        type=int,
+        default=5000,
+        help="Number of heuristic self-play games for imitation pre-training.",
+    )
+    parser.add_argument(
         "--patience",
         type=int,
         default=40,
@@ -587,7 +684,8 @@ def main() -> None:
         args.run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if args.quick:
-        args.episodes = 8000
+        args.pretrain_games = 500
+        args.episodes = 4000
         args.eval_interval = 1000
         args.eval_games = 100
 

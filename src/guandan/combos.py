@@ -20,6 +20,16 @@ from .cards import (
     level_order_key,
 )
 
+# Try to import Rust backend for fast movegen
+try:
+    from guandan_rs import (
+        generate_all_leads as _rs_leads,
+        generate_responses as _rs_responses,
+    )
+    _USE_RUST = True
+except ImportError:
+    _USE_RUST = False
+
 
 class Combo:
     __slots__ = ("type", "key", "cards", "length", "wild_count")
@@ -86,16 +96,48 @@ class Combo:
 # ─── PUBLIC API ─────────────────────────────────────────
 
 
+def _rs_tuple_to_combo(t: tuple) -> Combo:
+    """Convert Rust (combo_type, key, cards, length, wild_count) tuple to Combo."""
+    combo_type, key, cards_raw, length, wild_count = t
+    cards = [Card(r, s, d) for r, s, d in cards_raw]
+    return Combo(ComboType(combo_type), key, cards, length, wild_count)
+
+
 def generate_all_leads(hand: set[Card], level_rank: int) -> list[Combo]:
     """Generate every legal combo from hand (free lead)."""
+    if _USE_RUST:
+        hand_tuples = [(c.rank, c.suit, c.deck) for c in hand]
+        return [_rs_tuple_to_combo(t) for t in _rs_leads(hand_tuples, level_rank)]
+    return _py_generate_all_leads(hand, level_rank)
+
+
+def generate_responses(
+    hand: set[Card], level_rank: int, trick: Combo
+) -> list[Combo]:
+    """Generate all combos that beat the current trick, plus PASS."""
+    if _USE_RUST:
+        hand_tuples = [(c.rank, c.suit, c.deck) for c in hand]
+        trick_tuple = (
+            int(trick.type), trick.key,
+            [(c.rank, c.suit, c.deck) for c in trick.cards],
+            trick.length, trick.wild_count,
+        )
+        return [_rs_tuple_to_combo(t) for t in _rs_responses(hand_tuples, level_rank, trick_tuple)]
+    return _py_generate_responses(hand, level_rank, trick)
+
+
+def _py_generate_all_leads(hand: set[Card], level_rank: int) -> list[Combo]:
+    """Pure Python implementation of generate_all_leads."""
     combos: list[Combo] = []
 
-    wilds = [c for c in hand if is_wild(c, level_rank)]
+    wilds = sorted([c for c in hand if is_wild(c, level_rank)], key=lambda c: (c.suit, c.deck))
     naturals = [c for c in hand if not is_wild(c, level_rank)]
 
     by_rank: dict[int, list[Card]] = {}
     for c in naturals:
         by_rank.setdefault(c.rank, []).append(c)
+    for cards in by_rank.values():
+        cards.sort(key=lambda c: (c.suit, c.deck))
 
     # Singles
     for rank, cards in by_rank.items():
@@ -140,11 +182,11 @@ def generate_all_leads(hand: set[Card], level_rank: int) -> list[Combo]:
     return _deduplicate(combos)
 
 
-def generate_responses(
+def _py_generate_responses(
     hand: set[Card], level_rank: int, trick: Combo
 ) -> list[Combo]:
-    """Generate all combos that beat the current trick, plus PASS."""
-    leads = generate_all_leads(hand, level_rank)
+    """Pure Python implementation of generate_responses."""
+    leads = _py_generate_all_leads(hand, level_rank)
     responses = [c for c in leads if c.beats(trick, level_rank)]
     responses.append(Combo(ComboType.PASS, 0, []))
     return responses
@@ -646,11 +688,11 @@ def _add_straight_flushes(
 
 
 def _deduplicate(combos: list[Combo]) -> list[Combo]:
-    """Remove duplicate combos (same type + key + card set)."""
-    seen: set[tuple[int, int, int, frozenset[tuple[int, int, int]]]] = set()
+    """Remove duplicate combos (same type + key + card ranks/suits, ignoring deck copy)."""
+    seen: set[tuple[int, int, int, tuple[tuple[int, int], ...]]] = set()
     result: list[Combo] = []
     for c in combos:
-        card_ids = frozenset((card.rank, card.suit, card.deck) for card in c.cards)
+        card_ids = tuple(sorted((card.rank, card.suit) for card in c.cards))
         key = (c.type, c.key, c.length, card_ids)
         if key not in seen:
             seen.add(key)

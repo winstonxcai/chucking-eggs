@@ -31,5 +31,8 @@ htmlcov/
 .vscode/
 .idea/
 
+# Rust
+guandan_rs/target/
+
 # Claude Code
 .claude/

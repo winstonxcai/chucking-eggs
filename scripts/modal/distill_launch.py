@@ -3,7 +3,7 @@
 Usage:
     modal run --detach scripts/modal/distill_launch.py
     modal run --detach scripts/modal/distill_launch.py --stage 1 --games 100 --epochs 1 --run-name smoke_modal
-    modal run --detach scripts/modal/distill_launch.py --run-name distill_modal --stage 2
+    modal run --detach scripts/modal/distill_launch.py --run-name distill_fast --stage 2
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ DISTILL_DEFAULTS = dict(
     checkpoint_dir=CHECKPOINT_DIR,
     run_name="distill_modal",
     resume=None,
+    workers=5,
 )
 
 try:
@@ -33,7 +34,16 @@ except IndexError:
 
 image = (
     modal.Image.debian_slim(python_version="3.10")
-    .pip_install("torch", "numpy", "tqdm")
+    .apt_install("curl", "build-essential")
+    .run_commands(
+        "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+    )
+    .pip_install("torch", "numpy", "tqdm", "maturin")
+    .add_local_dir(str(_root / "guandan_rs"), remote_path="/root/guandan_rs")
+    .run_commands(
+        "bash -c 'source $HOME/.cargo/env && cd /root/guandan_rs && maturin build --release --interpreter python3.10'",
+        "pip install /root/guandan_rs/target/wheels/guandan_rs-*.whl",
+    )
     .add_local_dir(str(_root / "src"), remote_path="/root/src")
     .add_local_dir(str(_root / "scripts"), remote_path="/root/scripts")
 )
@@ -70,9 +80,13 @@ def main(
     epochs: int = 3,
     run_name: str = "distill_modal",
     resume: str = "",
+    workers: int = 5,
 ) -> None:
     """Launch supervised distillation on Modal A10G."""
-    kwargs: dict = {"stage": stage, "games": games, "epochs": epochs, "run_name": run_name}
+    kwargs: dict = {
+        "stage": stage, "games": games, "epochs": epochs,
+        "run_name": run_name, "workers": workers,
+    }
     if resume:
         kwargs["resume"] = resume
     result = distill_remote.remote(**kwargs)

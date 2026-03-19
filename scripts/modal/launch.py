@@ -33,12 +33,23 @@ TRAIN_DEFAULTS = dict(
     train_steps=4,
 )
 
-# Build image: torch + numpy, mount local src/
+_root = Path(__file__).resolve().parent.parent.parent
+
+# Build image: torch + numpy + Rust movegen, mount local src/
 image = (
     modal.Image.debian_slim(python_version="3.10")
-    .pip_install("torch", "numpy")
+    .apt_install("curl", "build-essential")
+    .run_commands(
+        "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+    )
+    .pip_install("torch", "numpy", "maturin")
+    .add_local_dir(str(_root / "guandan_rs"), remote_path="/root/guandan_rs")
+    .run_commands(
+        "bash -c 'source $HOME/.cargo/env && cd /root/guandan_rs && maturin build --release --interpreter python3.10'",
+        "pip install /root/guandan_rs/target/wheels/guandan_rs-*.whl",
+    )
     .add_local_dir(
-        str(Path(__file__).resolve().parent.parent.parent / "src"),
+        str(_root / "src"),
         remote_path="/root/src",
     )
 )

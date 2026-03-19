@@ -98,6 +98,8 @@ def main(args: argparse.Namespace | None = None) -> None:
         parser.add_argument("--lr", type=float, default=1e-4)
         parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
         parser.add_argument("--run-name", type=str, default="distill")
+        parser.add_argument("--workers", type=int, default=0,
+                            help="Parallel CPU workers (0=single-threaded)")
         args = parser.parse_args()
 
     run_dir = Path("runs") / args.run_name
@@ -110,9 +112,10 @@ def main(args: argparse.Namespace | None = None) -> None:
 
     log.info("Device: %s", device)
     log.info("Run dir: %s", run_dir)
+    n_workers = getattr(args, "workers", 0)
     log.info(
-        "Stages: 1-%d | Games/stage: %d | Epochs: %d | LR: %g",
-        args.stage, args.games, args.epochs, args.lr,
+        "Stages: 1-%d | Games/stage: %d | Epochs: %d | LR: %g | Workers: %d",
+        args.stage, args.games, args.epochs, args.lr, n_workers,
     )
 
     level_rank = Rank.TWO
@@ -146,6 +149,7 @@ def main(args: argparse.Namespace | None = None) -> None:
             q_lead, q_follow, opt_lead, opt_follow,
             teacher, args.games, level_rank,
             epochs=args.epochs, batch_size=args.batch_size, device=str(device),
+            n_workers=n_workers,
         )
 
         log.info("Stage 1 complete (%.0fs)", time.time() - t_stage)
@@ -175,6 +179,7 @@ def main(args: argparse.Namespace | None = None) -> None:
             q_lead, q_follow, opt_lead, opt_follow,
             teacher, args.games, level_rank,
             epochs=args.epochs, batch_size=args.batch_size, device=str(device),
+            n_workers=n_workers,
         )
 
         log.info("Stage 2 complete (%.0fs)", time.time() - t_stage)

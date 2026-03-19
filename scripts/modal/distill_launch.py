@@ -26,7 +26,11 @@ DISTILL_DEFAULTS = dict(
     resume=None,
 )
 
-_root = Path(__file__).resolve().parents[2]
+try:
+    _root = Path(__file__).resolve().parents[2]  # local: scripts/modal/distill_launch.py
+except IndexError:
+    _root = Path(__file__).resolve().parent  # Modal: /root/distill_launch.py
+
 image = (
     modal.Image.debian_slim(python_version="3.10")
     .pip_install("torch", "numpy", "tqdm")

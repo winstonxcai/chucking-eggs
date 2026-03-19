@@ -89,6 +89,32 @@ class QNetworkLSTM(nn.Module):
                 bias_size = param.size(0)
                 param.data[bias_size // 4 : bias_size // 2].fill_(1.0)
 
+    def encode_history(
+        self, history: torch.Tensor, history_len: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run LSTM on history sequences. [B, T, d_move], [B] → [B, lstm_hidden]."""
+        lengths = history_len.clamp(min=1)
+
+        if history.device.type == "mps":
+            _, (h_n, _) = self.lstm(history)
+            return h_n.squeeze(0)
+        else:
+            lengths_cpu = lengths.cpu()
+            packed = nn.utils.rnn.pack_padded_sequence(
+                history, lengths_cpu, batch_first=True, enforce_sorted=False
+            )
+            _, (h_n, _) = self.lstm(packed)
+            return h_n.squeeze(0)
+
+    def forward_from_embedding(
+        self, state: torch.Tensor, action: torch.Tensor, hist_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        """MLP forward from pre-computed history embedding.
+        [B, d_state], [B, d_action], [B, lstm_hidden] → [B]
+        """
+        x = torch.cat([state, action, hist_emb], dim=-1)
+        return self.mlp(x).squeeze(-1)
+
     def forward(
         self,
         state: torch.Tensor,
@@ -96,21 +122,5 @@ class QNetworkLSTM(nn.Module):
         history: torch.Tensor,
         history_len: torch.Tensor,
     ) -> torch.Tensor:
-        lengths = history_len.clamp(min=1)
-
-        if history.device.type == "mps":
-            # MPS doesn't support pack_padded_sequence — run LSTM on
-            # full padded sequence; h_n is the hidden state after the last
-            # timestep (including padding, but zero-padding has minimal effect)
-            _, (h_n, _) = self.lstm(history)
-            history_emb = h_n.squeeze(0)  # [B, lstm_hidden]
-        else:
-            lengths_cpu = lengths.cpu()
-            packed = nn.utils.rnn.pack_padded_sequence(
-                history, lengths_cpu, batch_first=True, enforce_sorted=False
-            )
-            _, (h_n, _) = self.lstm(packed)
-            history_emb = h_n.squeeze(0)  # [B, lstm_hidden]
-
-        x = torch.cat([state, action, history_emb], dim=-1)
-        return self.mlp(x).squeeze(-1)
+        history_emb = self.encode_history(history, history_len)
+        return self.forward_from_embedding(state, action, history_emb)

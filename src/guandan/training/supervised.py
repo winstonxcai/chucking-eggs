@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from ..game import GuanDanEnv
-from .encoding import encode_action, encode_history, encode_state
+from .encoding import ACTION_DIM, D_MOVE, MAX_HISTORY, encode_action, encode_history, encode_state
 
 log = logging.getLogger(__name__)
 
@@ -169,10 +169,81 @@ def train_supervised(
                           epochs, batch_size, device)
 
 
+def _train_batch(decisions, q_net, optimizer, device, stats, role):
+    """Batched forward pass: N decisions with variable action counts, one GPU pass.
+
+    Uses LSTM deduplication: encode history once per decision, expand to actions.
+    """
+    N = len(decisions)
+    B_sizes = [len(d["action_encs"]) for d in decisions]
+    max_B = max(B_sizes)
+
+    # Pad actions to [N, max_B, ACTION_DIM], build mask [N, max_B]
+    action_pad = torch.zeros(N, max_B, ACTION_DIM, dtype=torch.float32)
+    mask = torch.zeros(N, max_B, dtype=torch.bool)
+    targets = torch.zeros(N, dtype=torch.long)
+
+    for i, d in enumerate(decisions):
+        Bi = B_sizes[i]
+        action_pad[i, :Bi] = torch.tensor(d["action_encs"], dtype=torch.float32)
+        mask[i, :Bi] = True
+        targets[i] = d["expert_idx"]
+
+    # Stack states: [N, STATE_DIM]
+    states = torch.stack([torch.tensor(d["state"], dtype=torch.float32) for d in decisions])
+
+    # Pad histories to [N, MAX_HISTORY, D_MOVE] (variable T per decision)
+    hists = torch.zeros(N, MAX_HISTORY, D_MOVE, dtype=torch.float32)
+    hlens = torch.tensor([d["hist_len"] for d in decisions], dtype=torch.long)
+    for i, d in enumerate(decisions):
+        h = d["history"]
+        T = min(len(h), MAX_HISTORY)
+        hists[i, :T] = torch.tensor(h[:T], dtype=torch.float32)
+
+    # Move to device
+    states = states.to(device)
+    hists = hists.to(device)
+    action_pad = action_pad.to(device)
+    mask = mask.to(device)
+    targets = targets.to(device)
+
+    # LSTM once per decision: [N, T, 83] → [N, lstm_hidden]
+    hist_emb = q_net.encode_history(hists, hlens)
+
+    # Expand to match actions: [N, max_B, ...]
+    states_exp = states.unsqueeze(1).expand(N, max_B, -1).reshape(N * max_B, -1)
+    actions_flat = action_pad.reshape(N * max_B, -1)
+    hist_exp = hist_emb.unsqueeze(1).expand(N, max_B, -1).reshape(N * max_B, -1)
+
+    # Single MLP forward pass
+    q_flat = q_net.forward_from_embedding(states_exp, actions_flat, hist_exp)
+    q_matrix = q_flat.reshape(N, max_B)
+
+    # Mask invalid actions
+    q_matrix = q_matrix.masked_fill(~mask, float("-inf"))
+
+    # Batched cross-entropy
+    loss = F.cross_entropy(q_matrix, targets)
+    loss.backward()
+
+    # Optimizer step
+    torch.nn.utils.clip_grad_norm_(q_net.parameters(), max_norm=1.0)
+    optimizer.step()
+    optimizer.zero_grad()
+
+    # Stats
+    predictions = q_matrix.argmax(dim=-1)
+    correct = (predictions == targets).sum().item()
+    key = "lead" if role == "lead" else "follow"
+    stats[f"{key}_losses"].append(loss.item())
+    stats[f"{key}_correct"] += correct
+    stats[f"{key}_total"] += N
+
+
 def _train_parallel(q_lead, q_follow, opt_lead, opt_follow,
                     teacher_cls, n_games, level_rank,
                     epochs, batch_size, device, n_workers):
-    """Producer-consumer: N CPU workers generate games, main process trains on GPU."""
+    """Producer-consumer with batched GPU training."""
     for epoch in range(epochs):
         stats = {
             "lead_losses": [], "follow_losses": [],
@@ -181,8 +252,6 @@ def _train_parallel(q_lead, q_follow, opt_lead, opt_follow,
         }
         opt_lead.zero_grad()
         opt_follow.zero_grad()
-        lead_batch_count = 0
-        follow_batch_count = 0
 
         # Distribute games across workers
         games_per_worker = [n_games // n_workers] * n_workers
@@ -197,14 +266,13 @@ def _train_parallel(q_lead, q_follow, opt_lead, opt_follow,
             workers.append(p)
 
         sentinels = 0
-        games_done = 0
+        lead_buf, follow_buf = [], []
 
         with tqdm(total=n_games, desc=f"Epoch {epoch + 1}/{epochs}", unit="game", leave=True) as pbar:
             while sentinels < n_workers:
                 try:
                     item = queue.get(timeout=60)
                 except Empty:
-                    # Check if workers are still alive
                     alive = sum(1 for p in workers if p.is_alive())
                     if alive == 0 and sentinels < n_workers:
                         log.warning("All workers died before sending sentinels")
@@ -215,7 +283,6 @@ def _train_parallel(q_lead, q_follow, opt_lead, opt_follow,
                     sentinels += 1
                     continue
                 if item == "GAME_DONE":
-                    games_done += 1
                     pbar.update(1)
                     pbar.set_postfix(
                         l_acc=f"{stats['lead_correct'] / stats['lead_total']:.1%}" if stats["lead_total"] else "n/a",
@@ -223,15 +290,27 @@ def _train_parallel(q_lead, q_follow, opt_lead, opt_follow,
                     )
                     continue
 
-                lead_batch_count, follow_batch_count = _train_decision(
-                    item, q_lead, q_follow, opt_lead, opt_follow,
-                    batch_size, device, lead_batch_count, follow_batch_count, stats,
-                )
+                if item["is_leading"]:
+                    lead_buf.append(item)
+                else:
+                    follow_buf.append(item)
+
+                if len(lead_buf) >= batch_size:
+                    _train_batch(lead_buf[:batch_size], q_lead, opt_lead, device, stats, "lead")
+                    lead_buf = lead_buf[batch_size:]
+                if len(follow_buf) >= batch_size:
+                    _train_batch(follow_buf[:batch_size], q_follow, opt_follow, device, stats, "follow")
+                    follow_buf = follow_buf[batch_size:]
+
+        # Flush remaining buffered decisions
+        if lead_buf:
+            _train_batch(lead_buf, q_lead, opt_lead, device, stats, "lead")
+        if follow_buf:
+            _train_batch(follow_buf, q_follow, opt_follow, device, stats, "follow")
 
         for p in workers:
             p.join(timeout=10)
 
-        _flush_grads(q_lead, q_follow, opt_lead, opt_follow, lead_batch_count, follow_batch_count)
         _log_epoch(epoch, epochs, stats)
 
 

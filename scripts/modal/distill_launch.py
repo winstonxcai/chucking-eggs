@@ -39,7 +39,7 @@ image = (
         "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
     )
     .pip_install("torch", "numpy", "tqdm", "maturin")
-    .add_local_dir(str(_root / "guandan_rs"), remote_path="/root/guandan_rs")
+    .add_local_dir(str(_root / "guandan_rs"), remote_path="/root/guandan_rs", copy=True)
     .run_commands(
         "bash -c 'source $HOME/.cargo/env && cd /root/guandan_rs && maturin build --release --interpreter python3.10'",
         "pip install /root/guandan_rs/target/wheels/guandan_rs-*.whl",

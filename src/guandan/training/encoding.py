@@ -190,6 +190,60 @@ def encode_move_event(actor_relative: int, combo: Combo, level_rank: int) -> np.
     # Total: 4 + 60 + 1 + 17 + 1 = 83
 
 
+D_GLOBAL = 310  # global state dimension for QMIX mixer
+
+
+def encode_global_state(env: GuanDanEnv, team: tuple[int, int] = (0, 2)) -> np.ndarray:
+    """Global (oracle) state for QMIX mixer. Sees all 4 hands.
+
+    Centralized training only — not used during decentralized execution.
+
+    Layout:
+        4 hands × 60 dims    = 240  (oracle: all hands visible)
+        played_all            = 60   (cards played by anyone)
+        hand_counts (4)       = 4    (normalized)
+        out_flags (4)         = 4
+        trick_active          = 1
+        trick_winner_team     = 1    (1 if team won last trick, else 0)
+        Total                 = 310
+    """
+    # All 4 hands (absolute order: players 0,1,2,3)
+    hands = np.concatenate([
+        cards_to_matrix(env.hands[p]).flatten() for p in range(4)
+    ])  # 240
+
+    # All played cards (union)
+    all_played: set = set()
+    for p in range(4):
+        all_played |= env.played[p]
+    played_all = cards_to_matrix(all_played).flatten()  # 60
+
+    # Hand counts (normalized)
+    counts = np.array(
+        [len(env.hands[p]) / INITIAL_HAND_SIZE for p in range(4)],
+        dtype=np.float32,
+    )  # 4
+
+    # Out flags
+    out_flags = np.array(
+        [float(env.is_out[p]) for p in range(4)],
+        dtype=np.float32,
+    )  # 4
+
+    # Trick active
+    trick_active = np.array([float(env.current_trick is not None)], dtype=np.float32)  # 1
+
+    # Did team win the last trick? (heuristic: trick winner's team == team)
+    trick_winner_team = np.array([0.0], dtype=np.float32)  # 1
+    if env.trick_winner is not None and env.trick_winner in team:
+        trick_winner_team[0] = 1.0
+
+    return np.concatenate([
+        hands, played_all, counts, out_flags, trick_active, trick_winner_team,
+    ])
+    # Total: 240 + 60 + 4 + 4 + 1 + 1 = 310
+
+
 def encode_history(
     env: GuanDanEnv, player: int, level_rank: int
 ) -> tuple[np.ndarray, int]:

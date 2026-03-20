@@ -1,37 +1,36 @@
-"""Modal GPU launcher for self-play fine-tuning.
+"""Modal launcher for QMIX training (Phase A + B).
 
 Usage:
-    modal run --detach scripts/modal/selfplay_launch.py
-    modal run --detach scripts/modal/selfplay_launch.py --episodes 80000 --resume selfplay_best.pt
+    modal run --detach scripts/modal/qmix_launch.py
+    modal run --detach scripts/modal/qmix_launch.py --phase AB --episodes 15000
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import modal
 
-app = modal.App("guandan-selfplay")
+app = modal.App("guandan-qmix")
 vol = modal.Volume.from_name("guandan-checkpoints", create_if_missing=True)
 CHECKPOINT_DIR = "/checkpoints"
 
-SELFPLAY_DEFAULTS = dict(
+QMIX_DEFAULTS = dict(
     resume=f"{CHECKPOINT_DIR}/selfplay_best.pt",
-    episodes=80000,
-    workers=0,
-    n_envs=64,
+    phase="AB",
+    episodes=15000,
+    batch_size=512,
     train_steps=4,
-    batch_size=1024,
-    lr=3e-5,
-    buffer_size=250000,
-    eval_interval=10000,
+    lr_mixer=1e-3,
+    lr_q=1e-5,
+    eval_interval=2000,
     eval_games=100,
-    save_interval=20000,
-    epsilon_start=0.15,
-    epsilon_end=0.03,
+    epsilon_start=0.10,
+    epsilon_end=0.01,
     epsilon_decay_frac=0.80,
     checkpoint_dir=CHECKPOINT_DIR,
-    run_name="selfplay_modal",
-    no_baseline=True,
+    run_name="qmix_v1",
+    mixer_resume="",
 )
 
 try:
@@ -59,11 +58,11 @@ image = (
 @app.function(
     image=image,
     gpu="A10G",
-    cpu=16,
-    timeout=3600 * 4,
+    cpu=4,
+    timeout=3600 * 2,
     volumes={CHECKPOINT_DIR: vol},
 )
-def selfplay_remote(**kwargs) -> str:
+def qmix_remote(**kwargs) -> str:
     import argparse
     import os
     import sys
@@ -72,33 +71,34 @@ def selfplay_remote(**kwargs) -> str:
     sys.path.insert(0, "/root/scripts")
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-    from selfplay import main as selfplay_main
+    from qmix_train import main as qmix_main
 
-    params = {**SELFPLAY_DEFAULTS, **kwargs}
+    params = {**QMIX_DEFAULTS, **kwargs}
     ns = argparse.Namespace(**params)
-    selfplay_main(ns)
+    qmix_main(ns)
     vol.commit()
-    return f"Self-play complete. {params['episodes']} episodes."
+    return f"QMIX complete. Phase: {params['phase']}, {params['episodes']} episodes."
 
 
 @app.local_entrypoint()
 def main(
-    episodes: int = 80000,
-    run_name: str = "selfplay_modal",
+    phase: str = "AB",
+    episodes: int = 15000,
+    run_name: str = "qmix_v1",
     resume: str = "",
-    n_envs: int = 64,
-    eval_interval: int = 10000,
+    mixer_resume: str = "",
     eval_games: int = 100,
 ) -> None:
-    """Launch self-play fine-tuning on Modal A10G + GPU-batched GameRunner."""
+    """Launch QMIX training on Modal A10G."""
     kwargs: dict = {
+        "phase": phase,
         "episodes": episodes,
         "run_name": run_name,
-        "n_envs": n_envs,
-        "eval_interval": eval_interval,
         "eval_games": eval_games,
     }
     if resume:
         kwargs["resume"] = f"{CHECKPOINT_DIR}/{resume}"
-    result = selfplay_remote.remote(**kwargs)
+    if mixer_resume:
+        kwargs["mixer_resume"] = f"{CHECKPOINT_DIR}/{mixer_resume}"
+    result = qmix_remote.remote(**kwargs)
     print(result)

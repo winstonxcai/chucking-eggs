@@ -2,18 +2,24 @@
 """Self-play fine-tuning from distilled weights.
 
 Usage:
-  python scripts/selfplay.py --resume checkpoints/stage2_strategic.pt
-  python scripts/selfplay.py --resume checkpoints/stage2_strategic.pt --episodes 2000 --run-name selfplay_smoke
+  # Single-threaded (GameRunner batched inference):
+  python scripts/selfplay.py --resume checkpoints/selfplay_best.pt
+
+  # Multi-process (CPU workers, lean eval):
+  python scripts/selfplay.py --resume checkpoints/selfplay_best.pt --workers 10 --eval-games 100
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import multiprocessing as mp
 import os
 import time
 from pathlib import Path
+from queue import Empty
 
+import numpy as np
 import torch
 from tqdm import tqdm
 
@@ -23,7 +29,7 @@ from guandan.game import GuanDanEnv
 from guandan.training.game_runner import GameRunner
 from guandan.training.q_network import QNetworkLSTM, get_device
 from guandan.training.replay import ReplayBuffer
-from guandan.training.train import train_step
+from guandan.training.train import play_episode, train_step
 
 
 def _setup_logging(log_path: Path) -> None:
@@ -48,15 +54,46 @@ def get_epsilon(episode: int, total: int, start: float, end: float, decay_frac: 
     return max(end, start - (start - end) * episode / max(decay_episodes, 1))
 
 
-def _run_eval(q_lead, q_follow, device, level_rank) -> dict:
+# ── Multi-process worker ───────────────────────────────────────────────────
+
+def _selfplay_worker(
+    queue: mp.Queue,
+    lead_sd: dict,
+    follow_sd: dict,
+    level_rank,
+    n_games: int,
+    epsilon: float,
+) -> None:
+    """CPU worker: self-play games with own model copies, push transitions."""
+    device = torch.device("cpu")
+    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    q_lead.load_state_dict(lead_sd)
+    q_follow.load_state_dict(follow_sd)
+    q_lead.eval()
+    q_follow.eval()
+
+    env = GuanDanEnv(level_rank)
+
+    for _ in range(n_games):
+        transitions = play_episode(env, q_lead, q_follow, epsilon, device, opponent=None)
+        for t in transitions:
+            queue.put(t)
+        queue.put("GAME_DONE")
+    queue.put(None)  # sentinel
+
+
+# ── Eval ───────────────────────────────────────────────────────────────────
+
+def _run_eval(q_lead, q_follow, device, level_rank, n_games_per_opp: int = 200) -> dict:
     """Ladder eval against all opponents. Returns dict of win rates."""
     rl = RLAgentLSTM(q_lead, q_follow, device, level_rank)
 
     opponents = [
-        ("Random",    RandomBot(),              200),
-        ("Greedy",    GreedyBot(level_rank),    200),
-        ("Heuristic", HeuristicBot(level_rank), 300),
-        ("Strategic", StrategicBot(level_rank), 300),
+        ("Random",    RandomBot(),              min(n_games_per_opp, 200)),
+        ("Greedy",    GreedyBot(level_rank),    min(n_games_per_opp, 200)),
+        ("Heuristic", HeuristicBot(level_rank), n_games_per_opp),
+        ("Strategic", StrategicBot(level_rank), n_games_per_opp),
     ]
 
     log.info("%-12s | %5s | %6s | %5s %5s %5s", "Opponent", "Games", "WR", "1-2", "1-3", "1-4")
@@ -97,23 +134,204 @@ def _run_eval(q_lead, q_follow, device, level_rank) -> dict:
     return results
 
 
+# ── Training loops ─────────────────────────────────────────────────────────
+
+def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
+                        args, device, level_rank, best_wr):
+    """Multi-process: CPU workers generate self-play, GPU trains."""
+    n_workers = args.workers
+    train_every = 64  # train after every ~64 episodes
+    sync_interval = getattr(args, "sync_interval", 20000)  # weight sync interval
+
+    episodes_done = 0
+    last_sync = 0
+
+    while episodes_done < args.episodes:
+        # Determine batch size for this round
+        batch_episodes = min(args.episodes - episodes_done, sync_interval - (episodes_done - last_sync))
+        eps = get_epsilon(
+            episodes_done, args.episodes,
+            args.epsilon_start, args.epsilon_end, args.epsilon_decay_frac,
+        )
+
+        # Get current weights for workers
+        lead_sd = {k: v.cpu() for k, v in q_lead.state_dict().items()}
+        follow_sd = {k: v.cpu() for k, v in q_follow.state_dict().items()}
+
+        # Distribute games across workers
+        games_per_worker = [batch_episodes // n_workers] * n_workers
+        for i in range(batch_episodes % n_workers):
+            games_per_worker[i] += 1
+
+        queue = mp.Queue(maxsize=2000)
+        workers = []
+        for i in range(n_workers):
+            if games_per_worker[i] == 0:
+                continue
+            p = mp.Process(
+                target=_selfplay_worker,
+                args=(queue, lead_sd, follow_sd, level_rank, games_per_worker[i], eps),
+            )
+            p.start()
+            workers.append(p)
+
+        sentinels = 0
+        batch_ep_done = 0
+
+        with tqdm(total=batch_episodes, desc=f"Self-play (ε={eps:.3f})", unit="ep", leave=False) as pbar:
+            while sentinels < len(workers):
+                try:
+                    item = queue.get(timeout=120)
+                except Empty:
+                    alive = sum(1 for p in workers if p.is_alive())
+                    if alive == 0:
+                        log.warning("All workers died")
+                        break
+                    continue
+
+                if item is None:
+                    sentinels += 1
+                    continue
+                if item == "GAME_DONE":
+                    batch_ep_done += 1
+                    episodes_done += 1
+                    pbar.update(1)
+                    pbar.set_postfix(buf=f"{len(buffer):,}")
+
+                    # Train periodically
+                    if batch_ep_done % train_every == 0 and len(buffer) >= args.batch_size:
+                        for _ in range(args.train_steps):
+                            train_step(q_lead, buffer, opt_lead, args.batch_size, device)
+                            train_step(q_follow, buffer, opt_follow, args.batch_size, device)
+
+                    # Eval
+                    if episodes_done > 0 and episodes_done % args.eval_interval == 0:
+                        log.info("=" * 60)
+                        log.info("EVAL @ episode %d/%d | ε=%.3f | buffer=%d",
+                                 episodes_done, args.episodes, eps, len(buffer))
+                        log.info("=" * 60)
+                        eval_games = getattr(args, "eval_games", 200)
+                        results = _run_eval(q_lead, q_follow, device, level_rank, eval_games)
+                        wr_h = results.get("heuristic", 0)
+                        if wr_h > best_wr:
+                            best_wr = wr_h
+                            path = os.path.join(args.checkpoint_dir, "selfplay_best.pt")
+                            torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
+                                        "episode": episodes_done, "wr_heuristic": wr_h}, path)
+                            log.info("★ New best: %.1f%% vs Heuristic → %s", wr_h * 100, path)
+
+                    # Save checkpoint
+                    if episodes_done > 0 and episodes_done % args.save_interval == 0:
+                        path = os.path.join(args.checkpoint_dir, f"selfplay_ep{episodes_done}.pt")
+                        torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
+                                    "episode": episodes_done}, path)
+                        log.info("Saved: %s", path)
+
+                    continue
+
+                # Push transition to buffer
+                buffer.push(*item)
+
+        for p in workers:
+            p.join(timeout=10)
+
+        last_sync = episodes_done
+        log.info("Weight sync @ episode %d", episodes_done)
+
+    # Final train flush
+    if len(buffer) >= args.batch_size:
+        for _ in range(args.train_steps * 4):
+            train_step(q_lead, buffer, opt_lead, args.batch_size, device)
+            train_step(q_follow, buffer, opt_follow, args.batch_size, device)
+
+    return best_wr
+
+
+def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
+                      args, device, level_rank, best_wr):
+    """Single-threaded GameRunner with batched GPU inference."""
+    runner = GameRunner(
+        n_envs=args.n_envs,
+        q_lead=q_lead,
+        q_follow=q_follow,
+        device=device,
+        level_rank=level_rank,
+        epsilon=args.epsilon_start,
+    )
+
+    episodes_done = 0
+
+    with tqdm(total=args.episodes, desc="Self-play", unit="ep") as pbar:
+        while episodes_done < args.episodes:
+            eps = get_epsilon(
+                episodes_done, args.episodes,
+                args.epsilon_start, args.epsilon_end, args.epsilon_decay_frac,
+            )
+            runner.epsilon = eps
+
+            batch_target = min(args.n_envs, args.episodes - episodes_done)
+            for transitions in runner.generate_episodes(batch_target):
+                for (state, action, history, hist_len, mc_return) in transitions:
+                    buffer.push(state, action, history, hist_len, mc_return)
+                episodes_done += 1
+                pbar.update(1)
+
+            for _ in range(args.train_steps):
+                train_step(q_lead, buffer, opt_lead, args.batch_size, device)
+                train_step(q_follow, buffer, opt_follow, args.batch_size, device)
+
+            pbar.set_postfix(eps=f"{eps:.3f}", buf=f"{len(buffer):,}")
+
+            if episodes_done > 0 and episodes_done % args.eval_interval == 0:
+                log.info("=" * 60)
+                log.info("EVAL @ episode %d/%d | ε=%.3f | buffer=%d",
+                         episodes_done, args.episodes, eps, len(buffer))
+                log.info("=" * 60)
+                eval_games = getattr(args, "eval_games", 200)
+                results = _run_eval(q_lead, q_follow, device, level_rank, eval_games)
+                wr_h = results.get("heuristic", 0)
+                if wr_h > best_wr:
+                    best_wr = wr_h
+                    path = os.path.join(args.checkpoint_dir, "selfplay_best.pt")
+                    torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
+                                "episode": episodes_done, "wr_heuristic": wr_h}, path)
+                    log.info("★ New best: %.1f%% vs Heuristic → %s", wr_h * 100, path)
+
+            if episodes_done > 0 and episodes_done % args.save_interval == 0:
+                path = os.path.join(args.checkpoint_dir, f"selfplay_ep{episodes_done}.pt")
+                torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
+                            "episode": episodes_done}, path)
+                log.info("Saved: %s", path)
+
+    return best_wr
+
+
+# ── Main ───────────────────────────────────────────────────────────────────
+
 def main(args: argparse.Namespace | None = None) -> None:
     if args is None:
         parser = argparse.ArgumentParser(description="Self-play fine-tuning")
         parser.add_argument("--resume", type=str, required=True)
         parser.add_argument("--episodes", type=int, default=20000)
-        parser.add_argument("--n-envs", type=int, default=64)
+        parser.add_argument("--workers", type=int, default=0,
+                            help="CPU workers for parallel game gen (0=GameRunner)")
+        parser.add_argument("--n-envs", type=int, default=64,
+                            help="Parallel envs for GameRunner (when workers=0)")
         parser.add_argument("--train-steps", type=int, default=4)
         parser.add_argument("--batch-size", type=int, default=1024)
         parser.add_argument("--lr", type=float, default=3e-5)
         parser.add_argument("--buffer-size", type=int, default=250000)
         parser.add_argument("--eval-interval", type=int, default=2000)
+        parser.add_argument("--eval-games", type=int, default=200,
+                            help="Games per opponent during eval")
         parser.add_argument("--save-interval", type=int, default=5000)
         parser.add_argument("--epsilon-start", type=float, default=0.15)
         parser.add_argument("--epsilon-end", type=float, default=0.03)
         parser.add_argument("--epsilon-decay-frac", type=float, default=0.80)
         parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
         parser.add_argument("--run-name", type=str, default="selfplay")
+        parser.add_argument("--no-baseline", action="store_true",
+                            help="Skip baseline eval at startup")
         args = parser.parse_args()
 
     run_dir = Path("runs") / args.run_name
@@ -124,18 +342,21 @@ def main(args: argparse.Namespace | None = None) -> None:
     device = get_device()
     t0 = time.time()
 
+    n_workers = getattr(args, "workers", 0)
+    eval_games = getattr(args, "eval_games", 200)
+    no_baseline = getattr(args, "no_baseline", False)
+
     log.info("Device: %s", device)
     log.info("Run dir: %s", run_dir)
     log.info(
-        "Episodes: %d | N-envs: %d | Train-steps: %d | LR: %g | Batch: %d",
-        args.episodes, args.n_envs, args.train_steps, args.lr, args.batch_size,
+        "Episodes: %d | Workers: %d | Train-steps: %d | LR: %g | Batch: %d | Eval-games: %d",
+        args.episodes, n_workers, args.train_steps, args.lr, args.batch_size, eval_games,
     )
 
     level_rank = Rank.TWO
     q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
 
-    # Load distilled weights
     log.info("Loading checkpoint: %s", args.resume)
     ckpt = torch.load(args.resume, map_location=device, weights_only=True)
     q_lead.load_state_dict(ckpt["lead"])
@@ -145,12 +366,15 @@ def main(args: argparse.Namespace | None = None) -> None:
     log.info("Network: %s params per head (%s total)", f"{n_params:,}", f"{2 * n_params:,}")
 
     # Baseline eval
-    log.info("=" * 60)
-    log.info("BASELINE EVAL (before self-play)")
-    log.info("=" * 60)
-    baseline = _run_eval(q_lead, q_follow, device, level_rank)
-    log.info("Baseline: %.1f%% vs Heuristic, %.1f%% vs Strategic",
-             baseline.get("heuristic", 0) * 100, baseline.get("strategic", 0) * 100)
+    best_wr = 0.0
+    if not no_baseline:
+        log.info("=" * 60)
+        log.info("BASELINE EVAL (before self-play)")
+        log.info("=" * 60)
+        baseline = _run_eval(q_lead, q_follow, device, level_rank, eval_games)
+        best_wr = baseline.get("heuristic", 0)
+        log.info("Baseline: %.1f%% vs Heuristic, %.1f%% vs Strategic",
+                 baseline.get("heuristic", 0) * 100, baseline.get("strategic", 0) * 100)
 
     if args.episodes == 0:
         log.info("Episodes=0, exiting after baseline eval.")
@@ -161,87 +385,33 @@ def main(args: argparse.Namespace | None = None) -> None:
     opt_follow = torch.optim.Adam(q_follow.parameters(), lr=args.lr)
     buffer = ReplayBuffer(capacity=args.buffer_size)
 
-    runner = GameRunner(
-        n_envs=args.n_envs,
-        q_lead=q_lead,
-        q_follow=q_follow,
-        device=device,
-        level_rank=level_rank,
-        epsilon=args.epsilon_start,
-    )
-
-    best_wr_heuristic = baseline.get("heuristic", 0)
-    episodes_done = 0
-
     log.info("=" * 60)
-    log.info("SELF-PLAY TRAINING")
+    log.info("SELF-PLAY TRAINING (%s)", "multi-process" if n_workers > 0 else "GameRunner")
     log.info("=" * 60)
 
-    with tqdm(total=args.episodes, desc="Self-play", unit="ep") as pbar:
-        while episodes_done < args.episodes:
-            # Update epsilon
-            eps = get_epsilon(
-                episodes_done, args.episodes,
-                args.epsilon_start, args.epsilon_end, args.epsilon_decay_frac,
-            )
-            runner.epsilon = eps
-
-            # Generate a batch of episodes
-            batch_target = min(args.n_envs, args.episodes - episodes_done)
-            for transitions in runner.generate_episodes(batch_target):
-                for (state, action, history, hist_len, mc_return) in transitions:
-                    buffer.push(state, action, history, hist_len, mc_return)
-                episodes_done += 1
-                pbar.update(1)
-
-            # Train
-            for _ in range(args.train_steps):
-                train_step(q_lead, buffer, opt_lead, args.batch_size, device)
-                train_step(q_follow, buffer, opt_follow, args.batch_size, device)
-
-            pbar.set_postfix(
-                eps=f"{eps:.3f}",
-                buf=f"{len(buffer):,}",
-            )
-
-            # Eval
-            if episodes_done > 0 and episodes_done % args.eval_interval == 0:
-                log.info("=" * 60)
-                log.info(
-                    "EVAL @ episode %d/%d | ε=%.3f | buffer=%d",
-                    episodes_done, args.episodes, eps, len(buffer),
-                )
-                log.info("=" * 60)
-                results = _run_eval(q_lead, q_follow, device, level_rank)
-
-                wr_h = results.get("heuristic", 0)
-                if wr_h > best_wr_heuristic:
-                    best_wr_heuristic = wr_h
-                    path = os.path.join(args.checkpoint_dir, "selfplay_best.pt")
-                    torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                                "episode": episodes_done, "wr_heuristic": wr_h}, path)
-                    log.info("★ New best: %.1f%% vs Heuristic → %s", wr_h * 100, path)
-
-            # Save periodic checkpoint
-            if episodes_done > 0 and episodes_done % args.save_interval == 0:
-                path = os.path.join(args.checkpoint_dir, f"selfplay_ep{episodes_done}.pt")
-                torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                            "episode": episodes_done}, path)
-                log.info("Saved: %s", path)
+    if n_workers > 0:
+        best_wr = _train_multiprocess(
+            q_lead, q_follow, opt_lead, opt_follow, buffer,
+            args, device, level_rank, best_wr,
+        )
+    else:
+        best_wr = _train_gamerunner(
+            q_lead, q_follow, opt_lead, opt_follow, buffer,
+            args, device, level_rank, best_wr,
+        )
 
     # Final save + eval
     path = os.path.join(args.checkpoint_dir, "selfplay_final.pt")
-    torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                "episode": episodes_done}, path)
+    torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict()}, path)
     log.info("Saved: %s", path)
 
     log.info("=" * 60)
     log.info("FINAL EVAL")
     log.info("=" * 60)
-    _run_eval(q_lead, q_follow, device, level_rank)
+    _run_eval(q_lead, q_follow, device, level_rank, eval_games)
 
     log.info("Done. Total time: %.0fs (%.1fh)", time.time() - t0, (time.time() - t0) / 3600)
-    log.info("Best WR vs Heuristic: %.1f%%", best_wr_heuristic * 100)
+    log.info("Best WR vs Heuristic: %.1f%%", best_wr * 100)
 
 
 if __name__ == "__main__":

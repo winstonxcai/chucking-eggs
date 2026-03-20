@@ -2,7 +2,7 @@
 
 Usage:
     modal run --detach scripts/modal/selfplay_launch.py
-    modal run --detach scripts/modal/selfplay_launch.py --episodes 2000 --run-name selfplay_smoke
+    modal run --detach scripts/modal/selfplay_launch.py --episodes 80000 --resume selfplay_best.pt
 """
 from __future__ import annotations
 
@@ -15,20 +15,23 @@ vol = modal.Volume.from_name("guandan-checkpoints", create_if_missing=True)
 CHECKPOINT_DIR = "/checkpoints"
 
 SELFPLAY_DEFAULTS = dict(
-    resume=f"{CHECKPOINT_DIR}/stage2_strategic.pt",
-    episodes=20000,
+    resume=f"{CHECKPOINT_DIR}/selfplay_best.pt",
+    episodes=80000,
+    workers=14,
     n_envs=64,
     train_steps=4,
     batch_size=1024,
     lr=3e-5,
     buffer_size=250000,
-    eval_interval=2000,
-    save_interval=5000,
+    eval_interval=10000,
+    eval_games=100,
+    save_interval=20000,
     epsilon_start=0.15,
     epsilon_end=0.03,
     epsilon_decay_frac=0.80,
     checkpoint_dir=CHECKPOINT_DIR,
     run_name="selfplay_modal",
+    no_baseline=True,
 )
 
 try:
@@ -56,7 +59,8 @@ image = (
 @app.function(
     image=image,
     gpu="A10G",
-    timeout=3600 * 6,
+    cpu=16,
+    timeout=3600 * 4,
     volumes={CHECKPOINT_DIR: vol},
 )
 def selfplay_remote(**kwargs) -> str:
@@ -79,20 +83,22 @@ def selfplay_remote(**kwargs) -> str:
 
 @app.local_entrypoint()
 def main(
-    episodes: int = 20000,
+    episodes: int = 80000,
     run_name: str = "selfplay_modal",
     resume: str = "",
-    n_envs: int = 64,
-    eval_interval: int = 2000,
+    workers: int = 14,
+    eval_interval: int = 10000,
+    eval_games: int = 100,
 ) -> None:
-    """Launch self-play fine-tuning on Modal A10G."""
+    """Launch self-play fine-tuning on Modal A10G + 16 vCPUs."""
     kwargs: dict = {
         "episodes": episodes,
         "run_name": run_name,
-        "n_envs": n_envs,
+        "workers": workers,
         "eval_interval": eval_interval,
+        "eval_games": eval_games,
     }
     if resume:
-        kwargs["resume"] = resume
+        kwargs["resume"] = f"{CHECKPOINT_DIR}/{resume}"
     result = selfplay_remote.remote(**kwargs)
     print(result)

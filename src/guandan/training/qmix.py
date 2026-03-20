@@ -1,8 +1,13 @@
 """QMIX training: episode collection and end-to-end gradient training.
 
 Two phases:
-  Phase A — Freeze Q-networks, train mixer only (detached Q-values).
-  Phase B — End-to-end: mixer loss back-props through Q-networks.
+  Phase A — Freeze Q-networks, train mixer only (Q-values re-computed with no_grad).
+  Phase B — End-to-end: re-run Q-networks WITH gradients so mixer loss back-props
+             through Q-values into Q-network weights.
+
+Key fix vs. original broken implementation: Q-values are NOT stored as detached
+scalars in the buffer. Instead, raw (state, action, history) inputs are stored
+and Q-networks are re-run during training to maintain gradient tape.
 """
 
 from __future__ import annotations
@@ -23,36 +28,47 @@ from .encoding import (
 from .mixing import TeamMixer
 from .q_network import QNetworkLSTM
 from .qmix_buffer import QMIXBuffer
-from .replay import ReplayBuffer
 
 
 # ── Trick-level data collection ────────────────────────────────────────────────
 
 class TrickCollector:
-    """Accumulates per-player Q-values within a trick, emits trick records."""
+    """Accumulates raw Q-net inputs per teammate per trick, emits trick records."""
 
     def __init__(self, team: tuple[int, int] = (0, 2)):
         self.team = team
-        self._q: dict[int, float] = {}       # last Q-value per team player this trick
-        self._gs: np.ndarray | None = None   # global state at start of trick
+        self._transitions: dict[int, dict] = {}
+        self._gs: np.ndarray | None = None
 
     def start_trick(self, env: GuanDanEnv) -> None:
-        self._q = {}
+        self._transitions = {}
         self._gs = encode_global_state(env, self.team)
 
-    def record(self, player: int, q_val: float) -> None:
+    def record(
+        self,
+        player: int,
+        state: np.ndarray,
+        action_enc: np.ndarray,
+        history: np.ndarray,
+        hist_len: int,
+        is_leading: bool,
+    ) -> None:
         if player in self.team:
-            self._q[player] = q_val
+            self._transitions[player] = {
+                "state":      state,
+                "action":     np.array(action_enc, dtype=np.float32),
+                "history":    history,
+                "hist_len":   hist_len,
+                "is_leading": is_leading,
+            }
 
-    def emit(self, team_return: float) -> dict | None:
-        """Return trick record if both team members acted this trick."""
-        if len(self._q) < 2 or self._gs is None:
+    def emit(self) -> dict | None:
+        """Return trick record, or None if no teammate acted this trick."""
+        if not self._transitions or self._gs is None:
             return None
         return {
-            "q_0": self._q.get(self.team[0], 0.0),
-            "q_2": self._q.get(self.team[1], 0.0),
+            "transitions": dict(self._transitions),
             "global_state": self._gs,
-            "team_return": team_return,
         }
 
 
@@ -64,35 +80,30 @@ def play_episode_qmix(
     device: torch.device,
     level_rank: int,
     team: tuple[int, int] = (0, 2),
-) -> tuple[list[dict], dict[int, list], dict[int, float]]:
-    """Self-play episode collecting trick-level QMIX data AND individual transitions.
+) -> tuple[list[dict], dict[int, float]]:
+    """Self-play episode collecting trick-level QMIX data.
 
     Returns:
-        trick_data:   list of trick records (q_0, q_2, global_state, team_return)
-        transitions:  dict[player → list of (state, action, history, hist_len)]
-        rewards:      dict[player → final reward]
+        trick_data:  list of trick records (transitions, global_state) with team_return filled in
+        rewards:     dict[player → final reward]
     """
     env.reset()
     q_lead.eval()
     q_follow.eval()
 
-    transitions: dict[int, list] = {0: [], 1: [], 2: [], 3: []}
     trick_records_raw: list[dict] = []
-
     collector = TrickCollector(team)
-    prev_trick_winner: int | None = None  # track trick boundaries
+    prev_trick_winner: int | None = None
 
     with torch.no_grad():
         while not env.done:
             player = env.current_player
             legal = env.legal_moves(player)
 
-            # Track trick boundaries: new trick starts when trick_winner changes
-            # (or at game start when both are None)
+            # Track trick boundaries
             if env.trick_winner != prev_trick_winner:
-                # Emit previous trick if complete
                 if prev_trick_winner is not None:
-                    rec = collector.emit(0.0)  # placeholder return; filled post-game
+                    rec = collector.emit()
                     if rec is not None:
                         trick_records_raw.append(rec)
                 collector.start_trick(env)
@@ -105,11 +116,9 @@ def play_episode_qmix(
             state = encode_state(env, player)
             history, hist_len = encode_history(env, player, level_rank)
             hand = env.hands[player]
-
             is_leading = env.current_trick is None
-            q_net = q_lead if is_leading else q_follow
 
-            # Encode all actions
+            q_net = q_lead if is_leading else q_follow
             action_encs = [encode_action(m, hand, level_rank) for m in legal]
             B = len(legal)
 
@@ -121,54 +130,91 @@ def play_episode_qmix(
             hist_emb = q_net.encode_history(hist_t, torch.tensor([max(hist_len, 1)]))
             hist_emb_exp = hist_emb.expand(B, -1)
             a_t = torch.tensor(np.array(action_encs), dtype=torch.float32, device=device)
-            q_vals = q_net.forward_from_embedding(state_t, a_t, hist_emb_exp)  # [B]
+            q_vals = q_net.forward_from_embedding(state_t, a_t, hist_emb_exp)
 
-            # ε-greedy
-            if random.random() < epsilon:
-                idx = random.randrange(B)
-            else:
-                idx = q_vals.argmax().item()
+            idx = random.randrange(B) if random.random() < epsilon else q_vals.argmax().item()
 
-            chosen_q = q_vals[idx].item()
-            collector.record(player, chosen_q)
-
-            transitions[player].append((state, np.array(action_encs[idx], dtype=np.float32), history, hist_len))
+            # Record raw inputs (NOT the Q-value scalar)
+            collector.record(
+                player, state, action_encs[idx], history, hist_len, is_leading
+            )
             env.step(legal[idx])
 
     # Emit final trick
-    rec = collector.emit(0.0)
+    rec = collector.emit()
     if rec is not None:
         trick_records_raw.append(rec)
 
     rewards = env.get_rewards()
     team_return = float(rewards[team[0]] + rewards[team[1]])
 
-    # Fill in actual team_return for all trick records
+    # Fill in team_return for all trick records
     trick_data = []
     for r in trick_records_raw:
         r["team_return"] = team_return
         trick_data.append(r)
 
-    return trick_data, transitions, rewards
+    return trick_data, rewards
 
 
 # ── Training steps ─────────────────────────────────────────────────────────────
 
+def _compute_q_vals(
+    q_lead: QNetworkLSTM,
+    q_follow: QNetworkLSTM,
+    batch: dict,
+    device: torch.device,
+    no_grad: bool = False,
+) -> torch.Tensor:
+    """Re-run Q-networks for both slots, return [B, 2] Q-values.
+
+    With no_grad=True (Phase A): Q-nets are frozen, used as encoders.
+    With no_grad=False (Phase B): gradients flow back to Q-net weights.
+    """
+    B = batch["states"].size(0)
+    q_vals = torch.zeros(B, 2, device=device)
+
+    ctx = torch.no_grad() if no_grad else torch.enable_grad()
+    with ctx:
+        for slot in range(2):
+            act_mask = batch["active"][:, slot]
+            if not act_mask.any():
+                continue
+
+            idx = act_mask.nonzero(as_tuple=True)[0]
+            s  = batch["states"][idx, slot]
+            a  = batch["actions"][idx, slot]
+            h  = batch["histories"][idx, slot]
+            hl = batch["hist_lens"][idx, slot]
+            lead_mask = batch["is_leading"][idx, slot]
+
+            for net, mask in [(q_lead, lead_mask), (q_follow, ~lead_mask)]:
+                if not mask.any():
+                    continue
+                mi = mask.nonzero(as_tuple=True)[0]
+                q_vals[idx[mi], slot] = net(s[mi], a[mi], h[mi], hl[mi])
+
+    return q_vals
+
+
 def train_mixer_step(
     mixer: TeamMixer,
+    q_lead: QNetworkLSTM,
+    q_follow: QNetworkLSTM,
     qmix_buf: QMIXBuffer,
     opt_mixer: torch.optim.Optimizer,
     batch_size: int,
     device: torch.device,
 ) -> float:
-    """Phase A: train mixer on detached Q-values. Returns loss."""
+    """Phase A: train mixer on Q-values from frozen Q-networks. Returns loss."""
     batch = qmix_buf.sample(batch_size, device)
-    q_vals = batch["q_vals"]       # [B, 2]
-    gs = batch["global_state"]     # [B, D_GLOBAL]
-    target = batch["return"]       # [B]
+    returns = batch["return"].float()
 
-    q_team = mixer(q_vals, gs)
-    loss = nn.functional.mse_loss(q_team, target)
+    # Q-nets are frozen (requires_grad=False in Phase A) — no_grad for efficiency
+    q_vals = _compute_q_vals(q_lead, q_follow, batch, device, no_grad=True)
+
+    q_team = mixer(q_vals, batch["global_state"])
+    loss = nn.functional.mse_loss(q_team, returns)
 
     opt_mixer.zero_grad()
     loss.backward()
@@ -181,63 +227,68 @@ def train_qmix_e2e_step(
     q_lead: QNetworkLSTM,
     q_follow: QNetworkLSTM,
     qmix_buf: QMIXBuffer,
-    std_buf: ReplayBuffer,
-    opt_mixer: torch.optim.Optimizer,
-    opt_lead: torch.optim.Optimizer,
-    opt_follow: torch.optim.Optimizer,
+    opt: torch.optim.Optimizer,
     batch_size: int,
     device: torch.device,
-    stabilizer_steps: int = 2,
+    loss_weight: float = 0.001,
 ) -> dict[str, float]:
-    """Phase B: end-to-end gradient from mixer loss through Q-networks.
+    """Phase B: true end-to-end QMIX — gradient flows from mixer loss to Q-nets.
 
-    Also runs stabilizer_steps of individual Q-learning from std_buf to
-    prevent catastrophic forgetting.
+    Q-networks are re-run WITH gradients so the computational graph connects
+    mixer → q_vals → Q-net weights. loss_weight scales the QMIX loss to keep
+    Q-net gradient magnitude reasonable relative to the mixer gradient.
     """
-    losses: dict[str, float] = {}
-
-    # ── QMIX loss (end-to-end) ──
     batch = qmix_buf.sample(batch_size, device)
-    q_vals = batch["q_vals"]
-    gs = batch["global_state"]
-    target = batch["return"]
+    returns = batch["return"].float()
 
-    # Re-compute Q-values WITH gradients (no detach)
-    # q_vals here are stored scalars; for true e2e we use them directly
-    # (Phase B re-uses stored Q-values as targets for the mixer only,
-    # since re-running the full LSTM forward per-trick is too expensive)
-    q_team = mixer(q_vals, gs)
-    qmix_loss = nn.functional.mse_loss(q_team, target)
+    # Re-run Q-nets WITH gradients (this is the key fix)
+    q_vals = _compute_q_vals(q_lead, q_follow, batch, device, no_grad=False)
 
-    opt_mixer.zero_grad()
-    opt_lead.zero_grad()
-    opt_follow.zero_grad()
+    q_team = mixer(q_vals, batch["global_state"])
+    qmix_loss = nn.functional.mse_loss(q_team, returns) * loss_weight
+
+    opt.zero_grad()
     qmix_loss.backward()
-    nn.utils.clip_grad_norm_(mixer.parameters(), 10.0)
-    opt_mixer.step()
-    opt_lead.step()
-    opt_follow.step()
-    losses["qmix"] = qmix_loss.item()
 
-    # ── Individual Q stabilizer ──
-    if len(std_buf) >= batch_size:
-        for net, opt, key in [
-            (q_lead, opt_lead, "stab_lead"),
-            (q_follow, opt_follow, "stab_follow"),
-        ]:
-            stab_loss_sum = 0.0
-            for _ in range(stabilizer_steps):
-                sb = std_buf.sample(batch_size, device)
-                q_pred = net(sb["state"], sb["action"], sb["history"], sb["hist_len"])
-                stab_loss = nn.functional.mse_loss(q_pred, sb["return"])
-                opt.zero_grad()
-                stab_loss.backward()
-                nn.utils.clip_grad_norm_(net.parameters(), 10.0)
-                opt.step()
-                stab_loss_sum += stab_loss.item()
-            losses[key] = stab_loss_sum / stabilizer_steps
+    q_lead_grad  = nn.utils.clip_grad_norm_(q_lead.parameters(),  max_norm=0.1).item()
+    q_follow_grad = nn.utils.clip_grad_norm_(q_follow.parameters(), max_norm=0.1).item()
+    mixer_grad   = nn.utils.clip_grad_norm_(mixer.parameters(),   max_norm=1.0).item()
+    opt.step()
 
-    return losses
+    return {
+        "qmix":          qmix_loss.item() / loss_weight,  # unscaled for readability
+        "q_lead_grad":   q_lead_grad,
+        "q_follow_grad": q_follow_grad,
+        "mixer_grad":    mixer_grad,
+    }
+
+
+def verify_e2e_gradients(
+    mixer: TeamMixer,
+    q_lead: QNetworkLSTM,
+    q_follow: QNetworkLSTM,
+    qmix_buf: QMIXBuffer,
+    device: torch.device,
+    batch_size: int = 32,
+) -> None:
+    """Run one e2e training step and assert Q-net gradients are nonzero.
+
+    Call before Phase B training to confirm the gradient tape is connected.
+    Raises AssertionError if Q-net gradient is zero (broken e2e).
+    """
+    opt = torch.optim.Adam([
+        {"params": mixer.parameters(),    "lr": 1e-3},
+        {"params": q_lead.parameters(),   "lr": 1e-6},
+        {"params": q_follow.parameters(), "lr": 1e-6},
+    ])
+    diag = train_qmix_e2e_step(mixer, q_lead, q_follow, qmix_buf, opt, batch_size, device)
+    q_gn = diag["q_lead_grad"]
+    m_gn = diag["mixer_grad"]
+    ratio = m_gn / max(q_gn, 1e-10)
+    print(f"  Gradient verification:")
+    print(f"    Q grad norm: {q_gn:.6f}  Mixer grad norm: {m_gn:.4f}  Ratio: {ratio:.0f}×")
+    assert q_gn > 0, f"Q-network gradient is zero — e2e gradient tape is broken"
+    print(f"  PASS")
 
 
 # ── Buffer fill helper ──────────────────────────────────────────────────────────
@@ -250,20 +301,16 @@ def fill_buffers(
     device: torch.device,
     level_rank: int,
     qmix_buf: QMIXBuffer,
-    std_buf: ReplayBuffer,
     n_episodes: int,
 ) -> int:
-    """Run n_episodes and push data to both buffers. Returns trick count."""
+    """Run n_episodes and push trick-level data to qmix_buf. Returns trick count."""
     total_tricks = 0
     for _ in range(n_episodes):
-        trick_data, transitions, rewards = play_episode_qmix(
+        trick_data, rewards = play_episode_qmix(
             env, q_lead, q_follow, epsilon, device, level_rank,
         )
+        team_return = float(rewards[0] + rewards[2])
         for rec in trick_data:
-            qmix_buf.push(rec["q_0"], rec["q_2"], rec["global_state"], rec["team_return"])
-        for player, tlist in transitions.items():
-            mc = float(rewards[player])
-            for (s, a, h, hl) in tlist:
-                std_buf.push(s, a, h, hl, mc)
+            qmix_buf.push(rec, team_return)
         total_tricks += len(trick_data)
     return total_tricks

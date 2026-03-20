@@ -36,9 +36,8 @@ from guandan.cards import Rank
 from guandan.game import GuanDanEnv
 from guandan.training.mixing import TeamMixer
 from guandan.training.q_network import QNetworkLSTM, get_device
-from guandan.training.qmix import fill_buffers, train_mixer_step, train_qmix_e2e_step
+from guandan.training.qmix import fill_buffers, train_mixer_step, train_qmix_e2e_step, verify_e2e_gradients
 from guandan.training.qmix_buffer import QMIXBuffer
-from guandan.training.replay import ReplayBuffer
 
 log = logging.getLogger(__name__)
 
@@ -95,13 +94,12 @@ def _run_eval(q_lead, q_follow, device, level_rank, n_games: int = 100) -> dict:
 
 
 def phase_a(q_lead, q_follow, mixer, opt_mixer, device, level_rank, args) -> str:
-    """Phase A: freeze Q-nets, train mixer on detached Q-values."""
+    """Phase A: freeze Q-nets, train mixer (Q-values re-computed with no_grad)."""
     log.info("=" * 60)
     log.info("PHASE A — Detached mixer training")
     log.info("=" * 60)
 
-    qmix_buf = QMIXBuffer(capacity=100_000)
-    std_buf = ReplayBuffer(capacity=50_000)  # unused in phase A but needed for fill_buffers
+    qmix_buf = QMIXBuffer(capacity=50_000)
     env = GuanDanEnv(level_rank)
 
     q_lead.eval()
@@ -114,7 +112,7 @@ def phase_a(q_lead, q_follow, mixer, opt_mixer, device, level_rank, args) -> str
     log.info("Filling QMIX buffer: %d episodes...", fill_ep)
     n_tricks = fill_buffers(
         env, q_lead, q_follow, args.epsilon_start, device, level_rank,
-        qmix_buf, std_buf, fill_ep,
+        qmix_buf, fill_ep,
     )
     log.info("Buffer: %d tricks from %d episodes", n_tricks, fill_ep)
 
@@ -126,7 +124,7 @@ def phase_a(q_lead, q_follow, mixer, opt_mixer, device, level_rank, args) -> str
     for step in tqdm(range(train_steps), desc="Mixer training", unit="step"):
         if len(qmix_buf) < args.batch_size:
             continue
-        loss = train_mixer_step(mixer, qmix_buf, opt_mixer, args.batch_size, device)
+        loss = train_mixer_step(mixer, q_lead, q_follow, qmix_buf, opt_mixer, args.batch_size, device)
         losses.append(loss)
         if (step + 1) % 500 == 0:
             log.info("Step %d | mixer_loss=%.4f", step + 1, sum(losses[-500:]) / 500)
@@ -150,16 +148,26 @@ def phase_a(q_lead, q_follow, mixer, opt_mixer, device, level_rank, args) -> str
     return ckpt_path
 
 
-def phase_b(q_lead, q_follow, mixer, opt_mixer, opt_lead, opt_follow,
-            device, level_rank, args) -> None:
-    """Phase B: end-to-end QMIX + individual Q stabilizer."""
+def phase_b(q_lead, q_follow, mixer, opt_e2e, device, level_rank, args) -> None:
+    """Phase B: true end-to-end QMIX — mixer loss back-props to Q-net weights."""
     log.info("=" * 60)
     log.info("PHASE B — End-to-end QMIX training")
     log.info("=" * 60)
 
-    qmix_buf = QMIXBuffer(capacity=100_000)
-    std_buf = ReplayBuffer(capacity=250_000)
+    qmix_buf = QMIXBuffer(capacity=50_000)
     env = GuanDanEnv(level_rank)
+
+    # Pre-fill buffer before verifying gradients
+    log.info("Pre-filling buffer for gradient verification...")
+    q_lead.eval()
+    q_follow.eval()
+    fill_buffers(env, q_lead, q_follow, args.epsilon_start, device, level_rank, qmix_buf, 64)
+
+    # Gate: verify gradient tape is connected before training
+    log.info("Verifying e2e gradient flow...")
+    q_lead.train()
+    q_follow.train()
+    verify_e2e_gradients(mixer, q_lead, q_follow, qmix_buf, device, args.batch_size)
 
     best_wr = 0.0
     episodes_done = 0
@@ -176,23 +184,31 @@ def phase_b(q_lead, q_follow, mixer, opt_mixer, opt_lead, opt_follow,
 
             q_lead.eval()
             q_follow.eval()
-            fill_buffers(
-                env, q_lead, q_follow, eps, device, level_rank,
-                qmix_buf, std_buf, batch,
-            )
+            fill_buffers(env, q_lead, q_follow, eps, device, level_rank, qmix_buf, batch)
             episodes_done += batch
             pbar.update(batch)
-            pbar.set_postfix(qmix=f"{len(qmix_buf):,}", std=f"{len(std_buf):,}", eps=f"{eps:.3f}")
+            pbar.set_postfix(qmix=f"{len(qmix_buf):,}", eps=f"{eps:.3f}")
 
-            if len(qmix_buf) >= args.batch_size and len(std_buf) >= args.batch_size:
+            if len(qmix_buf) >= args.batch_size:
                 q_lead.train()
                 q_follow.train()
+                last_losses: dict = {}
                 for _ in range(args.train_steps):
-                    train_qmix_e2e_step(
+                    last_losses = train_qmix_e2e_step(
                         mixer, q_lead, q_follow,
-                        qmix_buf, std_buf,
-                        opt_mixer, opt_lead, opt_follow,
+                        qmix_buf, opt_e2e,
                         args.batch_size, device,
+                        loss_weight=args.qmix_loss_weight,
+                    )
+
+                if episodes_done % 500 == 0 and last_losses:
+                    q_gn = last_losses.get("q_lead_grad", 0.0)
+                    m_gn = last_losses.get("mixer_grad", 0.0)
+                    ratio = m_gn / max(q_gn, 1e-10)
+                    log.info(
+                        "ep %d | qmix_loss=%.1f | grad norms — Q: %.6f  Mixer: %.4f  Ratio: %.0f×",
+                        episodes_done, last_losses.get("qmix", 0.0),
+                        q_gn, m_gn, ratio,
                     )
 
             if episodes_done > 0 and episodes_done % args.eval_interval == 0:
@@ -242,7 +258,9 @@ def main(args: argparse.Namespace | None = None) -> None:
         parser.add_argument("--batch-size", type=int, default=512)
         parser.add_argument("--train-steps", type=int, default=4)
         parser.add_argument("--lr-mixer", type=float, default=1e-3)
-        parser.add_argument("--lr-q", type=float, default=1e-5)
+        parser.add_argument("--lr-q", type=float, default=1e-6)
+        parser.add_argument("--qmix-loss-weight", type=float, default=0.001,
+                            help="Scale factor for QMIX loss (tune: 0.0001→0.001→0.01)")
         parser.add_argument("--eval-interval", type=int, default=2000)
         parser.add_argument("--eval-games", type=int, default=100)
         parser.add_argument("--epsilon-start", type=float, default=0.10)
@@ -278,8 +296,12 @@ def main(args: argparse.Namespace | None = None) -> None:
         mixer.load_state_dict(mc["mixer"])
         log.info("Loaded mixer from %s", args.mixer_resume)
 
-    opt_lead = torch.optim.Adam(q_lead.parameters(), lr=args.lr_q)
-    opt_follow = torch.optim.Adam(q_follow.parameters(), lr=args.lr_q)
+    # Phase B: single param-group optimizer — different LRs per component
+    opt_e2e = torch.optim.Adam([
+        {"params": mixer.parameters(),    "lr": args.lr_mixer},
+        {"params": q_lead.parameters(),   "lr": args.lr_q},
+        {"params": q_follow.parameters(), "lr": args.lr_q},
+    ])
 
     # Save config
     cfg = vars(args)
@@ -297,8 +319,13 @@ def main(args: argparse.Namespace | None = None) -> None:
                 map_location=device, weights_only=True,
             )
             mixer.load_state_dict(mc["mixer"])
-        phase_b(q_lead, q_follow, mixer, opt_mixer, opt_lead, opt_follow,
-                device, level_rank, args)
+            # Rebuild opt_e2e so Phase A's state doesn't carry over
+            opt_e2e = torch.optim.Adam([
+                {"params": mixer.parameters(),    "lr": args.lr_mixer},
+                {"params": q_lead.parameters(),   "lr": args.lr_q},
+                {"params": q_follow.parameters(), "lr": args.lr_q},
+            ])
+        phase_b(q_lead, q_follow, mixer, opt_e2e, device, level_rank, args)
 
     log.info("Total time: %.0fs (%.1fh)", time.time() - t0, (time.time() - t0) / 3600)
 

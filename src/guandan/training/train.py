@@ -87,11 +87,15 @@ def play_episode(
     epsilon: float,
     device: torch.device,
     opponent=None,
+    team_spirit: float = 0.0,
 ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float]]:
     """Play one full game, collect transitions, assign terminal rewards.
 
     RL agent plays seats {0,2}. If opponent is provided, it plays seats {1,3};
     otherwise all 4 seats use the RL agent (self-play).
+
+    team_spirit: mix partner reward into mc_return (0=individual, 1=fully shared).
+        mc_return = (1-ts)*rewards[player] + ts*rewards[partner]
 
     Returns list of (state, action, history, hist_len, reward) tuples.
     """
@@ -145,9 +149,12 @@ def play_episode(
         env.step(legal[idx])
 
     rewards = env.get_rewards()
+    partners = {0: 2, 1: 3, 2: 0, 3: 1}
     all_trans = []
     for player, tlist in transitions.items():
-        mc_return = rewards[player]
+        r_self = rewards[player]
+        r_partner = rewards[partners[player]]
+        mc_return = (1 - team_spirit) * r_self + team_spirit * r_partner
         for s, a, h, hl in tlist:
             all_trans.append((s, a, h, hl, mc_return))
     return all_trans
@@ -311,9 +318,8 @@ def evaluate(
 
     wins = 0
     total_reward = 0.0
-    finish_12 = 0
-    finish_13 = 0
-    finish_14 = 0
+    finish_12 = finish_13 = finish_14 = 0
+    finish_23 = finish_24 = finish_34 = 0
 
     for _ in tqdm(range(n_games), desc=f"eval vs {opponent}", unit="game",
                   leave=False, file=sys.stderr, dynamic_ncols=True):
@@ -362,15 +368,22 @@ def evaluate(
             wins += 1
         total_reward += team_reward
 
-        # Track finish type
+        # Track finish type — team positions in finish_order
         fo = env.finish_order
-        team_set = {0, 2}
-        if fo[0] in team_set and fo[1] in team_set:
+        team_pos = sorted(fo.index(p) for p in (0, 2))  # e.g. [0, 1] = 1-2 finish
+        key = (team_pos[0] + 1, team_pos[1] + 1)  # 1-indexed
+        if key == (1, 2):
             finish_12 += 1
-        elif fo[0] in team_set and fo[2] in team_set:
+        elif key == (1, 3):
             finish_13 += 1
-        elif fo[0] in team_set:
+        elif key == (1, 4):
             finish_14 += 1
+        elif key == (2, 3):
+            finish_23 += 1
+        elif key == (2, 4):
+            finish_24 += 1
+        elif key == (3, 4):
+            finish_34 += 1
 
     return {
         "winrate": wins / n_games,
@@ -378,6 +391,9 @@ def evaluate(
         "finish_12": finish_12,
         "finish_13": finish_13,
         "finish_14": finish_14,
+        "finish_23": finish_23,
+        "finish_24": finish_24,
+        "finish_34": finish_34,
         "n_games": n_games,
     }
 

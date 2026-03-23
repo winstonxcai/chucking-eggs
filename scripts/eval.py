@@ -51,15 +51,24 @@ def main() -> None:
     f12 = result['finish_12']
     f13 = result['finish_13']
     f14 = result['finish_14']
-    level_eff = (3 * f12 + 2 * f13 + f14) / n
+    f23 = result['finish_23']
+    f24 = result['finish_24']
+    f34 = result['finish_34']
+    level_eff = (3*f12 + 2*f13 + f14 - f23 - 2*f24 - 3*f34) / n
 
     print(f"\nResults vs {args.opponent} ({n} games):")
     print(f"  Win rate:        {result['winrate']:.1%}")
     print(f"  Avg reward:      {result['avg_reward']:+.2f}")
-    print(f"  1-2 finish rate: {f12/n:.1%}  ({f12})")
-    print(f"  1-3 finish rate: {f13/n:.1%}  ({f13})")
-    print(f"  1-4 finish rate: {f14/n:.1%}  ({f14})")
-    print(f"  Level efficiency:{level_eff:.3f}  (3×1-2 + 2×1-3 + 1×1-4 per game)")
+    print(f"  --- Wins ---")
+    print(f"  1-2 finish rate: {f12/n:.1%}  ({f12})  +3 levels")
+    print(f"  1-3 finish rate: {f13/n:.1%}  ({f13})  +2 levels")
+    print(f"  1-4 finish rate: {f14/n:.1%}  ({f14})  +1 level")
+    print(f"  --- Losses ---")
+    print(f"  2-3 finish rate: {f23/n:.1%}  ({f23})  -1 level")
+    print(f"  2-4 finish rate: {f24/n:.1%}  ({f24})  -2 levels")
+    print(f"  3-4 finish rate: {f34/n:.1%}  ({f34})  -3 levels")
+    print(f"  --- Summary ---")
+    print(f"  Net levels/game: {level_eff:+.3f}")
 
 
 if __name__ == "__main__":

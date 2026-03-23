@@ -212,12 +212,15 @@ class GuanDanEnv:
             )
 
     def get_rewards(self) -> dict[int, float]:
-        """Rank-based zero-sum rewards from finish order."""
-        position_rewards = [3.0, 0.0, -1.0, -2.0]
-        return {
-            player: position_rewards[pos]
-            for pos, player in enumerate(self.finish_order)
+        """Team-level rewards: each player gets their team's level change."""
+        fo = self.finish_order
+        team_pos = tuple(sorted([fo.index(0), fo.index(2)]))
+        LEVEL_CHANGE = {
+            (0, 1): 3.0, (0, 2): 2.0, (0, 3): 1.0,
+            (1, 2): -1.0, (1, 3): -2.0, (2, 3): -3.0,
         }
+        r = LEVEL_CHANGE[team_pos]
+        return {0: r, 2: r, 1: -r, 3: -r}
 
     def is_leading(self) -> bool:
         return self.current_trick is None

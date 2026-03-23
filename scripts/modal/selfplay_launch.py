@@ -18,7 +18,7 @@ SELFPLAY_DEFAULTS = dict(
     resume=f"{CHECKPOINT_DIR}/selfplay_best.pt",
     episodes=80000,
     workers=0,
-    n_envs=64,
+    n_envs=128,
     train_steps=4,
     batch_size=1024,
     lr=3e-5,
@@ -32,6 +32,7 @@ SELFPLAY_DEFAULTS = dict(
     checkpoint_dir=CHECKPOINT_DIR,
     run_name="selfplay_modal",
     no_baseline=True,
+    team_spirit=0.0,
 )
 
 try:
@@ -89,6 +90,8 @@ def main(
     n_envs: int = 64,
     eval_interval: int = 10000,
     eval_games: int = 100,
+    team_spirit: float = 0.0,
+    train_steps: int = 4,
 ) -> None:
     """Launch self-play fine-tuning on Modal A10G + GPU-batched GameRunner."""
     kwargs: dict = {
@@ -97,6 +100,8 @@ def main(
         "n_envs": n_envs,
         "eval_interval": eval_interval,
         "eval_games": eval_games,
+        "team_spirit": team_spirit,
+        "train_steps": train_steps,
     }
     if resume:
         kwargs["resume"] = f"{CHECKPOINT_DIR}/{resume}"

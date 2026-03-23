@@ -37,6 +37,7 @@ class GameRunner:
         self.level_rank = level_rank
         self.epsilon = epsilon
         self.opponent = opponent  # None = self-play, else agent for seats 1,3
+        self.team_spirit = 0.0  # mix partner reward: 0=individual, 1=fully shared
 
         self.envs = [GuanDanEnv(level_rank) for _ in range(n_envs)]
         self._transitions: list[list] = [[] for _ in range(n_envs)]
@@ -85,7 +86,12 @@ class GameRunner:
                 self._transitions[i] = []
 
     def _step_trivial_moves(self) -> None:
-        """Step forced moves (1 legal action) and opponent moves without GPU."""
+        """Step forced moves (1 legal action) and opponent moves without GPU.
+
+        Caches legal moves for non-trivial decisions in self._cached_legal
+        so _collect_decisions() doesn't recompute them.
+        """
+        self._cached_legal: dict[int, list] = {}
         for i, env in enumerate(self.envs):
             if env.done:
                 continue
@@ -104,21 +110,18 @@ class GameRunner:
                     env.step(legal[0])
                     continue
 
+                self._cached_legal[i] = legal
                 break  # needs RL decision — handled by _batch_inference
 
     def _collect_decisions(self) -> tuple[list, list]:
-        """Collect all pending decisions, split by lead/follow."""
+        """Collect all pending decisions, split by lead/follow.
+
+        Uses cached legal moves from _step_trivial_moves() to avoid redundant calls.
+        """
         lead, follow = [], []
-        for i, env in enumerate(self.envs):
-            if env.done:
-                continue
+        for i, legal in self._cached_legal.items():
+            env = self.envs[i]
             player = env.current_player
-            # Skip opponent seats
-            if self.opponent is not None and player in (1, 3):
-                continue
-            legal = env.legal_moves(player)
-            if len(legal) <= 1:
-                continue
             is_leading = env.current_trick is None
             entry = (i, player, legal, is_leading)
             if is_leading:
@@ -188,8 +191,10 @@ class GameRunner:
         self, env_idx: int, rewards: dict[int, float],
     ) -> list[tuple]:
         """Assign MC returns and return finalized transitions."""
+        partners = {0: 2, 1: 3, 2: 0, 3: 1}
+        ts = self.team_spirit
         transitions = []
         for (state, action, history, hist_len, player) in self._transitions[env_idx]:
-            G = rewards[player]
+            G = (1 - ts) * rewards[player] + ts * rewards[partners[player]]
             transitions.append((state, action, history, hist_len, G))
         return transitions

@@ -32,10 +32,9 @@ from tqdm import tqdm
 
 from guandan.agents import make_agent
 from guandan.agents.monte_carlo_bot import MonteCarloBot
-from guandan.cards import Rank
+from guandan.cards import ComboType, Rank
 from guandan.game import GuanDanEnv
 from guandan.training.encoding import encode_action, encode_history, encode_state
-from guandan.training.supervised import _find_action_index
 
 log = logging.getLogger(__name__)
 
@@ -69,25 +68,44 @@ def _mc_data_worker(
                 continue
 
             if p in (0, 2):
-                # MC team — record decision
-                action = mc.act(env, p)
-                idx = _find_action_index(legal, action)
+                # MC team — evaluate all pruned candidates, record scores
+                is_leading = env.current_trick is None
+                candidates = (
+                    mc._prune_lead(legal, env, p)
+                    if is_leading
+                    else mc._prune_follow(legal, env, p)
+                )
+                real = [m for m in candidates if m.type != ComboType.PASS]
 
-                if idx is not None:
-                    history, hist_len = encode_history(env, p, level_rank)
-                    queue.put({
-                        "state": encode_state(env, p),
-                        "action_encs": np.array(
-                            [encode_action(m, env.hands[p], level_rank) for m in legal],
-                            dtype=np.float32,
-                        ),
-                        "history": history,
-                        "hist_len": hist_len,
-                        "expert_idx": idx,
-                        "is_leading": env.current_trick is None,
-                    })
+                if len(real) <= 1:
+                    # Trivial: no multi-candidate decision to record
+                    env.step(mc.act(env, p))
+                    continue
 
-                env.step(action)
+                # Evaluate every pruned candidate (n_sims rollouts each)
+                scores = []
+                best_score = -float("inf")
+                best_action = real[0]
+                for move in candidates:
+                    s = mc._evaluate_move(env, p, move)
+                    scores.append(s)
+                    if s > best_score:
+                        best_score = s
+                        best_action = move
+
+                history, hist_len = encode_history(env, p, level_rank)
+                queue.put({
+                    "state": encode_state(env, p),
+                    "action_encs": np.array(
+                        [encode_action(m, env.hands[p], level_rank) for m in candidates],
+                        dtype=np.float32,
+                    ),
+                    "history": history,
+                    "hist_len": hist_len,
+                    "scores": np.array(scores, dtype=np.float32),
+                    "is_leading": is_leading,
+                })
+                env.step(best_action)
             else:
                 env.step(opp.act(env, p))
 
@@ -181,7 +199,7 @@ def main() -> None:
         "Done. %d decisions from %d games (%.0fs, %.1f games/min)",
         len(decisions), games_done, elapsed, games_done / elapsed * 60,
     )
-    log.info("  Lead: %d  Follow: %d  avg B: %.1f",
+    log.info("  Lead: %d  Follow: %d  avg candidates: %.1f",
              lead, follow,
              sum(len(d["action_encs"]) for d in decisions) / max(len(decisions), 1))
 

@@ -86,7 +86,7 @@ def test_counterclockwise():
 
 
 def test_rewards_zero_sum():
-    """Rewards should be zero-sum: +3 +1 -1 -3 = 0."""
+    """Rewards should be zero-sum: +3 +0 -1 -2 = 0."""
     env = GuanDanEnv()
     for _ in range(100):
         env.reset()

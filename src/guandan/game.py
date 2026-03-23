@@ -213,7 +213,7 @@ class GuanDanEnv:
 
     def get_rewards(self) -> dict[int, float]:
         """Rank-based zero-sum rewards from finish order."""
-        position_rewards = [3.0, 1.0, -1.0, -3.0]
+        position_rewards = [3.0, 0.0, -1.0, -2.0]
         return {
             player: position_rewards[pos]
             for pos, player in enumerate(self.finish_order)

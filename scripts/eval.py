@@ -47,12 +47,19 @@ def main() -> None:
         print(f"  Trained for {ckpt['episode']} episodes")
 
     result = evaluate(q_lead, q_follow, device, n_games=args.games, opponent=args.opponent)
-    print(f"\nResults vs {args.opponent} ({args.games} games):")
-    print(f"  Win rate:   {result['winrate']:.1%}")
-    print(f"  Avg reward: {result['avg_reward']:+.2f}")
-    print(f"  Finish 1-2: {result['finish_12']}")
-    print(f"  Finish 1-3: {result['finish_13']}")
-    print(f"  Finish 1-4: {result['finish_14']}")
+    n = args.games
+    f12 = result['finish_12']
+    f13 = result['finish_13']
+    f14 = result['finish_14']
+    level_eff = (3 * f12 + 2 * f13 + f14) / n
+
+    print(f"\nResults vs {args.opponent} ({n} games):")
+    print(f"  Win rate:        {result['winrate']:.1%}")
+    print(f"  Avg reward:      {result['avg_reward']:+.2f}")
+    print(f"  1-2 finish rate: {f12/n:.1%}  ({f12})")
+    print(f"  1-3 finish rate: {f13/n:.1%}  ({f13})")
+    print(f"  1-4 finish rate: {f14/n:.1%}  ({f14})")
+    print(f"  Level efficiency:{level_eff:.3f}  (3×1-2 + 2×1-3 + 1×1-4 per game)")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,181 @@
+#!/usr/bin/env python
+"""Distill MC teacher data into Q-networks via cross-entropy.
+
+Loads pre-generated MC decisions (from generate_mc_data.py), fine-tunes
+existing checkpoint weights with cross-entropy loss (same as distill.py).
+
+Usage:
+  # Smoke test (1 epoch on tiny data)
+  PYTHONPATH=src python scripts/distill_mc.py \\
+      --data /tmp/mc_test.pt \\
+      --resume checkpoints/newrewards_ts05.pt \\
+      --epochs 1 --run-name mc_smoke
+
+  # Full run
+  PYTHONPATH=src python scripts/distill_mc.py \\
+      --data data/mc_vs_strategic_1000.pt \\
+      --resume checkpoints/newrewards_ts05.pt \\
+      --epochs 5 --lr 3e-5 --run-name mc_distill
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import random
+import time
+from pathlib import Path
+
+import torch
+from tqdm import tqdm
+
+from guandan.agents import GreedyBot, HeuristicBot, RandomBot, RLAgentLSTM, StrategicBot
+from guandan.cards import Rank
+from guandan.game import GuanDanEnv
+from guandan.training.q_network import QNetworkLSTM, get_device
+from guandan.training.supervised import _log_epoch, _train_batch
+
+
+def _setup_logging(log_path: Path) -> None:
+    fmt = "%(asctime)s %(levelname)s %(message)s"
+    logging.basicConfig(
+        level=logging.INFO, format=fmt, datefmt="%H:%M:%S",
+        handlers=[logging.FileHandler(log_path, mode="a"), logging.StreamHandler()],
+    )
+
+
+log = logging.getLogger(__name__)
+
+
+def _run_eval(q_lead, q_follow, device, level_rank, n_games: int = 300) -> None:
+    """Ladder eval vs heuristic and strategic."""
+    rl = RLAgentLSTM(q_lead, q_follow, device, level_rank)
+    opponents = [
+        ("Heuristic", HeuristicBot(level_rank), n_games),
+        ("Strategic", StrategicBot(level_rank), n_games),
+    ]
+
+    log.info("%-12s | %5s | %6s | Net lvl/g", "Opponent", "Games", "WR")
+    log.info("-" * 44)
+
+    for name, opp, ng in opponents:
+        wins = 0
+        net_levels = 0.0
+        env = GuanDanEnv(level_rank)
+        for _ in range(ng):
+            env.reset()
+            while not env.done:
+                p = env.current_player
+                env.step(rl.act(env, p) if p in (0, 2) else opp.act(env, p))
+            r = env.get_rewards()
+            if r[0] + r[2] > 0:
+                wins += 1
+            net_levels += r[0]  # team reward = level delta for this game
+        log.info("%-12s | %5d | %5.1f%% | %+.2f",
+                 name, ng, 100 * wins / ng, net_levels / ng)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="MC distillation from saved data")
+    parser.add_argument("--data",           type=str, required=True,
+                        help="Path to decisions .pt file from generate_mc_data.py")
+    parser.add_argument("--resume",         type=str, required=True,
+                        help="Checkpoint to fine-tune (lead/follow keys)")
+    parser.add_argument("--epochs",         type=int, default=5)
+    parser.add_argument("--lr",             type=float, default=3e-5)
+    parser.add_argument("--batch-size",     type=int, default=32)
+    parser.add_argument("--run-name",       type=str, default="mc_distill")
+    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
+    parser.add_argument("--no-eval",        action="store_true",
+                        help="Skip post-training eval (faster smoke tests)")
+    args = parser.parse_args()
+
+    run_dir = Path("runs") / args.run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    _setup_logging(run_dir / "train.log")
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+
+    device = get_device()
+    level_rank = Rank.TWO
+    t0 = time.time()
+
+    # Load data
+    log.info("Loading data: %s", args.data)
+    decisions: list[dict] = torch.load(args.data, weights_only=False)
+    lead_decisions   = [d for d in decisions if d["is_leading"]]
+    follow_decisions = [d for d in decisions if not d["is_leading"]]
+    log.info(
+        "Loaded %d decisions (%d lead, %d follow)",
+        len(decisions), len(lead_decisions), len(follow_decisions),
+    )
+
+    if not decisions:
+        log.error("No decisions found in data file. Exiting.")
+        return
+
+    # Load checkpoint
+    log.info("Loading checkpoint: %s", args.resume)
+    q_lead   = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    ckpt = torch.load(args.resume, map_location=device, weights_only=True)
+    q_lead.load_state_dict(ckpt["lead"])
+    q_follow.load_state_dict(ckpt["follow"])
+
+    opt_lead   = torch.optim.Adam(q_lead.parameters(),   lr=args.lr)
+    opt_follow = torch.optim.Adam(q_follow.parameters(), lr=args.lr)
+
+    n_params = sum(p.numel() for p in q_lead.parameters())
+    log.info("Network: %s params/head  Device: %s  LR: %g  Batch: %d  Epochs: %d",
+             f"{n_params:,}", device, args.lr, args.batch_size, args.epochs)
+
+    # Training loop
+    for epoch in range(args.epochs):
+        stats = {
+            "lead_losses": [],   "follow_losses": [],
+            "lead_correct": 0,   "lead_total": 0,
+            "follow_correct": 0, "follow_total": 0,
+        }
+        opt_lead.zero_grad()
+        opt_follow.zero_grad()
+
+        random.shuffle(lead_decisions)
+        random.shuffle(follow_decisions)
+
+        # Lead network
+        with tqdm(total=len(lead_decisions), desc=f"Epoch {epoch+1}/{args.epochs} [lead]",
+                  unit="dec", leave=False) as pbar:
+            for i in range(0, len(lead_decisions), args.batch_size):
+                batch = lead_decisions[i : i + args.batch_size]
+                if batch:
+                    _train_batch(batch, q_lead, opt_lead, device, stats, "lead")
+                pbar.update(len(batch))
+
+        # Follow network
+        with tqdm(total=len(follow_decisions), desc=f"Epoch {epoch+1}/{args.epochs} [follow]",
+                  unit="dec", leave=False) as pbar:
+            for i in range(0, len(follow_decisions), args.batch_size):
+                batch = follow_decisions[i : i + args.batch_size]
+                if batch:
+                    _train_batch(batch, q_follow, opt_follow, device, stats, "follow")
+                pbar.update(len(batch))
+
+        _log_epoch(epoch, args.epochs, stats)
+
+    # Save
+    ckpt_path = os.path.join(args.checkpoint_dir, "mc_distilled.pt")
+    torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict()}, ckpt_path)
+    log.info("Saved → %s", ckpt_path)
+
+    # Eval
+    if not args.no_eval:
+        log.info("=" * 60)
+        log.info("POST-DISTILLATION EVAL")
+        log.info("=" * 60)
+        _run_eval(q_lead, q_follow, device, level_rank)
+
+    log.info("Done. Total: %.0fs (%.1fmin)", time.time() - t0, (time.time() - t0) / 60)
+
+
+if __name__ == "__main__":
+    main()

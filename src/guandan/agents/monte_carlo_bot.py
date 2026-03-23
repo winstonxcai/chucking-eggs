@@ -1,6 +1,6 @@
 """MonteCarloBot — look-ahead agent using rollout simulation.
 
-For each candidate move, simulates n_sims games using GreedyBot rollouts
+For each candidate move, simulates n_sims games using StrategicBot rollouts
 and picks the move with the highest average reward. Uses strategic pruning
 to keep candidates to ~6-10 moves, and multiprocessing for parallel rollouts.
 
@@ -17,7 +17,7 @@ from multiprocessing import Pool
 from ..cards import BOMB_TYPES, ComboType, Rank, level_order_key
 from .heuristic_bot import _pass_combo
 from .base import Agent
-from .greedy_bot import GreedyBot
+from .strategic_bot import StrategicBot
 
 # Types using level-order key for sorting.
 _LEVEL_ORDER_TYPES = frozenset({
@@ -29,8 +29,8 @@ _LEVEL_ORDER_TYPES = frozenset({
 # ─── Module-level worker (must be at top level for pickle / multiprocessing) ─
 
 def _rollout_worker(env, player: int, move, level_rank: int) -> float:
-    """Deep-copy env, play move, roll out with GreedyBot, return reward."""
-    rollout_agent = GreedyBot(level_rank)
+    """Deep-copy env, play move, roll out with StrategicBot, return reward."""
+    rollout_agent = StrategicBot(level_rank)
     sim = copy.deepcopy(env)
     sim.step(move)
     while not sim.done:

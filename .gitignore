@@ -34,5 +34,14 @@ htmlcov/
 # Rust
 guandan_rs/target/
 
+# Playwright MCP
+.playwright-mcp/
+
+# Experiment runs
+runs/
+
+# Generated images
+*.png
+
 # Claude Code
 .claude/

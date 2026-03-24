@@ -53,14 +53,17 @@ COMBO_TYPE_CHINESE = {
 
 
 def card_to_dto(card: Card) -> dict:
+    is_joker = card.rank in (Rank.BLACK_JOKER, Rank.RED_JOKER)
+    rank_display = RANK_NAMES.get(card.rank, "?")
+    suit_symbol = "" if is_joker else SUIT_SYMBOLS.get(card.suit, "?")
     return {
         "rank": card.rank,
         "suit": card.suit,
         "deck": card.deck,
         "id": f"{card.rank}-{card.suit}-{card.deck}",
-        "display": f"{RANK_NAMES.get(card.rank, '?')}{SUIT_SYMBOLS.get(card.suit, '?')}",
-        "rank_display": RANK_NAMES.get(card.rank, "?"),
-        "suit_symbol": SUIT_SYMBOLS.get(card.suit, "?"),
+        "display": rank_display if is_joker else f"{rank_display}{suit_symbol}",
+        "rank_display": rank_display,
+        "suit_symbol": suit_symbol,
     }
 
 

@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+:root {
+  --background: #FAF9F7;
+  --foreground: #1A1612;
+  --surface: #FFFFFF;
+  --border: #E8E2D9;
+  --text-secondary: #8C8478;
+  --accent: #D97757;
+  --accent-hover: #C4623F;
+  --team-green: #3D8C6F;
+  --team-red: #C75D4A;
+  --wild-gold: #E8A849;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-text-secondary: var(--text-secondary);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-team-green: var(--team-green);
+  --color-team-red: var(--team-red);
+  --color-wild-gold: var(--wild-gold);
+  --font-sans: "Inter", system-ui, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}

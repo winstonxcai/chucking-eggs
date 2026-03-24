@@ -171,7 +171,7 @@ export default function GameBoard({
       <div className="flex-1 flex flex-col p-6 gap-0">
         {/* Play area: all players + table in a centered grid with equal gaps */}
         <div className="flex-1 flex items-center justify-center">
-          <div className="grid grid-cols-[auto_340px_auto] grid-rows-[auto_200px] gap-24 items-center justify-items-center">
+          <div className="grid grid-cols-[auto_480px_auto] grid-rows-[auto_260px] gap-32 items-center justify-items-center">
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
               {partner && (
@@ -187,7 +187,7 @@ export default function GameBoard({
             </div>
 
             {/* Table surface — all trick actions inside */}
-            <div className="col-start-2 row-start-2 relative w-[340px] h-[200px] border border-border rounded-2xl">
+            <div className="col-start-2 row-start-2 relative w-[480px] h-[260px] border border-border rounded-2xl">
               {/* Partner (top edge) */}
               <div className="absolute top-3 left-0 right-0 flex justify-center">
                 <TrickActionDisplay action={ta?.["2"] ?? null} />

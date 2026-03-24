@@ -136,8 +136,8 @@ def main() -> None:
     q_follow = QNetworkLSTM(lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden).to(device)
 
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=True)
-    q_lead.load_state_dict(ckpt["lead_state_dict"])
-    q_follow.load_state_dict(ckpt["follow_state_dict"])
+    q_lead.load_state_dict(ckpt["lead_state_dict"], strict=False)
+    q_follow.load_state_dict(ckpt["follow_state_dict"], strict=False)
     q_lead.eval()
     q_follow.eval()
 

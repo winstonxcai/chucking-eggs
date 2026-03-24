@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from ..game import GuanDanEnv
-from .encoding import D_MOVE, MAX_HISTORY, encode_action, encode_history, encode_state
+from .encoding import D_MOVE, MAX_HISTORY, encode_action, encode_history, encode_opponent_cards, encode_state
 from .q_network import QNetworkLSTM
 
 
@@ -177,12 +177,14 @@ class GameRunner:
                 idx = q_vals.argmax().item()
 
             # Record transition
+            opp_cards = encode_opponent_cards(env, player)
             self._transitions[env_idx].append((
                 states[i],
                 np.array(action_lists[i][idx], dtype=np.float32),
                 hists[i],
                 hlens[i],
                 player,
+                opp_cards,
             ))
 
             self.envs[env_idx].step(legal[idx])
@@ -194,7 +196,7 @@ class GameRunner:
         partners = {0: 2, 1: 3, 2: 0, 3: 1}
         ts = self.team_spirit
         transitions = []
-        for (state, action, history, hist_len, player) in self._transitions[env_idx]:
+        for (state, action, history, hist_len, player, opp_cards) in self._transitions[env_idx]:
             G = (1 - ts) * rewards[player] + ts * rewards[partners[player]]
-            transitions.append((state, action, history, hist_len, G))
+            transitions.append((state, action, history, hist_len, G, opp_cards))
         return transitions

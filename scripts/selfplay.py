@@ -63,20 +63,35 @@ def _selfplay_worker(
     level_rank,
     n_games: int,
     epsilon: float,
+    opp_lead_sd: dict | None = None,
+    opp_follow_sd: dict | None = None,
 ) -> None:
     """CPU worker: self-play games with own model copies, push transitions."""
+    from guandan.training.q_network import load_compat
+
     device = torch.device("cpu")
     q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
-    q_lead.load_state_dict(lead_sd)
-    q_follow.load_state_dict(follow_sd)
+    load_compat(q_lead, lead_sd)
+    load_compat(q_follow, follow_sd)
     q_lead.eval()
     q_follow.eval()
+
+    # Opponent: pool checkpoint or self-play
+    opponent = None
+    if opp_lead_sd is not None:
+        q_opp_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+        q_opp_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+        load_compat(q_opp_lead, opp_lead_sd)
+        load_compat(q_opp_follow, opp_follow_sd)
+        q_opp_lead.eval()
+        q_opp_follow.eval()
+        opponent = RLAgentLSTM(q_opp_lead, q_opp_follow, device, level_rank)
 
     env = GuanDanEnv(level_rank)
 
     for _ in range(n_games):
-        transitions = play_episode(env, q_lead, q_follow, epsilon, device, opponent=None)
+        transitions = play_episode(env, q_lead, q_follow, epsilon, device, opponent=opponent)
         for t in transitions:
             queue.put(t)
         queue.put("GAME_DONE")
@@ -139,9 +154,17 @@ def _run_eval(q_lead, q_follow, device, level_rank, n_games_per_opp: int = 200) 
 def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
                         args, device, level_rank, best_wr):
     """Multi-process: CPU workers generate self-play, GPU trains."""
+    from guandan.training.opponent_pool import OpponentPool
+
     n_workers = args.workers
     train_every = 64  # train after every ~64 episodes
     sync_interval = getattr(args, "sync_interval", 20000)  # weight sync interval
+    pool_add_interval = getattr(args, "pool_add_interval", 2000)
+
+    pool = OpponentPool(
+        max_size=getattr(args, "pool_size", 10),
+        self_play_prob=1.0 - getattr(args, "pool_prob", 0.0),
+    )
 
     episodes_done = 0
     last_sync = 0
@@ -158,6 +181,16 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
         lead_sd = {k: v.cpu() for k, v in q_lead.state_dict().items()}
         follow_sd = {k: v.cpu() for k, v in q_follow.state_dict().items()}
 
+        # Add to opponent pool periodically
+        if episodes_done % pool_add_interval == 0 and episodes_done > 0:
+            pool.add(q_lead.state_dict(), q_follow.state_dict())
+            log.info("Added weights to opponent pool (size=%d)", len(pool))
+
+        # Sample pool opponent for this batch (all workers use same opponent)
+        opp_sample = pool.sample()
+        opp_lead_sd = opp_sample[0] if opp_sample else None
+        opp_follow_sd = opp_sample[1] if opp_sample else None
+
         # Distribute games across workers
         games_per_worker = [batch_episodes // n_workers] * n_workers
         for i in range(batch_episodes % n_workers):
@@ -170,7 +203,8 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
                 continue
             p = mp.Process(
                 target=_selfplay_worker,
-                args=(queue, lead_sd, follow_sd, level_rank, games_per_worker[i], eps),
+                args=(queue, lead_sd, follow_sd, level_rank, games_per_worker[i], eps,
+                      opp_lead_sd, opp_follow_sd),
             )
             p.start()
             workers.append(p)
@@ -238,6 +272,11 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
         last_sync = episodes_done
         log.info("Weight sync @ episode %d", episodes_done)
 
+        # Add to pool after weight sync
+        if episodes_done % pool_add_interval == 0 and episodes_done > 0 and len(pool) < pool.max_size:
+            pool.add(q_lead.state_dict(), q_follow.state_dict())
+            log.info("Added weights to opponent pool (size=%d)", len(pool))
+
     # Final train flush
     if len(buffer) >= args.batch_size:
         for _ in range(args.train_steps * 4):
@@ -258,6 +297,7 @@ def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
         level_rank=level_rank,
         epsilon=args.epsilon_start,
     )
+    runner.team_spirit = getattr(args, 'team_spirit', 0.0)
 
     episodes_done = 0
 
@@ -271,8 +311,8 @@ def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
 
             batch_target = min(args.n_envs, args.episodes - episodes_done)
             for transitions in runner.generate_episodes(batch_target):
-                for (state, action, history, hist_len, mc_return) in transitions:
-                    buffer.push(state, action, history, hist_len, mc_return)
+                for (state, action, history, hist_len, mc_return, opp_cards) in transitions:
+                    buffer.push(state, action, history, hist_len, mc_return, opp_cards)
                 episodes_done += 1
                 pbar.update(1)
 
@@ -330,8 +370,16 @@ def main(args: argparse.Namespace | None = None) -> None:
         parser.add_argument("--epsilon-decay-frac", type=float, default=0.80)
         parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
         parser.add_argument("--run-name", type=str, default="selfplay")
+        parser.add_argument("--team-spirit", type=float, default=0.0,
+                            help="Mix partner reward into mc_return (0=individual, 0.5=half-shared, 1=fully shared)")
         parser.add_argument("--no-baseline", action="store_true",
                             help="Skip baseline eval at startup")
+        parser.add_argument("--pool-size", type=int, default=10,
+                            help="Max checkpoints in opponent pool")
+        parser.add_argument("--pool-prob", type=float, default=0.0,
+                            help="Prob of sampling a pool opponent (0=disabled, 0.3=recommended)")
+        parser.add_argument("--pool-add-interval", type=int, default=2000,
+                            help="Add current weights to pool every N episodes")
         args = parser.parse_args()
 
     run_dir = Path("runs") / args.run_name
@@ -359,8 +407,9 @@ def main(args: argparse.Namespace | None = None) -> None:
 
     log.info("Loading checkpoint: %s", args.resume)
     ckpt = torch.load(args.resume, map_location=device, weights_only=True)
-    q_lead.load_state_dict(ckpt["lead"])
-    q_follow.load_state_dict(ckpt["follow"])
+    from guandan.training.q_network import load_compat
+    load_compat(q_lead, ckpt["lead"])
+    load_compat(q_follow, ckpt["follow"])
 
     n_params = sum(p.numel() for p in q_lead.parameters())
     log.info("Network: %s params per head (%s total)", f"{n_params:,}", f"{2 * n_params:,}")

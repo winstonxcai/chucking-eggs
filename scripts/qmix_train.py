@@ -34,9 +34,9 @@ from tqdm import tqdm
 from guandan.agents import GreedyBot, HeuristicBot, RandomBot, RLAgentLSTM, StrategicBot
 from guandan.cards import Rank
 from guandan.game import GuanDanEnv
-from guandan.training.mixing import TeamMixer
+from guandan.training.mixing import TeamMixer, UnrestrictedMixer
 from guandan.training.q_network import QNetworkLSTM, get_device
-from guandan.training.qmix import fill_buffers, train_mixer_step, train_qmix_e2e_step, verify_e2e_gradients
+from guandan.training.qmix import fill_buffers, train_mixer_step, train_qmix_e2e_step, train_wqmix_e2e_step, verify_e2e_gradients
 from guandan.training.qmix_buffer import QMIXBuffer
 
 log = logging.getLogger(__name__)
@@ -149,13 +149,17 @@ def phase_a(q_lead, q_follow, mixer, opt_mixer, device, level_rank, args) -> str
 
 
 def phase_b(q_lead, q_follow, mixer, opt_e2e, device, level_rank, args) -> None:
-    """Phase B: true end-to-end QMIX — mixer loss back-props to Q-net weights."""
+    """Phase B: WQMIX end-to-end — OW weighting relaxes monotonicity."""
     log.info("=" * 60)
-    log.info("PHASE B — End-to-end QMIX training")
+    log.info("PHASE B — WQMIX end-to-end training (OW α=%.2f)", args.wqmix_alpha)
     log.info("=" * 60)
 
     qmix_buf = QMIXBuffer(capacity=50_000)
     env = GuanDanEnv(level_rank)
+
+    # Create unrestricted mixer for Q*
+    mixer_star = UnrestrictedMixer().to(device)
+    opt_star = torch.optim.Adam(mixer_star.parameters(), lr=args.lr_mixer)
 
     # Pre-fill buffer before verifying gradients
     log.info("Pre-filling buffer for gradient verification...")
@@ -173,7 +177,7 @@ def phase_b(q_lead, q_follow, mixer, opt_e2e, device, level_rank, args) -> None:
     episodes_done = 0
     train_every = 64
 
-    with tqdm(total=args.episodes, desc="QMIX e2e", unit="ep") as pbar:
+    with tqdm(total=args.episodes, desc="WQMIX e2e", unit="ep") as pbar:
         while episodes_done < args.episodes:
             eps = max(
                 args.epsilon_end,
@@ -194,21 +198,24 @@ def phase_b(q_lead, q_follow, mixer, opt_e2e, device, level_rank, args) -> None:
                 q_follow.train()
                 last_losses: dict = {}
                 for _ in range(args.train_steps):
-                    last_losses = train_qmix_e2e_step(
-                        mixer, q_lead, q_follow,
-                        qmix_buf, opt_e2e,
+                    last_losses = train_wqmix_e2e_step(
+                        mixer, mixer_star, q_lead, q_follow,
+                        qmix_buf, opt_e2e, opt_star,
                         args.batch_size, device,
                         loss_weight=args.qmix_loss_weight,
+                        alpha=args.wqmix_alpha,
                     )
 
                 if episodes_done % 500 == 0 and last_losses:
                     q_gn = last_losses.get("q_lead_grad", 0.0)
                     m_gn = last_losses.get("mixer_grad", 0.0)
                     ratio = m_gn / max(q_gn, 1e-10)
+                    ow_frac = last_losses.get("ow_frac", 0.0)
                     log.info(
-                        "ep %d | qmix_loss=%.1f | grad norms — Q: %.6f  Mixer: %.4f  Ratio: %.0f×",
-                        episodes_done, last_losses.get("qmix", 0.0),
-                        q_gn, m_gn, ratio,
+                        "ep %d | wqmix=%.1f star=%.2f | Q: %.6f  Mixer: %.4f  Ratio: %.0f× | OW: %.0f%%",
+                        episodes_done, last_losses.get("wqmix", 0.0),
+                        last_losses.get("star_loss", 0.0),
+                        q_gn, m_gn, ratio, ow_frac * 100,
                     )
 
             if episodes_done > 0 and episodes_done % args.eval_interval == 0:
@@ -226,6 +233,7 @@ def phase_b(q_lead, q_follow, mixer, opt_e2e, device, level_rank, args) -> None:
                         "lead": q_lead.state_dict(),
                         "follow": q_follow.state_dict(),
                         "mixer": mixer.state_dict(),
+                        "mixer_star": mixer_star.state_dict(),
                         "episode": episodes_done,
                         "wr_heuristic": wr_h,
                     }, path)
@@ -237,6 +245,7 @@ def phase_b(q_lead, q_follow, mixer, opt_e2e, device, level_rank, args) -> None:
         "lead": q_lead.state_dict(),
         "follow": q_follow.state_dict(),
         "mixer": mixer.state_dict(),
+        "mixer_star": mixer_star.state_dict(),
     }, path)
     log.info("Saved final → %s", path)
 
@@ -261,8 +270,10 @@ def main(args: argparse.Namespace | None = None) -> None:
         parser.add_argument("--lr-q", type=float, default=1e-6)
         parser.add_argument("--qmix-loss-weight", type=float, default=0.001,
                             help="Scale factor for QMIX loss (tune: 0.0001→0.001→0.01)")
-        parser.add_argument("--eval-interval", type=int, default=2000)
-        parser.add_argument("--eval-games", type=int, default=100)
+        parser.add_argument("--wqmix-alpha", type=float, default=0.1,
+                            help="OW weight for overestimated actions (0→ignore, 1→vanilla QMIX)")
+        parser.add_argument("--eval-interval", type=int, default=10000)
+        parser.add_argument("--eval-games", type=int, default=500)
         parser.add_argument("--epsilon-start", type=float, default=0.10)
         parser.add_argument("--epsilon-end", type=float, default=0.01)
         parser.add_argument("--epsilon-decay-frac", type=float, default=0.80)
@@ -284,8 +295,8 @@ def main(args: argparse.Namespace | None = None) -> None:
     q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     ckpt = torch.load(args.resume, map_location=device, weights_only=True)
-    q_lead.load_state_dict(ckpt["lead"])
-    q_follow.load_state_dict(ckpt["follow"])
+    q_lead.load_state_dict(ckpt["lead"], strict=False)
+    q_follow.load_state_dict(ckpt["follow"], strict=False)
     log.info("Loaded Q-networks from %s", args.resume)
 
     mixer = TeamMixer().to(device)

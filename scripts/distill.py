@@ -131,8 +131,8 @@ def main(args: argparse.Namespace | None = None) -> None:
     if args.resume:
         log.info("Resuming from %s", args.resume)
         ckpt = torch.load(args.resume, map_location=device, weights_only=True)
-        q_lead.load_state_dict(ckpt["lead"])
-        q_follow.load_state_dict(ckpt["follow"])
+        q_lead.load_state_dict(ckpt["lead"], strict=False)
+        q_follow.load_state_dict(ckpt["follow"], strict=False)
         if "stage1" in args.resume:
             start_stage = 2
 

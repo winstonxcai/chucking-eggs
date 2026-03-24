@@ -109,6 +109,20 @@ def encode_state(env: GuanDanEnv, player: int) -> np.ndarray:
 
 
 STATE_DIM = 417
+OPP_CARDS_DIM = 60
+
+
+def encode_opponent_cards(env: GuanDanEnv, player: int) -> np.ndarray:
+    """Oracle target: combined opponent cards as [60] binary vector.
+
+    Used as auxiliary training signal — forces LSTM to learn card counting.
+    Only available during episode collection (oracle info), not at inference.
+    """
+    opp_l = (player - 1) % 4
+    opp_r = (player + 1) % 4
+    return np.clip(
+        cards_to_matrix(env.hands[opp_l] | env.hands[opp_r]).flatten(), 0, 1
+    )
 
 
 def encode_action(combo: Combo, hand: set, level_rank: int) -> np.ndarray:

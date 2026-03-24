@@ -29,10 +29,11 @@ from .encoding import (
     STATE_DIM,
     encode_action,
     encode_history,
+    encode_opponent_cards,
     encode_state,
 )
 from ..game import GuanDanEnv
-from .q_network import QNetworkLSTM, get_device
+from .q_network import QNetworkLSTM, get_device, load_compat
 from .replay import ReplayBuffer
 
 
@@ -88,7 +89,7 @@ def play_episode(
     device: torch.device,
     opponent=None,
     team_spirit: float = 0.0,
-) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float]]:
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float, np.ndarray]]:
     """Play one full game, collect transitions, assign terminal rewards.
 
     RL agent plays seats {0,2}. If opponent is provided, it plays seats {1,3};
@@ -97,12 +98,10 @@ def play_episode(
     team_spirit: mix partner reward into mc_return (0=individual, 1=fully shared).
         mc_return = (1-ts)*rewards[player] + ts*rewards[partner]
 
-    Returns list of (state, action, history, hist_len, reward) tuples.
+    Returns list of (state, action, history, hist_len, reward, opponent_cards) tuples.
     """
     env.reset()
-    transitions: dict[int, list[tuple[np.ndarray, np.ndarray, np.ndarray, int]]] = {
-        p: [] for p in range(4)
-    }
+    transitions: dict[int, list[tuple]] = {p: [] for p in range(4)}
 
     while not env.done:
         player = env.current_player
@@ -145,7 +144,8 @@ def play_episode(
                 ).expand(B)
                 idx = q_net(s, a, h, hl).argmax().item()
 
-        transitions[player].append((state_enc, action_encs[idx], history, hist_len))
+        opp_cards = encode_opponent_cards(env, player)
+        transitions[player].append((state_enc, action_encs[idx], history, hist_len, opp_cards))
         env.step(legal[idx])
 
     rewards = env.get_rewards()
@@ -155,8 +155,8 @@ def play_episode(
         r_self = rewards[player]
         r_partner = rewards[partners[player]]
         mc_return = (1 - team_spirit) * r_self + team_spirit * r_partner
-        for s, a, h, hl in tlist:
-            all_trans.append((s, a, h, hl, mc_return))
+        for s, a, h, hl, oc in tlist:
+            all_trans.append((s, a, h, hl, mc_return, oc))
     return all_trans
 
 
@@ -167,13 +167,13 @@ def _episode_worker(
     mlp_hidden: int,
     epsilon: float,
     opponent_name: str | None,
-) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float]]:
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float, np.ndarray]]:
     """Run one episode in a subprocess with CPU inference."""
     device = torch.device("cpu")
     q_lead = QNetworkLSTM(lstm_hidden=lstm_hidden, hidden=mlp_hidden).to(device)
     q_follow = QNetworkLSTM(lstm_hidden=lstm_hidden, hidden=mlp_hidden).to(device)
-    q_lead.load_state_dict(lead_sd)
-    q_follow.load_state_dict(follow_sd)
+    load_compat(q_lead, lead_sd)
+    load_compat(q_follow, follow_sd)
     q_lead.eval()
     q_follow.eval()
     env = GuanDanEnv(level_rank=Rank.TWO)
@@ -187,23 +187,31 @@ def train_step(
     optimizer: torch.optim.Optimizer,
     batch_size: int,
     device: torch.device,
-) -> float | None:
-    """One gradient step on a single network/buffer pair."""
+    aux_weight: float = 0.1,
+) -> tuple[float, float] | None:
+    """One gradient step with Q-loss + auxiliary hand prediction loss.
+
+    Returns (q_loss, aux_loss) or None if buffer too small.
+    """
     if len(buf) < batch_size:
         return None
 
     batch = buf.sample(batch_size, device)
-    q_pred = q_net(
+    q_pred, hand_pred = q_net.forward_with_aux(
         batch["state"], batch["action"], batch["history"], batch["hist_len"]
     )
-    loss = torch.nn.functional.mse_loss(q_pred, batch["return"])
+    q_loss = torch.nn.functional.mse_loss(q_pred, batch["return"])
+    aux_loss = torch.nn.functional.binary_cross_entropy(
+        hand_pred, batch["opponent_cards"]
+    )
+    total = q_loss + aux_weight * aux_loss
 
     optimizer.zero_grad()
-    loss.backward()
+    total.backward()
     torch.nn.utils.clip_grad_norm_(q_net.parameters(), max_norm=1.0)
     optimizer.step()
 
-    return loss.item()
+    return q_loss.item(), aux_loss.item()
 
 
 def pretrain_from_heuristic(
@@ -249,14 +257,15 @@ def pretrain_from_heuristic(
             action_enc = encode_action(action, env.hands[player], level_rank)
             history, hist_len = encode_history(env, player, level_rank)
 
-            transitions[player].append((state_enc, action_enc, history, hist_len))
+            opp_cards = encode_opponent_cards(env, player)
+            transitions[player].append((state_enc, action_enc, history, hist_len, opp_cards))
             env.step(action)
 
         rewards = env.get_rewards()
         for player, tlist in transitions.items():
             mc_return = rewards[player]
-            for s, a, h, hl in tlist:
-                buffer.push(s, a, h, hl, mc_return)
+            for s, a, h, hl, oc in tlist:
+                buffer.push(s, a, h, hl, mc_return, oc)
                 total_trans += 1
 
         # Train on buffer
@@ -270,7 +279,8 @@ def pretrain_from_heuristic(
                 loss_follow = lf
 
         if loss_lead is not None:
-            pbar.set_postfix(buf=len(buffer), loss=f"{(loss_lead + loss_follow) / 2:.4f}")
+            ql = (loss_lead[0] + loss_follow[0]) / 2
+            pbar.set_postfix(buf=len(buffer), loss=f"{ql:.4f}")
 
         # Periodic eval
         if game % eval_interval == 0:
@@ -287,8 +297,9 @@ def pretrain_from_heuristic(
                     "phase": "pretrain",
                     "game": game,
                     "buffer_size": len(buffer),
-                    "loss_lead": loss_lead,
-                    "loss_follow": loss_follow,
+                    "loss_lead": loss_lead[0] if loss_lead else None,
+                    "loss_follow": loss_follow[0] if loss_follow else None,
+                    "aux_loss": ((loss_lead[1] if loss_lead else 0) + (loss_follow[1] if loss_follow else 0)) / 2 if loss_lead else None,
                     "winrate": result["winrate"],
                     "avg_reward": result["avg_reward"],
                     "finish_12": result["finish_12"],
@@ -497,14 +508,14 @@ def train(args: argparse.Namespace) -> None:
                 for _ in range(batch_size_ep)
             ]
             for f in futures:
-                for s, a, h, hl, mc_return in f.result():
-                    buffer.push(s, a, h, hl, mc_return)
+                for s, a, h, hl, mc_return, oc in f.result():
+                    buffer.push(s, a, h, hl, mc_return, oc)
         else:
             trans = play_episode(
                 env, q_lead, q_follow, epsilon, device, opponent=None
             )
-            for s, a, h, hl, mc_return in trans:
-                buffer.push(s, a, h, hl, mc_return)
+            for s, a, h, hl, mc_return, oc in trans:
+                buffer.push(s, a, h, hl, mc_return, oc)
 
         # Gradient steps — scale with batch size
         loss_lead = None
@@ -524,9 +535,10 @@ def train(args: argparse.Namespace) -> None:
         ep += batch_size_ep
         pbar.update(batch_size_ep)
         if loss_lead is not None:
+            ql = (loss_lead[0] + (loss_follow[0] if loss_follow else 0)) / 2
             pbar.set_postfix(
                 ε=f"{epsilon:.3f}",
-                loss=f"{(loss_lead + loss_follow) / 2:.4f}" if loss_follow is not None else f"{loss_lead:.4f}",
+                loss=f"{ql:.4f}",
                 wr=f"{best_wr:.1%}",
                 buf=len(buffer),
             )
@@ -547,12 +559,13 @@ def train(args: argparse.Namespace) -> None:
             else:
                 evals_without_improvement += 1
 
-            ll_str = f"{loss_lead:.4f}" if loss_lead is not None else "n/a"
-            lf_str = f"{loss_follow:.4f}" if loss_follow is not None else "n/a"
+            ll_str = f"{loss_lead[0]:.4f}" if loss_lead is not None else "n/a"
+            lf_str = f"{loss_follow[0]:.4f}" if loss_follow is not None else "n/a"
+            aux_str = f"{(loss_lead[1] + (loss_follow[1] if loss_follow else 0)) / 2:.4f}" if loss_lead is not None else "n/a"
 
             tqdm.write(
                 f"Ep {ep:>6d} | ε={epsilon:.3f} | "
-                f"L_lead={ll_str} L_follow={lf_str} | "
+                f"L_lead={ll_str} L_follow={lf_str} aux={aux_str} | "
                 f"buf={len(buffer):>6d} | "
                 f"vs heuristic: {wr:.1%} "
                 f"(1-2:{result['finish_12']} 1-3:{result['finish_13']} 1-4:{result['finish_14']}) "
@@ -565,8 +578,9 @@ def train(args: argparse.Namespace) -> None:
                 "phase": "self-play",
                 "episode": ep,
                 "epsilon": round(epsilon, 4),
-                "loss_lead": loss_lead,
-                "loss_follow": loss_follow,
+                "loss_lead": loss_lead[0] if loss_lead else None,
+                "loss_follow": loss_follow[0] if loss_follow else None,
+                "aux_loss": ((loss_lead[1] if loss_lead else 0) + (loss_follow[1] if loss_follow else 0)) / 2 if loss_lead else None,
                 "buffer_size": len(buffer),
                 "winrate": result["winrate"],
                 "avg_reward": result["avg_reward"],

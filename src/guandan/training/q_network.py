@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 import torch
 import torch.nn as nn
 
-from .encoding import ACTION_DIM, D_MOVE, STATE_DIM
+from .encoding import ACTION_DIM, D_MOVE, OPP_CARDS_DIM, STATE_DIM
+
+log = logging.getLogger(__name__)
 
 
 def get_device() -> torch.device:
@@ -83,6 +87,14 @@ class QNetworkLSTM(nn.Module):
         layers.append(nn.Linear(hidden, 1))
         self.mlp = nn.Sequential(*layers)
 
+        # Auxiliary hand prediction head (training-only)
+        # Predicts combined opponent cards from state + history embedding
+        self.hand_pred = nn.Sequential(
+            nn.Linear(d_state + lstm_hidden, hidden // 2),
+            nn.ReLU(),
+            nn.Linear(hidden // 2, OPP_CARDS_DIM),
+        )
+
         # Initialize LSTM forget gate bias to 1 (helps learning)
         for name, param in self.lstm.named_parameters():
             if "bias" in name:
@@ -124,3 +136,32 @@ class QNetworkLSTM(nn.Module):
     ) -> torch.Tensor:
         history_emb = self.encode_history(history, history_len)
         return self.forward_from_embedding(state, action, history_emb)
+
+    def predict_opponent_cards(
+        self, state: torch.Tensor, hist_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        """Predict opponent card distribution. [B, d_state], [B, lstm_hidden] → [B, 60] sigmoid."""
+        return torch.sigmoid(self.hand_pred(torch.cat([state, hist_emb], dim=-1)))
+
+    def forward_with_aux(
+        self,
+        state: torch.Tensor,
+        action: torch.Tensor,
+        history: torch.Tensor,
+        history_len: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward returning both Q-value and hand prediction.
+        Returns: (q_value [B], hand_pred [B, 60]).
+        """
+        hist_emb = self.encode_history(history, history_len)
+        q = self.forward_from_embedding(state, action, hist_emb)
+        hp = self.predict_opponent_cards(state, hist_emb)
+        return q, hp
+
+
+def load_compat(model: nn.Module, state_dict: dict) -> None:
+    """Load state_dict with backward compatibility (strict=False)."""
+    missing, _ = model.load_state_dict(state_dict, strict=False)
+    if missing:
+        log.info("New params (random init): %s",
+                 list({k.split(".")[0] for k in missing}))

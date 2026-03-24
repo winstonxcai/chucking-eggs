@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from .encoding import ACTION_DIM, D_MOVE, MAX_HISTORY, STATE_DIM
+from .encoding import ACTION_DIM, D_MOVE, MAX_HISTORY, OPP_CARDS_DIM, STATE_DIM
 
 
 class ReplayBuffer:
@@ -30,6 +30,9 @@ class ReplayBuffer:
         )
         self.hist_lens = np.zeros(capacity, dtype=np.int64)
         self.returns = np.zeros(capacity, dtype=np.float32)
+        self.opponent_cards = np.zeros(
+            (capacity, OPP_CARDS_DIM), dtype=np.float32
+        )
 
     def push(
         self,
@@ -38,6 +41,7 @@ class ReplayBuffer:
         history: np.ndarray,
         hist_len: int,
         mc_return: float,
+        opponent_cards: np.ndarray | None = None,
     ) -> None:
         i = self.idx
         self.states[i] = state
@@ -47,6 +51,10 @@ class ReplayBuffer:
         self.histories[i, seq_len:] = 0.0
         self.hist_lens[i] = seq_len
         self.returns[i] = mc_return
+        if opponent_cards is not None:
+            self.opponent_cards[i] = opponent_cards
+        else:
+            self.opponent_cards[i] = 0.0
         self.idx = (self.idx + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
@@ -58,6 +66,7 @@ class ReplayBuffer:
             "history": torch.tensor(self.histories[indices]),
             "hist_len": torch.tensor(self.hist_lens[indices]),  # keep as LongTensor
             "return": torch.tensor(self.returns[indices]),
+            "opponent_cards": torch.tensor(self.opponent_cards[indices]),
         }
         if device is not None:
             batch["state"] = batch["state"].to(device)
@@ -65,6 +74,7 @@ class ReplayBuffer:
             batch["history"] = batch["history"].to(device)
             # hist_len stays on CPU for pack_padded_sequence
             batch["return"] = batch["return"].to(device)
+            batch["opponent_cards"] = batch["opponent_cards"].to(device)
         return batch
 
     def clear(self) -> None:

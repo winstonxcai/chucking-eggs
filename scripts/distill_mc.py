@@ -262,8 +262,8 @@ def main() -> None:
     q_lead   = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     ckpt = torch.load(args.resume, map_location=device, weights_only=True)
-    q_lead.load_state_dict(ckpt["lead"])
-    q_follow.load_state_dict(ckpt["follow"])
+    q_lead.load_state_dict(ckpt["lead"], strict=False)
+    q_follow.load_state_dict(ckpt["follow"], strict=False)
 
     opt_lead   = torch.optim.Adam(q_lead.parameters(),   lr=args.lr)
     opt_follow = torch.optim.Adam(q_follow.parameters(), lr=args.lr)

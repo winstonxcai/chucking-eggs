@@ -37,8 +37,8 @@ def main() -> None:
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=True)
     lead_key = "lead_state_dict" if "lead_state_dict" in ckpt else "lead"
     follow_key = "follow_state_dict" if "follow_state_dict" in ckpt else "follow"
-    q_lead.load_state_dict(ckpt[lead_key])
-    q_follow.load_state_dict(ckpt[follow_key])
+    q_lead.load_state_dict(ckpt[lead_key], strict=False)
+    q_follow.load_state_dict(ckpt[follow_key], strict=False)
     q_lead.eval()
     q_follow.eval()
 

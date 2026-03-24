@@ -15,6 +15,10 @@ export function useGameSocket(gameId: string | null) {
   useEffect(() => {
     if (!gameId) return;
 
+    setGameOver(null);
+    setGameState(null);
+    setAiThinking(null);
+
     const ws = new WebSocket(`${WS_BASE}/ws/game/${gameId}`);
     wsRef.current = ws;
 

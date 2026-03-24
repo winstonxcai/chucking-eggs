@@ -269,14 +269,16 @@ export default function GameBoard({
         </div>
       </div>
 
-      {/* Sidebar: combo browser */}
+      {/* Sidebar: combo browser — exclude combos that use grouped cards */}
       {gameState.is_my_turn && gameState.legal_moves.length > 0 && (
         <div className="w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex flex-col gap-4">
           <span className="text-[13px] font-semibold text-text-secondary tracking-wider uppercase">
             Legal Combos
           </span>
           <ComboBrowser
-            legalMoves={gameState.legal_moves}
+            legalMoves={gameState.legal_moves.filter(
+              (combo) => !combo.cards.some((c) => groupedCardIds.has(c.id))
+            )}
             onSelectCombo={handleSelectCombo}
           />
           <div className="mt-auto pt-4">

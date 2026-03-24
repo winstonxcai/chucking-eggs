@@ -103,18 +103,30 @@ export function validateCombo(
     return { valid: true, type: "FULL_HOUSE", name: `Full House ${RANK_NAMES[tripleRank ?? 0] ?? "?"}` };
   }
 
-  // Straight (5 consecutive, not all same suit)
-  if (n === 5 && uniqueRanks.length === 5) {
-    const isConsecutive = uniqueRanks[4] - uniqueRanks[0] === 4;
-    // Ace-low: A-2-3-4-5
-    const isAceLow = uniqueRanks[0] === 2 && uniqueRanks[4] === 14 &&
-      uniqueRanks[1] === 3 && uniqueRanks[2] === 4 && uniqueRanks[3] === 5;
-    if (isConsecutive || isAceLow) {
-      const allSameSuit = new Set(suits).size === 1;
-      if (allSameSuit) {
-        return { valid: true, type: "STRAIGHT_FLUSH", name: `Straight Flush ${RANK_NAMES[uniqueRanks[0]] ?? ""}-${RANK_NAMES[uniqueRanks[4]] ?? ""}` };
+  // Straight / Straight Flush (wild-card-aware)
+  if (n === 5) {
+    const nonWild = cards.filter((c) => !c.is_wild);
+    const wildCount = n - nonWild.length;
+    const nwRanks = nonWild.map((c) => c.rank).sort((a, b) => a - b);
+    const uniqueNWRanks = [...new Set(nwRanks)];
+
+    if (uniqueNWRanks.length === nonWild.length) {  // no duplicate non-wild ranks
+      const span = uniqueNWRanks.length > 1
+        ? uniqueNWRanks[uniqueNWRanks.length - 1] - uniqueNWRanks[0]
+        : 0;
+      if (span <= 4) {
+        const gaps = span > 0 ? span - (uniqueNWRanks.length - 1) : 0;
+        if (gaps <= wildCount) {
+          const allSameSuit = nonWild.length === 0 ||
+            new Set(nonWild.map((c) => c.suit)).size === 1;
+          const lo = uniqueNWRanks[0] ?? 0;
+          const hi = uniqueNWRanks[uniqueNWRanks.length - 1] ?? 0;
+          if (allSameSuit) {
+            return { valid: true, type: "STRAIGHT_FLUSH", name: `Straight Flush ${RANK_NAMES[lo] ?? ""}-${RANK_NAMES[hi] ?? ""}` };
+          }
+          return { valid: true, type: "STRAIGHT", name: `Straight ${RANK_NAMES[lo] ?? ""}-${RANK_NAMES[hi] ?? ""}` };
+        }
       }
-      return { valid: true, type: "STRAIGHT", name: `Straight ${RANK_NAMES[uniqueRanks[0]] ?? ""}-${RANK_NAMES[uniqueRanks[4]] ?? ""}` };
     }
   }
 

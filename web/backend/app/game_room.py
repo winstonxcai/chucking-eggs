@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from datetime import datetime
+from pathlib import Path
 
 from fastapi import WebSocket
+
+DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 
 from guandan.cards import ComboType, Rank
 from guandan.combos import Combo
@@ -31,6 +36,8 @@ class GameRoom:
         # Track current trick plays: list of (seat, Combo)
         self.trick_plays: list[tuple[int, Combo]] = []
         self._was_leading = True  # track trick boundaries
+
+        self._start_time = time.time()
 
         # Pick bot personalities
         bots = ai_service.pick_bots(difficulty)
@@ -68,7 +75,32 @@ class GameRoom:
         )
         await self.send({"type": "game_state", **state})
 
+    def _record_game_result(self) -> None:
+        fo = self.env.finish_order
+        human_pos = fo.index(HUMAN_SEAT) + 1
+        rewards = self.env.get_rewards()
+        team_result = "win" if rewards[HUMAN_SEAT] > 0 else "loss"
+        record = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "difficulty": self.difficulty,
+            "agent": self.ai_service.get_agent_name(self.difficulty),
+            "finish_order": fo,
+            "human_finish_pos": human_pos,
+            "team_result": team_result,
+            "reward": rewards[HUMAN_SEAT],
+            "n_moves": len(self.env.move_history),
+            "duration_s": int(time.time() - self._start_time),
+            "players": [
+                {"seat": i, "name": info["name"], "elo": info.get("elo"), "is_human": i == HUMAN_SEAT}
+                for i, info in enumerate(self.player_infos)
+            ],
+        }
+        DATA_DIR.mkdir(exist_ok=True)
+        with open(DATA_DIR / "human_games.jsonl", "a") as f:
+            f.write(json.dumps(record) + "\n")
+
     async def _send_game_over(self) -> None:
+        self._record_game_result()
         rewards = self.env.get_rewards()
         await self.send({
             "type": "game_over",

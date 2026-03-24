@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from guandan.cards import Card, ComboType, Rank, Suit, is_wild, level_order_key
+from guandan.cards import BOMB_TYPES, Card, ComboType, Rank, Suit, is_wild, level_order_key
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
 
@@ -83,6 +83,26 @@ def combo_to_dto(combo: Combo, level_rank: int) -> dict:
     }
 
 
+def combo_sort_key(combo: Combo, level_rank: int) -> tuple:
+    """Sort key for ordering combos smallest → biggest."""
+    is_bomb = combo.type in BOMB_TYPES
+    if is_bomb:
+        bomb_tier = int(combo.type)
+        if combo.type == ComboType.STRAIGHT_FLUSH:
+            rank_key = combo.key  # natural order
+        elif combo.type == ComboType.BOMB_JOKER:
+            rank_key = 99
+        else:
+            rank_key = level_order_key(combo.key, level_rank)
+        return (1, bomb_tier, rank_key)
+    else:
+        if combo.type in (ComboType.STRAIGHT, ComboType.TUBE, ComboType.PLATE):
+            key_val = combo.key  # natural order
+        else:
+            key_val = level_order_key(combo.key, level_rank)
+        return (0, int(combo.type), key_val)
+
+
 def sort_hand(cards: set[Card], level_rank: int) -> list[Card]:
     """Sort hand by level order, then suit, then deck."""
     def sort_key(c: Card):
@@ -99,6 +119,7 @@ def serialize_game_state(
     game_id: str,
     human_seat: int,
     player_infos: list[dict],
+    trick_plays: list[tuple[int, Combo]] | None = None,
 ) -> dict:
     """Serialize full game state from the human player's perspective."""
     sorted_hand = sort_hand(env.hands[human_seat], env.level_rank)
@@ -108,7 +129,7 @@ def serialize_game_state(
     for dto, card in zip(hand_dtos, sorted_hand):
         dto["is_wild"] = is_wild(card, env.level_rank)
 
-    # Player infos with card counts and last actions
+    # Player infos with card counts
     players = []
     for i, info in enumerate(player_infos):
         card_count = len(env.hands[i])
@@ -123,31 +144,33 @@ def serialize_game_state(
             "is_human": i == human_seat,
         })
 
-    # Current trick plays
-    current_trick = None
-    if env.trick_winner is not None:
-        # Gather recent plays for this trick from move_history
-        trick_plays = []
-        for seat, combo in reversed(env.move_history):
-            trick_plays.insert(0, {
-                "seat": seat,
-                "player_name": player_infos[seat]["name"],
-                "combo": combo_to_dto(combo, env.level_rank),
-                "is_pass": combo.type == ComboType.PASS,
-            })
-            # Stop when we hit the trick leader (the first non-pass play
-            # after the last trick reset)
-            if combo.type != ComboType.PASS and seat == env.trick_winner and len(trick_plays) > 0:
-                # Check if this is actually the start
-                break
-        current_trick = {"plays": trick_plays, "leader": env.trick_winner}
+    # Per-seat trick actions (geometric layout)
+    trick_actions: dict[str, dict | None] = {"0": None, "1": None, "2": None, "3": None}
+    if trick_plays:
+        for seat, combo in trick_plays:
+            if combo.type == ComboType.PASS:
+                trick_actions[str(seat)] = {"type": "pass"}
+            else:
+                trick_actions[str(seat)] = {
+                    "type": "play",
+                    "combo": combo_to_dto(combo, env.level_rank),
+                }
 
-    # Legal moves (only when it's the human's turn)
+    # Legal moves sorted smallest → biggest (only when it's the human's turn)
     legal_moves = []
     is_my_turn = env.current_player == human_seat and not env.done
     if is_my_turn:
-        for combo in env.legal_moves(human_seat):
+        raw_moves = env.legal_moves(human_seat)
+        non_pass = [c for c in raw_moves if c.type != ComboType.PASS]
+        non_pass.sort(key=lambda c: combo_sort_key(c, env.level_rank))
+        for combo in non_pass:
             legal_moves.append(combo_to_dto(combo, env.level_rank))
+        # Add pass at the end if it was in the original list
+        if any(c.type == ComboType.PASS for c in raw_moves):
+            legal_moves.append(combo_to_dto(
+                next(c for c in raw_moves if c.type == ComboType.PASS),
+                env.level_rank,
+            ))
 
     return {
         "game_id": game_id,
@@ -156,7 +179,7 @@ def serialize_game_state(
         "is_my_turn": is_my_turn,
         "my_hand": hand_dtos,
         "players": players,
-        "current_trick": current_trick,
+        "trick_actions": trick_actions,
         "is_leading": env.is_leading(),
         "legal_moves": legal_moves,
         "finish_order": env.finish_order,

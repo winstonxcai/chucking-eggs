@@ -17,7 +17,10 @@ const suitColor: Record<number, string> = {
 };
 
 export default function CardComponent({ card, selected, onClick, size = "md" }: CardProps) {
-  const color = suitColor[card.suit] ?? "#1A1612";
+  const isJoker = card.rank >= 16;
+  const color = isJoker
+    ? card.rank === 17 ? "#C75D4A" : "#1A1612"  // RJ red, BJ dark
+    : suitColor[card.suit] ?? "#1A1612";
   const isWild = card.is_wild;
   const w = size === "sm" ? "w-9 h-[52px]" : "w-12 h-[68px]";
   const textSize = size === "sm" ? "text-xs" : "text-base";
@@ -44,9 +47,11 @@ export default function CardComponent({ card, selected, onClick, size = "md" }: 
       <span className={`font-bold ${textSize} leading-none`} style={{ color }}>
         {card.rank_display}
       </span>
-      <span className={`${suitSize} leading-none mt-0.5`} style={{ color }}>
-        {card.suit_symbol}
-      </span>
+      {!isJoker && (
+        <span className={`${suitSize} leading-none mt-0.5`} style={{ color }}>
+          {card.suit_symbol}
+        </span>
+      )}
     </div>
   );
 }

@@ -27,6 +27,12 @@ export const COMBO_TYPE_DISPLAY: Record<string, string> = {
   BOMB_JOKER: "Rocket",
 };
 
+const RANK_NAMES: Record<number, string> = {
+  2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8",
+  9: "9", 10: "10", 11: "J", 12: "Q", 13: "K", 14: "A",
+  16: "BJ", 17: "RJ",
+};
+
 /** Group cards by rank for stacked display */
 export function groupByRank(cards: CardDTO[]): CardDTO[][] {
   const groups: Map<number, CardDTO[]> = new Map();
@@ -54,5 +60,82 @@ export function findMatchingCombo(
       return combo;
     }
   }
+  return null;
+}
+
+/** Validate if a set of cards forms a recognized combo type (client-side). */
+export function validateCombo(
+  cards: CardDTO[]
+): { valid: boolean; type: string; name: string } | null {
+  if (cards.length === 0) return null;
+
+  const ranks = cards.map((c) => c.rank).sort((a, b) => a - b);
+  const suits = cards.map((c) => c.suit);
+  const rankCounts: Map<number, number> = new Map();
+  for (const r of ranks) {
+    rankCounts.set(r, (rankCounts.get(r) || 0) + 1);
+  }
+  const uniqueRanks = [...rankCounts.keys()].sort((a, b) => a - b);
+  const counts = [...rankCounts.values()].sort((a, b) => b - a);
+
+  const n = cards.length;
+
+  // Single
+  if (n === 1) return { valid: true, type: "SINGLE", name: `${RANK_NAMES[ranks[0]] ?? "?"} Single` };
+
+  // Pair
+  if (n === 2 && uniqueRanks.length === 1)
+    return { valid: true, type: "PAIR", name: `Pair of ${RANK_NAMES[ranks[0]] ?? "?"}s` };
+
+  // Triple
+  if (n === 3 && uniqueRanks.length === 1)
+    return { valid: true, type: "TRIPLE", name: `Triple ${RANK_NAMES[ranks[0]] ?? "?"}s` };
+
+  // Bomb (4+ of a kind)
+  if (uniqueRanks.length === 1 && n >= 4)
+    return { valid: true, type: `BOMB_${n}`, name: `Bomb ${RANK_NAMES[ranks[0]] ?? "?"} x${n}` };
+
+  // Full House (3+2)
+  if (n === 5 && counts[0] === 3 && counts[1] === 2) {
+    const tripleRank = [...rankCounts.entries()].find(([, c]) => c === 3)?.[0];
+    return { valid: true, type: "FULL_HOUSE", name: `Full House ${RANK_NAMES[tripleRank ?? 0] ?? "?"}` };
+  }
+
+  // Straight (5 consecutive, not all same suit)
+  if (n === 5 && uniqueRanks.length === 5) {
+    const isConsecutive = uniqueRanks[4] - uniqueRanks[0] === 4;
+    // Ace-low: A-2-3-4-5
+    const isAceLow = uniqueRanks[0] === 2 && uniqueRanks[4] === 14 &&
+      uniqueRanks[1] === 3 && uniqueRanks[2] === 4 && uniqueRanks[3] === 5;
+    if (isConsecutive || isAceLow) {
+      const allSameSuit = new Set(suits).size === 1;
+      if (allSameSuit) {
+        return { valid: true, type: "STRAIGHT_FLUSH", name: `Straight Flush ${RANK_NAMES[uniqueRanks[0]] ?? ""}-${RANK_NAMES[uniqueRanks[4]] ?? ""}` };
+      }
+      return { valid: true, type: "STRAIGHT", name: `Straight ${RANK_NAMES[uniqueRanks[0]] ?? ""}-${RANK_NAMES[uniqueRanks[4]] ?? ""}` };
+    }
+  }
+
+  // Tube (3 consecutive pairs, 6 cards)
+  if (n === 6 && uniqueRanks.length === 3 && counts.every((c) => c === 2)) {
+    const isConsecutive = uniqueRanks[2] - uniqueRanks[0] === 2;
+    if (isConsecutive) {
+      return { valid: true, type: "TUBE", name: `Tube ${RANK_NAMES[uniqueRanks[0]] ?? ""}-${RANK_NAMES[uniqueRanks[2]] ?? ""}` };
+    }
+  }
+
+  // Plate (2 consecutive triples, 6 cards)
+  if (n === 6 && uniqueRanks.length === 2 && counts.every((c) => c === 3)) {
+    const isConsecutive = uniqueRanks[1] - uniqueRanks[0] === 1;
+    if (isConsecutive) {
+      return { valid: true, type: "PLATE", name: `Plate ${RANK_NAMES[uniqueRanks[0]] ?? ""}-${RANK_NAMES[uniqueRanks[1]] ?? ""}` };
+    }
+  }
+
+  // Rocket (2BJ + 2RJ)
+  if (n === 4 && ranks.filter((r) => r === 16).length === 2 && ranks.filter((r) => r === 17).length === 2) {
+    return { valid: true, type: "BOMB_JOKER", name: "Rocket" };
+  }
+
   return null;
 }

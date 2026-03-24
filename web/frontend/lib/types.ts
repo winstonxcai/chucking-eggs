@@ -32,16 +32,16 @@ export interface PlayerDTO {
   is_human: boolean;
 }
 
-export interface TrickPlay {
-  seat: number;
-  player_name: string;
-  combo: ComboDTO;
-  is_pass: boolean;
+export interface TrickAction {
+  type: "play" | "pass";
+  combo?: ComboDTO;
 }
 
-export interface CurrentTrick {
-  plays: TrickPlay[];
-  leader: number;
+export interface CardGroup {
+  id: string;
+  cardIds: string[];
+  comboType: string;
+  comboName: string;
 }
 
 export interface GameState {
@@ -51,7 +51,7 @@ export interface GameState {
   is_my_turn: boolean;
   my_hand: CardDTO[];
   players: PlayerDTO[];
-  current_trick: CurrentTrick | null;
+  trick_actions: Record<string, TrickAction | null>;
   is_leading: boolean;
   legal_moves: ComboDTO[];
   finish_order: number[];

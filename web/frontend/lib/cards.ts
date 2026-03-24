@@ -33,7 +33,7 @@ const RANK_NAMES: Record<number, string> = {
   16: "BJ", 17: "RJ",
 };
 
-/** Group cards by rank for stacked display */
+/** Group cards by rank for stacked display, sorted by suit within each group (♠♥♦♣) */
 export function groupByRank(cards: CardDTO[]): CardDTO[][] {
   const groups: Map<number, CardDTO[]> = new Map();
   for (const card of cards) {
@@ -41,7 +41,9 @@ export function groupByRank(cards: CardDTO[]): CardDTO[][] {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(card);
   }
-  return Array.from(groups.values());
+  return Array.from(groups.values()).map((g) =>
+    g.slice().sort((a, b) => a.suit - b.suit)
+  );
 }
 
 /** Check if a set of selected card IDs matches any legal combo */
@@ -138,4 +140,51 @@ export function validateCombo(
   }
 
   return null;
+}
+
+/** Find all 5-card straight flushes for a given suit from a set of cards.
+ *  Wild cards can fill gaps in a run.
+ *  Returns array of {label, cards} for each valid 5-card window. */
+export function findStraightFlushes(
+  cards: CardDTO[],
+  suit: number
+): { label: string; cards: CardDTO[] }[] {
+  // Non-wild cards of this suit
+  const suitCards = cards
+    .filter((c) => c.suit === suit && c.rank >= 2 && c.rank <= 14 && !c.is_wild)
+    .sort((a, b) => a.rank - b.rank);
+
+  // Wild cards (any suit) — can fill any gap
+  const wildCards = cards.filter((c) => c.is_wild);
+
+  // Build rank → CardDTO map (first card per rank for this suit)
+  const rankToCard: Map<number, CardDTO> = new Map();
+  for (const c of suitCards) {
+    if (!rankToCard.has(c.rank)) rankToCard.set(c.rank, c);
+  }
+
+  const results: { label: string; cards: CardDTO[] }[] = [];
+
+  // Check every possible 5-rank window (2-6, 3-7, ..., 10-A)
+  for (let start = 2; start <= 10; start++) {
+    const windowCards: CardDTO[] = [];
+    let wildsNeeded = 0;
+
+    for (let r = start; r < start + 5; r++) {
+      if (rankToCard.has(r)) {
+        windowCards.push(rankToCard.get(r)!);
+      } else {
+        wildsNeeded++;
+      }
+    }
+
+    if (wildsNeeded <= wildCards.length) {
+      const selected = [...windowCards, ...wildCards.slice(0, wildsNeeded)];
+      const highRank = start + 4;
+      const label = `${RANK_NAMES[highRank] ?? highRank}-high SF`;
+      results.push({ label, cards: selected });
+    }
+  }
+
+  return results;
 }

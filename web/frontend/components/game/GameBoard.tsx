@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
-import { findMatchingCombo, validateCombo } from "@/lib/cards";
+import { findMatchingCombo, findStraightFlushes, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
 import OpponentPanel from "./OpponentPanel";
 import GameControls from "./GameControls";
@@ -145,44 +145,18 @@ export default function GameBoard({
   );
 
   // --- Straight flush finder ---
-  const handleFlushFind = useCallback(
-    (suit: number) => {
-      const suitCards = gameState.my_hand
-        .filter((c) => c.suit === suit && c.rank >= 2 && c.rank <= 14)
-        .sort((a, b) => a.rank - b.rank);
+  const sfBySuit = useMemo(() => {
+    const ungrouped = gameState.my_hand.filter((c) => !groupedCardIds.has(c.id));
+    const result: Record<number, { label: string; cards: CardDTO[] }[]> = {};
+    [0, 1, 2, 3].forEach((suit) => {
+      result[suit] = findStraightFlushes(ungrouped, suit);
+    });
+    return result;
+  }, [gameState.my_hand, groupedCardIds]);
 
-      if (suitCards.length < 5) return;
-
-      // Deduplicate by rank (double deck)
-      const uniqueByRank: CardDTO[] = [];
-      let lastRank = -1;
-      for (const c of suitCards) {
-        if (c.rank !== lastRank) {
-          uniqueByRank.push(c);
-          lastRank = c.rank;
-        }
-      }
-
-      // Find longest consecutive run
-      let bestRun: CardDTO[] = [];
-      let currentRun: CardDTO[] = [uniqueByRank[0]];
-
-      for (let i = 1; i < uniqueByRank.length; i++) {
-        if (uniqueByRank[i].rank === uniqueByRank[i - 1].rank + 1) {
-          currentRun.push(uniqueByRank[i]);
-        } else {
-          if (currentRun.length > bestRun.length) bestRun = [...currentRun];
-          currentRun = [uniqueByRank[i]];
-        }
-      }
-      if (currentRun.length > bestRun.length) bestRun = [...currentRun];
-
-      if (bestRun.length >= 5) {
-        setSelectedIds(new Set(bestRun.slice(0, 5).map((c) => c.id)));
-      }
-    },
-    [gameState.my_hand]
-  );
+  const handleFlushSelect = useCallback((cards: CardDTO[]) => {
+    setSelectedIds(new Set(cards.map((c) => c.id)));
+  }, []);
 
   // --- Layout data ---
   const partner = gameState.players.find((p) => p.seat === 2);
@@ -195,51 +169,56 @@ export default function GameBoard({
     <div className="flex h-screen bg-background">
       {/* Main board area */}
       <div className="flex-1 flex flex-col p-6 gap-0">
-        {/* Partner (top center) */}
-        <div className="flex justify-center pb-2">
-          {partner && (
-            <OpponentPanel player={partner} thinking={aiThinking === 2} />
-          )}
-        </div>
+        {/* Play area: all players + table in a centered grid with equal gaps */}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="grid grid-cols-[auto_340px_auto] grid-rows-[auto_200px] gap-24 items-center justify-items-center">
+            {/* Partner (top center, spans column 2) */}
+            <div className="col-start-2 row-start-1">
+              {partner && (
+                <OpponentPanel player={partner} thinking={aiThinking === 2} />
+              )}
+            </div>
 
-        {/* Partner's trick action (below partner) */}
-        <div className="flex justify-center pb-2 min-h-[56px]">
-          <TrickActionDisplay action={ta?.["2"] ?? null} />
-        </div>
+            {/* Left opponent */}
+            <div className="col-start-1 row-start-2">
+              {leftOpp && (
+                <OpponentPanel player={leftOpp} thinking={aiThinking === 1} />
+              )}
+            </div>
 
-        {/* Middle row: left action | TABLE | right action */}
-        <div className="flex-1 flex items-center justify-center gap-4">
-          {/* Left opponent + their action */}
-          <div className="flex items-center gap-3">
-            {leftOpp && (
-              <OpponentPanel player={leftOpp} thinking={aiThinking === 1} />
-            )}
-            <div className="min-w-[80px] flex justify-center">
-              <TrickActionDisplay action={ta?.["1"] ?? null} />
+            {/* Table surface — all trick actions inside */}
+            <div className="col-start-2 row-start-2 relative w-[340px] h-[200px] border border-border rounded-2xl">
+              {/* Partner (top edge) */}
+              <div className="absolute top-3 left-0 right-0 flex justify-center">
+                <TrickActionDisplay action={ta?.["2"] ?? null} />
+              </div>
+              {/* Left opp (left edge) */}
+              <div className="absolute left-3 top-0 bottom-0 flex items-center">
+                <TrickActionDisplay action={ta?.["1"] ?? null} />
+              </div>
+              {/* Right opp (right edge) */}
+              <div className="absolute right-3 top-0 bottom-0 flex items-center">
+                <TrickActionDisplay action={ta?.["3"] ?? null} />
+              </div>
+              {/* You (bottom edge) */}
+              <div className="absolute bottom-3 left-0 right-0 flex justify-center">
+                <TrickActionDisplay action={ta?.["0"] ?? null} />
+              </div>
+              {/* New trick label */}
+              {gameState.is_leading && !ta?.["0"] && !ta?.["1"] && !ta?.["2"] && !ta?.["3"] && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-sm text-text-secondary">New trick</span>
+                </div>
+              )}
+            </div>
+
+            {/* Right opponent */}
+            <div className="col-start-3 row-start-2">
+              {rightOpp && (
+                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} />
+              )}
             </div>
           </div>
-
-          {/* Table surface */}
-          <div className="w-[300px] h-[180px] border border-border rounded-2xl flex items-center justify-center">
-            {gameState.is_leading && !ta?.["0"] && !ta?.["1"] && !ta?.["2"] && !ta?.["3"] ? (
-              <span className="text-sm text-text-secondary">New trick</span>
-            ) : null}
-          </div>
-
-          {/* Right opponent + their action */}
-          <div className="flex items-center gap-3">
-            <div className="min-w-[80px] flex justify-center">
-              <TrickActionDisplay action={ta?.["3"] ?? null} />
-            </div>
-            {rightOpp && (
-              <OpponentPanel player={rightOpp} thinking={aiThinking === 3} />
-            )}
-          </div>
-        </div>
-
-        {/* Your trick action (above controls) */}
-        <div className="flex justify-center pt-2 min-h-[56px]">
-          <TrickActionDisplay action={ta?.["0"] ?? null} />
         </div>
 
         {/* Your turn indicator + Controls */}
@@ -278,7 +257,8 @@ export default function GameBoard({
         {/* Hand toolbar */}
         <div className="py-2">
           <HandToolbar
-            onFlushFind={handleFlushFind}
+            onFlushSelect={handleFlushSelect}
+            sfBySuit={sfBySuit}
             onGroup={handleGroup}
             onUngroup={handleUngroup}
             canGroup={selectedIds.size > 0}

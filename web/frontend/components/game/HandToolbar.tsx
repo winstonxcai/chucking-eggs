@@ -1,7 +1,11 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+import type { CardDTO } from "@/lib/types";
+
 interface HandToolbarProps {
-  onFlushFind: (suit: number) => void;
+  onFlushSelect: (cards: CardDTO[]) => void;
+  sfBySuit: Record<number, { label: string; cards: CardDTO[] }[]>;
   onGroup: () => void;
   onUngroup: () => void;
   canGroup: boolean;
@@ -16,12 +20,28 @@ const SUITS = [
 ];
 
 export default function HandToolbar({
-  onFlushFind,
+  onFlushSelect,
+  sfBySuit,
   onGroup,
   onUngroup,
   canGroup,
   canUngroup,
 }: HandToolbarProps) {
+  const [openSuit, setOpenSuit] = useState<number | null>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Close popover on outside click
+  useEffect(() => {
+    if (openSuit === null) return;
+    const handler = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpenSuit(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [openSuit]);
+
   return (
     <div className="flex items-center justify-center gap-4">
       {/* Group / Ungroup */}
@@ -55,17 +75,44 @@ export default function HandToolbar({
       {/* Straight Flush Finder */}
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium text-text-secondary">Straight Flush</span>
-        {SUITS.map(({ suit, symbol, color }) => (
-          <button
-            key={suit}
-            className="px-2.5 py-1 bg-surface border border-border rounded-md cursor-pointer hover:border-accent transition-colors"
-            onClick={() => onFlushFind(suit)}
-          >
-            <span className="text-[13px]" style={{ color }}>
-              {symbol}
-            </span>
-          </button>
-        ))}
+        {SUITS.map(({ suit, symbol, color }) => {
+          const sfs = sfBySuit[suit] ?? [];
+          const hasSF = sfs.length > 0;
+          const isOpen = openSuit === suit;
+
+          return (
+            <div key={suit} className="relative" ref={isOpen ? popoverRef : undefined}>
+              <button
+                className={`px-2.5 py-1 bg-surface border border-border rounded-md transition-colors ${
+                  hasSF
+                    ? "cursor-pointer hover:border-accent"
+                    : "opacity-50 cursor-not-allowed"
+                }`}
+                onClick={() => hasSF && setOpenSuit(isOpen ? null : suit)}
+                disabled={!hasSF}
+              >
+                <span className="text-[13px]" style={{ color }}>
+                  {symbol}
+                </span>
+              </button>
+
+              {/* Popover */}
+              {isOpen && sfs.length > 0 && (
+                <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 bg-surface border border-border rounded-lg shadow-md p-1.5 min-w-[100px] z-10">
+                  {sfs.map((sf, i) => (
+                    <button
+                      key={i}
+                      className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground rounded hover:bg-background transition-colors cursor-pointer whitespace-nowrap"
+                      onClick={() => onFlushSelect(sf.cards)}
+                    >
+                      {sf.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

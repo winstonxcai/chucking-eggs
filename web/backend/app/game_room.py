@@ -16,6 +16,7 @@ from .card_matcher import find_matching_combo
 from .serializer import combo_to_dto, serialize_game_state
 
 HUMAN_SEAT = 0
+ACTION_PAUSE = 0.9  # seconds each AI play is visible before next turn
 
 
 class GameRoom:
@@ -99,6 +100,11 @@ class GameRoom:
                 "next_player": next_player,
                 "done": done,
             })
+
+            # Show the played card on the table before moving on
+            await self.send_game_state()
+            if not done:
+                await asyncio.sleep(ACTION_PAUSE)
 
         if self.env.done:
             await self._send_game_over()

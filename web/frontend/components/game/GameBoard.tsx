@@ -269,27 +269,52 @@ export default function GameBoard({
         </div>
       </div>
 
-      {/* Sidebar: combo browser — exclude combos that use grouped cards */}
-      {gameState.is_my_turn && gameState.legal_moves.length > 0 && (
-        <div className="w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex flex-col gap-4">
+      {/* Sidebar: always visible, two sections */}
+      <div className="w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex flex-col gap-6">
+        {/* Groups section */}
+        <div className="flex flex-col gap-2">
+          <span className="text-[13px] font-semibold text-text-secondary tracking-wider uppercase">
+            Groups
+          </span>
+          {groups.length === 0 ? (
+            <span className="text-sm text-text-secondary">No groups yet</span>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {groups.map((group, idx) => (
+                <button
+                  key={group.id}
+                  className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-background border border-border hover:border-accent hover:text-accent text-left transition-colors"
+                  onClick={() => handleGroupClick(group)}
+                >
+                  <span className="text-[13px] font-semibold text-foreground">
+                    {group.comboName}
+                  </span>
+                  <span className="text-xs text-text-secondary">{group.cardIds.length}c</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-border" />
+
+        {/* Legal combos section */}
+        <div className="flex flex-col gap-2">
           <span className="text-[13px] font-semibold text-text-secondary tracking-wider uppercase">
             Legal Combos
           </span>
-          <ComboBrowser
-            legalMoves={gameState.legal_moves.filter(
-              (combo) => !combo.cards.some((c) => groupedCardIds.has(c.id))
-            )}
-            onSelectCombo={handleSelectCombo}
-          />
-          <div className="mt-auto pt-4">
-            <div className="p-3 bg-background rounded-lg">
-              <span className="text-xs text-text-secondary">
-                Click a combo to auto-select the cards in your hand
-              </span>
-            </div>
-          </div>
+          {gameState.is_my_turn ? (
+            <ComboBrowser
+              legalMoves={gameState.legal_moves.filter(
+                (combo) => !combo.cards.some((c) => groupedCardIds.has(c.id))
+              )}
+              onSelectCombo={handleSelectCombo}
+            />
+          ) : (
+            <span className="text-sm text-text-secondary">Not your turn</span>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Game over modal */}
       {gameOver && (

@@ -58,6 +58,7 @@ export interface GameState {
   done: boolean;
   level_rank: number;
   rewards: Record<number, number> | null;
+  groups: CardGroup[];
 }
 
 export interface MovePlayedMsg {

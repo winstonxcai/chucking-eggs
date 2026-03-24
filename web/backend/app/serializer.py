@@ -123,6 +123,7 @@ def serialize_game_state(
     human_seat: int,
     player_infos: list[dict],
     trick_plays: list[tuple[int, Combo]] | None = None,
+    groups: list[dict] | None = None,
 ) -> dict:
     """Serialize full game state from the human player's perspective."""
     sorted_hand = sort_hand(env.hands[human_seat], env.level_rank)
@@ -189,4 +190,5 @@ def serialize_game_state(
         "done": env.done,
         "level_rank": env.level_rank,
         "rewards": env.get_rewards() if env.done else None,
+        "groups": groups or [],
     }

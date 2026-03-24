@@ -38,6 +38,7 @@ class GameRoom:
         self._was_leading = True  # track trick boundaries
 
         self._start_time = time.time()
+        self.groups: list[dict] = []
 
         # Pick bot personalities
         bots = ai_service.pick_bots(difficulty)
@@ -72,6 +73,7 @@ class GameRoom:
         state = serialize_game_state(
             self.env, self.game_id, HUMAN_SEAT, self.player_infos,
             trick_plays=self.trick_plays,
+            groups=self.groups,
         )
         await self.send({"type": "game_state", **state})
 
@@ -154,13 +156,44 @@ class GameRoom:
             await self._handle_play(data.get("card_ids", []))
         elif msg_type == "pass":
             await self._handle_pass()
+        elif msg_type == "create_group":
+            await self._handle_create_group(data)
+        elif msg_type == "delete_group":
+            await self._handle_delete_group(data)
         else:
             await self.send({"type": "error", "message": f"Unknown message type: {msg_type}"})
+
+    async def _handle_create_group(self, data: dict) -> None:
+        card_ids = data.get("card_ids", [])
+        combo_type = data.get("combo_type", "")
+        combo_name = data.get("combo_name", "")
+        group_id = f"grp-{len(self.groups)}-{int(time.time() * 1000)}"
+        # Remove overlap with existing groups
+        id_set = set(card_ids)
+        self.groups = [g for g in self.groups
+                       if not any(cid in id_set for cid in g["card_ids"])]
+        self.groups.append({
+            "id": group_id,
+            "card_ids": card_ids,
+            "combo_type": combo_type,
+            "combo_name": combo_name,
+        })
+        await self.send_game_state()
+
+    async def _handle_delete_group(self, data: dict) -> None:
+        group_id = data.get("group_id", "")
+        self.groups = [g for g in self.groups if g["id"] != group_id]
+        await self.send_game_state()
 
     async def _do_move(self, combo: Combo, seat: int = HUMAN_SEAT) -> None:
         """Execute a move, record it, broadcast, then run AI or end game."""
         next_player, done = self.env.step(combo)
         self._record_move(seat, combo)
+        # Dissolve groups containing played cards
+        if seat == HUMAN_SEAT:
+            played = {f"{c.rank}-{c.suit}-{c.deck}" for c in combo.cards}
+            self.groups = [g for g in self.groups
+                           if not any(cid in played for cid in g["card_ids"])]
 
         await self.send({
             "type": "move_played",

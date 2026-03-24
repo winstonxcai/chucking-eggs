@@ -64,5 +64,15 @@ export function useGameSocket(gameId: string | null) {
     wsRef.current?.send(JSON.stringify({ type: "pass" }));
   }, []);
 
-  return { gameState, aiThinking, gameOver, connected, playCards, pass };
+  const createGroup = useCallback((cardIds: string[], comboType: string, comboName: string) => {
+    wsRef.current?.send(JSON.stringify({
+      type: "create_group", card_ids: cardIds, combo_type: comboType, combo_name: comboName,
+    }));
+  }, []);
+
+  const deleteGroup = useCallback((groupId: string) => {
+    wsRef.current?.send(JSON.stringify({ type: "delete_group", group_id: groupId }));
+  }, []);
+
+  return { gameState, aiThinking, gameOver, connected, playCards, pass, createGroup, deleteGroup };
 }

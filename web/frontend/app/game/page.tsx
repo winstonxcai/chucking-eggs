@@ -25,7 +25,7 @@ function GameContent() {
     createGame();
   }, [difficulty]);
 
-  const { gameState, aiThinking, gameOver, connected, playCards, pass } =
+  const { gameState, aiThinking, gameOver, connected, playCards, pass, createGroup, deleteGroup } =
     useGameSocket(gameId);
 
   const handlePlayAgain = useCallback(() => {
@@ -60,6 +60,8 @@ function GameContent() {
       onPlayCards={playCards}
       onPass={pass}
       onPlayAgain={handlePlayAgain}
+      onCreateGroup={createGroup}
+      onDeleteGroup={deleteGroup}
     />
   );
 }

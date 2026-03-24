@@ -12,8 +12,6 @@ interface PlayerHandProps {
   groups: CardGroup[];
   groupedCardIds: Set<string>;
   onGroupClick: (group: CardGroup) => void;
-  onDragStart: (idx: number) => void;
-  onDrop: (idx: number) => void;
 }
 
 export default function PlayerHand({
@@ -23,8 +21,6 @@ export default function PlayerHand({
   groups,
   groupedCardIds,
   onGroupClick,
-  onDragStart,
-  onDrop,
 }: PlayerHandProps) {
   // Ungrouped cards (not in any group)
   const ungroupedCards = useMemo(
@@ -36,17 +32,13 @@ export default function PlayerHand({
   return (
     <div className="flex items-end justify-center gap-3">
       {/* Groups on the left */}
-      {groups.map((group, idx) => {
+      {groups.map((group) => {
         const groupCards = cards.filter((c) => group.cardIds.includes(c.id));
         const isSelected = group.cardIds.some((cid) => selectedIds.has(cid));
         return (
           <div
             key={group.id}
-            draggable
-            onDragStart={() => onDragStart(idx)}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => onDrop(idx)}
-            className={`flex flex-col items-center gap-1 p-2 rounded-lg cursor-grab border transition-colors ${
+            className={`flex flex-col items-center gap-1 p-2 rounded-lg cursor-pointer border transition-colors ${
               isSelected
                 ? "border-accent bg-[#FFF8F5]"
                 : "border-border bg-surface hover:border-accent/50"

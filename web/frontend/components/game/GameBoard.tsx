@@ -18,6 +18,8 @@ interface GameBoardProps {
   onPlayCards: (cardIds: string[]) => void;
   onPass: () => void;
   onPlayAgain: () => void;
+  onCreateGroup: (cardIds: string[], comboType: string, comboName: string) => void;
+  onDeleteGroup: (groupId: string) => void;
 }
 
 /** Render a single trick action (cards or "Pass") */
@@ -45,10 +47,18 @@ export default function GameBoard({
   onPlayCards,
   onPass,
   onPlayAgain,
+  onCreateGroup,
+  onDeleteGroup,
 }: GameBoardProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [groups, setGroups] = useState<CardGroup[]>([]);
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
+
+  // Groups come from backend via gameState
+  const groups = gameState.groups;
+
+  const groupedCardIds = useMemo(
+    () => new Set(groups.flatMap((g) => g.cardIds)),
+    [groups]
+  );
 
   // --- Card selection ---
   const toggleCard = useCallback((id: string) => {
@@ -70,10 +80,6 @@ export default function GameBoard({
     const ids = matchingCombo.cards.map((c) => c.id);
     onPlayCards(ids);
     setSelectedIds(new Set());
-    // Dissolve groups that used played cards
-    setGroups((prev) =>
-      prev.filter((g) => !g.cardIds.some((cid) => ids.includes(cid)))
-    );
   }, [matchingCombo, onPlayCards]);
 
   const handlePass = useCallback(() => {
@@ -85,64 +91,26 @@ export default function GameBoard({
     setSelectedIds(new Set(combo.cards.map((c) => c.id)));
   }, []);
 
-  // --- Grouping ---
-  const groupedCardIds = useMemo(
-    () => new Set(groups.flatMap((g) => g.cardIds)),
-    [groups]
-  );
-
+  // --- Grouping (via backend) ---
   const handleGroup = useCallback(() => {
     if (selectedIds.size === 0) return;
     const selectedCards = gameState.my_hand.filter((c) => selectedIds.has(c.id));
     const result = validateCombo(selectedCards);
     if (!result) return;
-
-    const newGroup: CardGroup = {
-      id: `grp-${Date.now()}`,
-      cardIds: selectedCards.map((c) => c.id),
-      comboType: result.type,
-      comboName: result.name,
-    };
-    setGroups((prev) => {
-      // Remove any existing groups that overlap
-      const cleaned = prev.filter(
-        (g) => !g.cardIds.some((cid) => newGroup.cardIds.includes(cid))
-      );
-      return [...cleaned, newGroup];
-    });
+    onCreateGroup(selectedCards.map((c) => c.id), result.type, result.name);
     setSelectedIds(new Set());
-  }, [selectedIds, gameState.my_hand]);
+  }, [selectedIds, gameState.my_hand, onCreateGroup]);
 
   const handleUngroup = useCallback(() => {
     if (selectedIds.size === 0) return;
-    setGroups((prev) =>
-      prev.filter((g) => !g.cardIds.some((cid) => selectedIds.has(cid)))
-    );
+    const toDelete = groups.find((g) => g.cardIds.some((cid) => selectedIds.has(cid)));
+    if (toDelete) onDeleteGroup(toDelete.id);
     setSelectedIds(new Set());
-  }, [selectedIds]);
+  }, [selectedIds, groups, onDeleteGroup]);
 
   const handleGroupClick = useCallback((group: CardGroup) => {
     setSelectedIds(new Set(group.cardIds));
   }, []);
-
-  // --- Drag and drop for groups ---
-  const handleDragStart = useCallback((idx: number) => {
-    setDragIdx(idx);
-  }, []);
-
-  const handleDrop = useCallback(
-    (targetIdx: number) => {
-      if (dragIdx === null || dragIdx === targetIdx) return;
-      setGroups((prev) => {
-        const next = [...prev];
-        const [moved] = next.splice(dragIdx, 1);
-        next.splice(targetIdx, 0, moved);
-        return next;
-      });
-      setDragIdx(null);
-    },
-    [dragIdx]
-  );
 
   // --- Straight flush finder ---
   const sfBySuit = useMemo(() => {
@@ -249,8 +217,6 @@ export default function GameBoard({
             groups={groups}
             groupedCardIds={groupedCardIds}
             onGroupClick={handleGroupClick}
-            onDragStart={handleDragStart}
-            onDrop={handleDrop}
           />
         </div>
 
@@ -280,7 +246,7 @@ export default function GameBoard({
             <span className="text-sm text-text-secondary">No groups yet</span>
           ) : (
             <div className="flex flex-col gap-1.5">
-              {groups.map((group, idx) => (
+              {groups.map((group) => (
                 <button
                   key={group.id}
                   className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-background border border-border hover:border-accent hover:text-accent text-left transition-colors"
@@ -298,19 +264,14 @@ export default function GameBoard({
 
         <div className="border-t border-border" />
 
-        {/* Legal combos section */}
+        {/* Legal combos section — unfiltered */}
         <div className="flex flex-col gap-2">
           <span className="text-[13px] font-semibold text-text-secondary tracking-wider uppercase">
             Legal Combos
           </span>
           {gameState.is_my_turn ? (
             <ComboBrowser
-              legalMoves={gameState.legal_moves.filter(
-                (combo) =>
-                  combo.type.startsWith("BOMB_") ||
-                  combo.type === "STRAIGHT_FLUSH" ||
-                  !combo.cards.some((c) => groupedCardIds.has(c.id))
-              )}
+              legalMoves={gameState.legal_moves}
               onSelectCombo={handleSelectCombo}
             />
           ) : (

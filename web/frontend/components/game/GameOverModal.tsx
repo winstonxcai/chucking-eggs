@@ -32,7 +32,7 @@ export default function GameOverModal({ data, humanSeat, onPlayAgain }: GameOver
               </span>
               <span
                 className={`text-sm font-semibold ${
-                  p.seat === humanSeat ? "text-accent" : "text-foreground"
+                  p.seat % 2 === humanSeat % 2 ? "text-accent" : "text-foreground"
                 }`}
               >
                 {p.name}

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
+from pathlib import Path
 
-from guandan.agents import Agent, make_agent
+import torch
+
+from guandan.agents import Agent, RLAgentLSTM, make_agent
 from guandan.cards import Rank
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
+from guandan.training.q_network import QNetworkLSTM, get_device
 
 
 # Bot personalities per difficulty
@@ -37,7 +41,7 @@ DIFFICULTY_TO_AGENT = {
     "easy": "greedy",
     "medium": "heuristic",
     "hard": "strategic",
-    "expert": "strategic",  # fallback if no checkpoint
+    "expert": "rl",  # falls back to strategic if no checkpoint
 }
 
 
@@ -47,12 +51,33 @@ class AIService:
         self._load_agents()
 
     def _load_agents(self) -> None:
-        """Load rule-based agents. Neural agent loaded separately if checkpoint exists."""
+        """Load rule-based agents, then try loading RL checkpoint."""
         for agent_name in ("greedy", "heuristic", "strategic"):
             self.agents[agent_name] = make_agent(agent_name, level_rank=Rank.TWO)
+        self._try_load_rl_agent()
+
+    def _try_load_rl_agent(self) -> None:
+        checkpoint_path = Path(__file__).resolve().parents[3] / "checkpoints" / "selfplay_best.pt"
+        if not checkpoint_path.exists():
+            print(f"No RL checkpoint at {checkpoint_path}, expert uses strategic fallback")
+            return
+        device = get_device()
+        q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+        q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        lead_key = "lead_state_dict" if "lead_state_dict" in ckpt else "lead"
+        follow_key = "follow_state_dict" if "follow_state_dict" in ckpt else "follow"
+        q_lead.load_state_dict(ckpt[lead_key], strict=False)
+        q_follow.load_state_dict(ckpt[follow_key], strict=False)
+        q_lead.eval()
+        q_follow.eval()
+        self.agents["rl"] = RLAgentLSTM(q_lead, q_follow, device)
+        print(f"Loaded RL agent from {checkpoint_path} (ep {ckpt.get('episode', '?')})")
 
     def get_agent(self, difficulty: str) -> Agent:
         agent_name = DIFFICULTY_TO_AGENT[difficulty]
+        if agent_name not in self.agents:
+            agent_name = "strategic"
         return self.agents[agent_name]
 
     async def get_ai_move(self, agent: Agent, env: GuanDanEnv, player: int) -> Combo:

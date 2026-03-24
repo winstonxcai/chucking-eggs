@@ -34,9 +34,9 @@ export default function CardComponent({ card, selected, onClick, size = "md" }: 
     borderClass = "border-2 border-accent";
     shadowClass = "shadow-[0_2px_8px_rgba(217,119,87,0.2)]";
   } else if (isWild) {
-    borderClass = "border-2 border-wild-gold";
-    shadowClass = "shadow-[0_0_8px_rgba(232,168,73,0.25)]";
-    bgClass = "bg-[#FFFBF5]";
+    borderClass = "border-2 border-wild-red";
+    shadowClass = "shadow-[0_0_8px_rgba(184,76,101,0.2)]";
+    bgClass = "bg-[#FFF8F9]";
   }
 
   return (

@@ -306,7 +306,10 @@ export default function GameBoard({
           {gameState.is_my_turn ? (
             <ComboBrowser
               legalMoves={gameState.legal_moves.filter(
-                (combo) => !combo.cards.some((c) => groupedCardIds.has(c.id))
+                (combo) =>
+                  combo.type.startsWith("BOMB_") ||
+                  combo.type === "STRAIGHT_FLUSH" ||
+                  !combo.cards.some((c) => groupedCardIds.has(c.id))
               )}
               onSelectCombo={handleSelectCombo}
             />

@@ -215,9 +215,11 @@ export function findStraightFlushes(
   }
 
   const results: { label: string; cards: CardDTO[] }[] = [];
+  const seenNaturalSets = new Set<string>();
 
-  // Check every possible 5-rank window (2-6, 3-7, ..., 10-A)
-  for (let start = 2; start <= 10; start++) {
+  // Iterate high to low: wilds always fill the highest possible position.
+  // For each set of natural cards, only the highest window is kept.
+  for (let start = 10; start >= 2; start--) {
     const windowCards: CardDTO[] = [];
     let wildsNeeded = 0;
 
@@ -229,12 +231,19 @@ export function findStraightFlushes(
       }
     }
 
-    if (wildsNeeded <= wildCards.length) {
-      const selected = [...windowCards, ...wildCards.slice(0, wildsNeeded)];
-      const highRank = start + 4;
-      const label = `${RANK_NAMES[highRank] ?? highRank}-high SF`;
-      results.push({ label, cards: selected });
+    if (wildsNeeded > wildCards.length) continue;
+
+    // Deduplicate wild-using windows by natural card set
+    if (wildsNeeded > 0) {
+      const key = windowCards.map((c) => c.id).sort().join(",");
+      if (seenNaturalSets.has(key)) continue;
+      seenNaturalSets.add(key);
     }
+
+    const selected = [...windowCards, ...wildCards.slice(0, wildsNeeded)];
+    const highRank = start + 4;
+    const label = `${RANK_NAMES[highRank] ?? highRank}-high SF`;
+    results.push({ label, cards: selected });
   }
 
   return results;

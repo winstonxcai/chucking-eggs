@@ -116,12 +116,17 @@ class GameRoom:
         """Run AI turns until it's the human's turn or game is over."""
         while not self.env.done and self.env.current_player != HUMAN_SEAT:
             seat = self.env.current_player
-            await self.send({"type": "ai_thinking", "seat": seat})
-            await asyncio.sleep(0.5)
+            legal = self.env.legal_moves(seat)
 
-            combo = await self.ai_service.get_ai_move(
-                self.agent, self.env, seat
-            )
+            # Auto-pass: skip inference when PASS is the only option
+            if len(legal) == 1 and legal[0].type == ComboType.PASS:
+                combo = legal[0]
+            else:
+                await self.send({"type": "ai_thinking", "seat": seat})
+                await asyncio.sleep(0.5)
+                combo = await self.ai_service.get_ai_move(
+                    self.agent, self.env, seat
+                )
             next_player, done = self.env.step(combo)
             self._record_move(seat, combo)
 

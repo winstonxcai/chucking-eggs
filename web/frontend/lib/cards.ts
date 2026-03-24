@@ -46,12 +46,21 @@ export function groupByRank(cards: CardDTO[]): CardDTO[][] {
   );
 }
 
-/** Check if a set of selected card IDs matches any legal combo */
+/** Check if a set of selected card IDs matches any legal combo.
+ *
+ *  Pass 1: exact ID match (rank-suit-deck).
+ *  Pass 2: deck-normalized — same (rank,suit) multiset, different deck.
+ *  Pass 3: N-of-a-kind bomb — all same rank, matching bomb type in legal moves.
+ *
+ *  Passes 2 & 3 return the *legal* combo object so that Play sends the
+ *  canonical card IDs to the backend (which does exact matching). */
 export function findMatchingCombo(
   selectedIds: Set<string>,
   legalMoves: ComboDTO[]
 ): ComboDTO | null {
   if (selectedIds.size === 0) return null;
+
+  // Pass 1: exact ID match
   for (const combo of legalMoves) {
     if (combo.is_pass) continue;
     const comboIds = new Set(combo.cards.map((c) => c.id));
@@ -62,6 +71,36 @@ export function findMatchingCombo(
       return combo;
     }
   }
+
+  // Pass 2: deck-normalized — compare (rank,suit) multisets ignoring deck
+  const selRS = [...selectedIds]
+    .map((id) => id.split("-").slice(0, 2).join("-"))
+    .sort()
+    .join(",");
+  for (const combo of legalMoves) {
+    if (combo.is_pass || combo.cards.length !== selectedIds.size) continue;
+    const comboRS = combo.cards
+      .map((c) => `${c.rank}-${c.suit}`)
+      .sort()
+      .join(",");
+    if (comboRS === selRS) return combo;
+  }
+
+  // Pass 3: N-of-a-kind bomb — all selected cards share the same rank
+  const selRanks = new Set([...selectedIds].map((id) => id.split("-")[0]));
+  if (selRanks.size === 1) {
+    const rank = Number([...selRanks][0]);
+    const n = selectedIds.size;
+    const bombType = n >= 4 ? `BOMB_${n}` : null;
+    if (bombType) {
+      for (const combo of legalMoves) {
+        if (!combo.is_pass && combo.type === bombType && combo.key === rank) {
+          return combo;
+        }
+      }
+    }
+  }
+
   return null;
 }
 

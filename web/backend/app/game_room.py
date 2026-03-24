@@ -171,12 +171,12 @@ class GameRoom:
         # Remove overlap with existing groups
         id_set = set(card_ids)
         self.groups = [g for g in self.groups
-                       if not any(cid in id_set for cid in g["card_ids"])]
+                       if not any(cid in id_set for cid in g["cardIds"])]
         self.groups.append({
             "id": group_id,
-            "card_ids": card_ids,
-            "combo_type": combo_type,
-            "combo_name": combo_name,
+            "cardIds": card_ids,
+            "comboType": combo_type,
+            "comboName": combo_name,
         })
         await self.send_game_state()
 
@@ -193,7 +193,7 @@ class GameRoom:
         if seat == HUMAN_SEAT:
             played = {f"{c.rank}-{c.suit}-{c.deck}" for c in combo.cards}
             self.groups = [g for g in self.groups
-                           if not any(cid in played for cid in g["card_ids"])]
+                           if not any(cid in played for cid in g["cardIds"])]
 
         await self.send({
             "type": "move_played",

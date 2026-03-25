@@ -46,12 +46,21 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
       retriesRef.current = 0;
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setConnected(false);
       wsRef.current = null;
 
       // Don't reconnect if intentionally closed or game is over
       if (intentionalCloseRef.current) {
+        setConnectionStatus("disconnected");
+        return;
+      }
+
+      // Permanent failures — don't retry, clear stale session
+      if (event.code >= 4000) {
+        console.error(`WebSocket closed: ${event.code} ${event.reason}`);
+        sessionStorage.removeItem("gd_game_id");
+        sessionStorage.removeItem("gd_reconnect_token");
         setConnectionStatus("disconnected");
         return;
       }

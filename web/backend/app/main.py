@@ -192,10 +192,12 @@ async def game_websocket(
         room = game_manager.get_room(game_id)
 
     if room is None:
+        await ws.accept()
         await ws.close(code=4004, reason="Game not found")
         return
 
     if seat not in room.human_seats:
+        await ws.accept()
         await ws.close(code=4003, reason="Seat not valid")
         return
 

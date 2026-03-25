@@ -21,7 +21,8 @@ from .ai_service import AIService
 from .card_matcher import find_matching_combo
 from .serializer import combo_to_dto, serialize_game_state
 
-ACTION_PAUSE = 0.9  # seconds each AI play is visible before next turn
+ACTION_PAUSE = 0.9   # seconds each AI play is visible before next turn
+AI_THINK_PAUSE = 0.5  # seconds for "thinking" animation before AI move
 
 
 def _human_seats_for_mode(mode: str) -> set[int]:
@@ -144,10 +145,11 @@ class GameRoom:
     async def send_to(self, seat: int, data: dict) -> None:
         ws = self.connections.get(seat)
         if ws:
+            payload = json.dumps(data)  # serialization errors propagate — don't hide bugs
             try:
-                await ws.send_text(json.dumps(data))
+                await ws.send_text(payload)
             except Exception:
-                pass
+                pass  # seat disconnected mid-send — expected in multiplayer
 
     async def broadcast(self, data: dict) -> None:
         for seat in list(self.connections.keys()):
@@ -246,7 +248,7 @@ class GameRoom:
                     combo = legal[0]
                 else:
                     await self.broadcast({"type": "ai_thinking", "seat": seat})
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(AI_THINK_PAUSE)
                     combo = await self.ai_service.get_ai_move(self.agent, self.env, seat)
 
                 next_player, done = self.env.step(combo)
@@ -334,7 +336,7 @@ class GameRoom:
         if done:
             await self._send_game_over()
         else:
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(ACTION_PAUSE)
             await self.run_ai_turns()
 
     async def _handle_play(self, card_ids: list[str], seat: int = 0) -> None:

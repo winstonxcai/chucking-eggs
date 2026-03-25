@@ -68,8 +68,12 @@ class AIService:
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
         lead_key = "lead_state_dict" if "lead_state_dict" in ckpt else "lead"
         follow_key = "follow_state_dict" if "follow_state_dict" in ckpt else "follow"
-        q_lead.load_state_dict(ckpt[lead_key], strict=False)
-        q_follow.load_state_dict(ckpt[follow_key], strict=False)
+        try:
+            q_lead.load_state_dict(ckpt[lead_key], strict=False)
+            q_follow.load_state_dict(ckpt[follow_key], strict=False)
+        except RuntimeError as e:
+            print(f"RL checkpoint incompatible ({e}), expert uses strategic fallback")
+            return
         q_lead.eval()
         q_follow.eval()
         self.agents["rl"] = RLAgentLSTM(q_lead, q_follow, device)

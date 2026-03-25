@@ -238,18 +238,27 @@ class GameRoom:
     # ---------------------------------------------------------------------------
 
     async def run_ai_turns(self) -> None:
-        """Run AI turns until it's a human's turn or the game ends."""
+        """Run AI turns and human auto-passes until a human has real choices or the game ends."""
         async with self._ai_lock:
-            while not self.env.done and self.env.current_player not in self.human_seats:
+            while not self.env.done:
                 seat = self.env.current_player
                 legal = self.env.legal_moves(seat)
+                only_pass = len(legal) == 1 and legal[0].type == ComboType.PASS
 
-                if len(legal) == 1 and legal[0].type == ComboType.PASS:
+                if seat not in self.human_seats:
+                    # AI turn
+                    if only_pass:
+                        combo = legal[0]
+                    else:
+                        await self.broadcast({"type": "ai_thinking", "seat": seat})
+                        await asyncio.sleep(AI_THINK_PAUSE)
+                        combo = await self.ai_service.get_ai_move(self.agent, self.env, seat)
+                elif only_pass:
+                    # Human can only pass (e.g. fewer cards than trick size) — auto-pass
                     combo = legal[0]
                 else:
-                    await self.broadcast({"type": "ai_thinking", "seat": seat})
-                    await asyncio.sleep(AI_THINK_PAUSE)
-                    combo = await self.ai_service.get_ai_move(self.agent, self.env, seat)
+                    # Human's turn with real choices — stop and wait for input
+                    break
 
                 next_player, done = self.env.step(combo)
                 self._record_move(seat, combo)

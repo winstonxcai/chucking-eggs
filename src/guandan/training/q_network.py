@@ -66,9 +66,13 @@ class QNetworkLSTM(nn.Module):
         lstm_hidden: int = 128,
         hidden: int = 512,
         n_layers: int = 3,
+        use_gnn: bool = False,
+        gnn_out: int = 128,
     ):
         super().__init__()
         self.lstm_hidden = lstm_hidden
+        self.use_gnn = use_gnn
+        self.gnn_out = gnn_out
 
         self.lstm = nn.LSTM(
             input_size=d_move,
@@ -77,7 +81,14 @@ class QNetworkLSTM(nn.Module):
             batch_first=True,
         )
 
-        input_dim = d_state + d_action + lstm_hidden
+        # Optional GNN for hand structure
+        gnn_dims = 0
+        if use_gnn:
+            from .gnn import HandGNN
+            self.hand_gnn = HandGNN(d_out=gnn_out)
+            gnn_dims = 3 * gnn_out  # hand + action + remain embeddings
+
+        input_dim = d_state + d_action + lstm_hidden + gnn_dims
         layers: list[nn.Module] = []
         layers.append(nn.Linear(input_dim, hidden))
         layers.append(nn.ReLU())
@@ -88,7 +99,6 @@ class QNetworkLSTM(nn.Module):
         self.mlp = nn.Sequential(*layers)
 
         # Auxiliary hand prediction head (training-only)
-        # Predicts combined opponent cards from state + history embedding
         self.hand_pred = nn.Sequential(
             nn.Linear(d_state + lstm_hidden, hidden // 2),
             nn.ReLU(),
@@ -159,9 +169,91 @@ class QNetworkLSTM(nn.Module):
         return q, hp
 
 
+    def forward_amortized(
+        self,
+        state_batch: torch.Tensor,
+        action_batch: torch.Tensor,
+        hist_emb_batch: torch.Tensor,
+        node_features: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_features: torch.Tensor,
+        action_masks: torch.Tensor,
+        remaining_masks: torch.Tensor,
+    ) -> torch.Tensor:
+        """Amortized GNN: encode_nodes ONCE, pool B actions.
+
+        Args:
+            state_batch:     [B, d_state]
+            action_batch:    [B, d_action]
+            hist_emb_batch:  [B, lstm_hidden]  (pre-computed, shared)
+            node_features:   [N, 23]           (single graph, shared)
+            edge_index:      [2, E]
+            edge_features:   [E, 8]
+            action_masks:    [B, N]            (different per action)
+            remaining_masks: [B, N]
+        Returns: [B] Q-values
+        """
+        assert self.use_gnn
+        B = state_batch.size(0)
+        device = state_batch.device
+
+        h_nodes, hand_emb = self.hand_gnn.encode_nodes(
+            node_features.to(device), edge_index.to(device),
+            edge_features.to(device))
+
+        hand_emb_batch = hand_emb.unsqueeze(0).expand(B, -1)
+
+        action_embs, remain_embs = [], []
+        for i in range(B):
+            a_emb, r_emb = self.hand_gnn.pool_action(
+                h_nodes, action_masks[i].to(device),
+                remaining_masks[i].to(device))
+            action_embs.append(a_emb)
+            remain_embs.append(r_emb)
+
+        action_embs = torch.stack(action_embs)
+        remain_embs = torch.stack(remain_embs)
+
+        x = torch.cat([state_batch, action_batch, hist_emb_batch,
+                        hand_emb_batch, action_embs, remain_embs], dim=-1)
+        return self.mlp(x).squeeze(-1)
+
+
 def load_compat(model: nn.Module, state_dict: dict) -> None:
     """Load state_dict with backward compatibility (strict=False)."""
     missing, _ = model.load_state_dict(state_dict, strict=False)
     if missing:
         log.info("New params (random init): %s",
                  list({k.split(".")[0] for k in missing}))
+
+
+def load_with_gnn_expansion(model: QNetworkLSTM, old_state_dict: dict) -> None:
+    """Load old checkpoint into GNN-augmented model.
+
+    Copies MLP weights for shared dimensions, zero-inits GNN input columns.
+    This makes the GNN contribution start at exactly zero — identical Q-values
+    to the old checkpoint, with gradual GNN influence during training.
+    """
+    new_sd = model.state_dict()
+
+    for key, old_tensor in old_state_dict.items():
+        if key not in new_sd:
+            log.info("Skipping unknown key: %s", key)
+            continue
+        new_tensor = new_sd[key]
+        if old_tensor.shape == new_tensor.shape:
+            new_sd[key] = old_tensor
+        elif 'mlp.0.weight' in key:
+            # First MLP layer expanded: [H, old_dim] → [H, new_dim]
+            new_sd[key][:, :old_tensor.shape[1]] = old_tensor
+            new_sd[key][:, old_tensor.shape[1]:] = 0.0
+            log.info("Expanded %s: %s → %s", key,
+                      tuple(old_tensor.shape), tuple(new_tensor.shape))
+        else:
+            log.warning("Shape mismatch for %s: %s vs %s",
+                        key, tuple(old_tensor.shape), tuple(new_tensor.shape))
+
+    model.load_state_dict(new_sd)
+    gnn_keys = [k for k in new_sd if 'hand_gnn' in k]
+    if gnn_keys:
+        log.info("GNN params (random init): %d tensors", len(gnn_keys))

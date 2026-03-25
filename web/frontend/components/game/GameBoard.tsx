@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, findStraightFlushes, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -61,6 +61,7 @@ export default function GameBoard({
     toRect: DOMRect;
   } | null>(null);
   const tableSeat0Ref = useRef<HTMLDivElement>(null);
+  const flyingStartRef = useRef<number | null>(null);
 
   // Groups come from backend via gameState
   const groups = gameState.groups;
@@ -81,8 +82,8 @@ export default function GameBoard({
   }, []);
 
   const matchingCombo = useMemo(
-    () => findMatchingCombo(selectedIds, gameState.legal_moves),
-    [selectedIds, gameState.legal_moves]
+    () => findMatchingCombo(selectedIds, gameState.legal_moves, gameState.my_hand),
+    [selectedIds, gameState.legal_moves, gameState.my_hand]
   );
 
   const handlePlay = useCallback(() => {
@@ -96,12 +97,24 @@ export default function GameBoard({
     });
     const toRect = tableSeat0Ref.current?.getBoundingClientRect() ?? new DOMRect();
 
+    flyingStartRef.current = Date.now();
     setFlyingCards({ cards: matchingCombo.cards, fromRects, toRect });
     onPlayCards(ids);
     setSelectedIds(new Set());
-
-    setTimeout(() => setFlyingCards(null), 350);
   }, [matchingCombo, onPlayCards]);
+
+  // Clear flying overlay once game state updates (server confirmed the play),
+  // but always wait at least 300ms so the animation can complete.
+  useEffect(() => {
+    if (!flyingCards || flyingStartRef.current === null) return;
+    const elapsed = Date.now() - flyingStartRef.current;
+    const remaining = Math.max(0, 300 - elapsed);
+    const t = setTimeout(() => {
+      setFlyingCards(null);
+      flyingStartRef.current = null;
+    }, remaining);
+    return () => clearTimeout(t);
+  }, [gameState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePass = useCallback(() => {
     onPass();
@@ -147,6 +160,14 @@ export default function GameBoard({
     setSelectedIds(new Set(cards.map((c) => c.id)));
   }, []);
 
+  // Filter legal moves to exclude combos where any card is already grouped
+  const filteredLegalMoves = useMemo(
+    () => gameState.legal_moves.filter(
+      (combo) => combo.is_pass || !combo.cards.some((c) => groupedCardIds.has(c.id))
+    ),
+    [gameState.legal_moves, groupedCardIds]
+  );
+
   // --- Layout data ---
   const partner = gameState.players.find((p) => p.seat === 2);
   const leftOpp = gameState.players.find((p) => p.seat === 1);
@@ -173,7 +194,7 @@ export default function GameBoard({
 
         {/* Play area: all players + table in a centered grid with equal gaps */}
         <div className="flex-1 flex items-center justify-center">
-          <div className="grid grid-cols-[auto_480px_auto] grid-rows-[auto_260px] gap-32 items-center justify-items-center">
+          <div className="grid grid-cols-[auto_640px_auto] grid-rows-[auto_320px] gap-32 items-center justify-items-center">
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
               {partner && (
@@ -189,7 +210,7 @@ export default function GameBoard({
             </div>
 
             {/* Table surface — all trick actions inside */}
-            <div className="col-start-2 row-start-2 relative w-[480px] h-[260px] border border-border rounded-2xl">
+            <div className="col-start-2 row-start-2 relative w-[640px] h-[320px] border border-border rounded-2xl">
               {/* Partner (top edge) */}
               <div className="absolute top-3 left-0 right-0 flex justify-center">
                 <TrickActionDisplay action={ta?.["2"] ?? null} />
@@ -204,7 +225,7 @@ export default function GameBoard({
               </div>
               {/* You (bottom edge) */}
               <div ref={tableSeat0Ref} className="absolute bottom-3 left-0 right-0 flex justify-center">
-                <TrickActionDisplay action={ta?.["0"] ?? null} />
+                {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} />}
               </div>
               {/* New trick label */}
               {gameState.is_leading && !ta?.["0"] && !ta?.["1"] && !ta?.["2"] && !ta?.["3"] && (
@@ -225,14 +246,12 @@ export default function GameBoard({
 
         {/* Your turn indicator + Controls */}
         <div className="py-2">
-          {gameState.is_my_turn && (
-            <div className="flex items-center justify-center gap-1.5 pb-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-accent" />
-              <span className="text-[13px] font-medium text-accent">
-                {gameState.is_leading ? "Your turn to lead" : "Your turn to play"}
-              </span>
-            </div>
-          )}
+          <div className={`flex items-center justify-center gap-1.5 pb-2 ${!gameState.is_my_turn ? "invisible" : ""}`}>
+            <div className="w-1.5 h-1.5 rounded-full bg-accent" />
+            <span className="text-[13px] font-medium text-accent">
+              {gameState.is_leading ? "Your turn to lead" : "Your turn to play"}
+            </span>
+          </div>
           <GameControls
             matchingCombo={matchingCombo}
             isLeading={gameState.is_leading}
@@ -299,14 +318,14 @@ export default function GameBoard({
 
         <div className="border-t border-border" />
 
-        {/* Legal combos section — unfiltered */}
+        {/* Legal combos section — excludes cards already in groups */}
         <div className="flex flex-col gap-2">
           <span className="text-[13px] font-semibold text-text-secondary tracking-wider uppercase">
             Legal Combos
           </span>
           {gameState.is_my_turn ? (
             <ComboBrowser
-              legalMoves={gameState.legal_moves}
+              legalMoves={filteredLegalMoves}
               onSelectCombo={handleSelectCombo}
             />
           ) : (

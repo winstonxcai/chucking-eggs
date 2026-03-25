@@ -26,6 +26,11 @@ runs/                 — Experiment outputs (gitignored)
 - Ladder eval: `PYTHONPATH=src python scripts/ladder.py --checkpoint <path>`
 - Modal GPU train: `./scripts/run_e2e.sh --modal`
 
+# Training Constraints
+
+- **6-hour hard cutoff**: No local training run should exceed 6 hours wall time. If estimated runtime exceeds this, reduce episodes, increase batch parallelism, or pre-compute expensive operations. Always estimate runtime BEFORE launching.
+- Before launching any training run, calculate: `episodes / eps_per_sec / 3600` and verify < 6h.
+
 # Conventions
 
 - Python 3.10+, dependencies: numpy, torch. Dev: pytest. Optional: modal.

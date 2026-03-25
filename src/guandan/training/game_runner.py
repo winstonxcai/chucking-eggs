@@ -178,20 +178,20 @@ class GameRunner:
 
             # Record transition
             opp_cards = encode_opponent_cards(env, player)
-            # GNN hand data
-            hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
-            if hand_list:
-                hand_arr = np.array([(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32)
-            else:
-                hand_arr = np.zeros((0, 3), dtype=np.int32)
-            played_set = {(c.rank, c.suit, c.deck) for c in legal[idx].cards}
-            act_mask = np.array([1.0 if (c.rank, c.suit, c.deck) in played_set else 0.0
-                                 for c in hand_list], dtype=np.float32)
-            hand_padded = np.zeros((29, 3), dtype=np.int32)
-            if len(hand_list) > 0:
-                hand_padded[:len(hand_list)] = hand_arr
-            mask_padded = np.zeros(29, dtype=np.float32)
-            mask_padded[:len(hand_list)] = act_mask
+
+            # Pre-compute GNN embeddings if enabled
+            gnn_emb = np.zeros(384, dtype=np.float32)
+            if getattr(q_net, 'use_gnn', False):
+                from .hand_graph import build_hand_graph, encode_action_subgraph
+                hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
+                if hand_list:
+                    nf, ei, ef = build_hand_graph(hand_list, self.level_rank)
+                    am_g, rm_g = encode_action_subgraph(legal[idx].cards, hand_list)
+                    with torch.no_grad():
+                        h_emb, a_emb, r_emb = q_net.hand_gnn(
+                            nf.to(self.device), ei.to(self.device), ef.to(self.device),
+                            am_g.to(self.device), rm_g.to(self.device))
+                    gnn_emb = torch.cat([h_emb, a_emb, r_emb]).cpu().numpy()
 
             self._transitions[env_idx].append((
                 states[i],
@@ -200,7 +200,7 @@ class GameRunner:
                 hlens[i],
                 player,
                 opp_cards,
-                hand_padded, len(hand_list), mask_padded,
+                gnn_emb,
             ))
 
             self.envs[env_idx].step(legal[idx])
@@ -213,8 +213,8 @@ class GameRunner:
         ts = self.team_spirit
         transitions = []
         for (state, action, history, hist_len, player, opp_cards,
-             hc, hs, am) in self._transitions[env_idx]:
+             gnn_emb) in self._transitions[env_idx]:
             G = (1 - ts) * rewards[player] + ts * rewards[partners[player]]
             transitions.append((state, action, history, hist_len, G, opp_cards,
-                                hc, hs, am))
+                                gnn_emb))
         return transitions

@@ -41,6 +41,7 @@ export default function CardComponent({ card, selected, onClick, size = "md" }: 
 
   return (
     <div
+      data-card-id={card.id}
       className={`${w} ${bgClass} ${borderClass} rounded-md flex flex-col items-center justify-center ${shadowClass} cursor-pointer hover:translate-y-[-2px] transition-transform`}
       onClick={onClick}
     >

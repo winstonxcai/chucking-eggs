@@ -12,6 +12,7 @@ interface PlayerHandProps {
   groups: CardGroup[];
   groupedCardIds: Set<string>;
   onGroupClick: (group: CardGroup) => void;
+  hiddenIds?: Set<string>;
 }
 
 export default function PlayerHand({
@@ -21,11 +22,12 @@ export default function PlayerHand({
   groups,
   groupedCardIds,
   onGroupClick,
+  hiddenIds,
 }: PlayerHandProps) {
-  // Ungrouped cards (not in any group)
+  // Ungrouped cards (not in any group, not flying)
   const ungroupedCards = useMemo(
-    () => cards.filter((c) => !groupedCardIds.has(c.id)),
-    [cards, groupedCardIds]
+    () => cards.filter((c) => !groupedCardIds.has(c.id) && !hiddenIds?.has(c.id)),
+    [cards, groupedCardIds, hiddenIds]
   );
   const ungroupedGroups = useMemo(() => groupByRank(ungroupedCards), [ungroupedCards]);
 
@@ -33,6 +35,8 @@ export default function PlayerHand({
     <div className="flex items-end justify-center gap-3">
       {/* Groups on the left */}
       {groups.map((group) => {
+        // Hide group if any of its cards are flying
+        if (hiddenIds && group.cardIds.some((cid) => hiddenIds.has(cid))) return null;
         const groupCards = cards.filter((c) => group.cardIds.includes(c.id));
         const isSelected = group.cardIds.some((cid) => selectedIds.has(cid));
         return (

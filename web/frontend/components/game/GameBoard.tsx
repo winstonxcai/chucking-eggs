@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, findStraightFlushes, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -10,11 +10,14 @@ import ComboBrowser from "./ComboBrowser";
 import HandToolbar from "./HandToolbar";
 import GameOverModal from "./GameOverModal";
 import CardComponent from "./CardComponent";
+import FlyingCards from "./FlyingCards";
+import type { ConnectionStatus } from "@/hooks/useGameSocket";
 
 interface GameBoardProps {
   gameState: GameState;
   aiThinking: number | null;
   gameOver: GameOverMsg | null;
+  connectionStatus?: ConnectionStatus;
   onPlayCards: (cardIds: string[]) => void;
   onPass: () => void;
   onPlayAgain: () => void;
@@ -44,6 +47,7 @@ export default function GameBoard({
   gameState,
   aiThinking,
   gameOver,
+  connectionStatus,
   onPlayCards,
   onPass,
   onPlayAgain,
@@ -51,6 +55,12 @@ export default function GameBoard({
   onDeleteGroup,
 }: GameBoardProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [flyingCards, setFlyingCards] = useState<{
+    cards: CardDTO[];
+    fromRects: DOMRect[];
+    toRect: DOMRect;
+  } | null>(null);
+  const tableSeat0Ref = useRef<HTMLDivElement>(null);
 
   // Groups come from backend via gameState
   const groups = gameState.groups;
@@ -78,8 +88,19 @@ export default function GameBoard({
   const handlePlay = useCallback(() => {
     if (!matchingCombo) return;
     const ids = matchingCombo.cards.map((c) => c.id);
+
+    // Capture positions for fly animation
+    const fromRects = ids.map((id) => {
+      const el = document.querySelector(`[data-card-id="${id}"]`);
+      return el?.getBoundingClientRect() ?? new DOMRect();
+    });
+    const toRect = tableSeat0Ref.current?.getBoundingClientRect() ?? new DOMRect();
+
+    setFlyingCards({ cards: matchingCombo.cards, fromRects, toRect });
     onPlayCards(ids);
     setSelectedIds(new Set());
+
+    setTimeout(() => setFlyingCards(null), 350);
   }, [matchingCombo, onPlayCards]);
 
   const handlePass = useCallback(() => {
@@ -137,6 +158,19 @@ export default function GameBoard({
     <div className="flex h-screen bg-background">
       {/* Main board area */}
       <div className="flex-1 flex flex-col p-6 gap-0">
+        {/* Reconnection banner */}
+        {connectionStatus === "reconnecting" && (
+          <div className="flex items-center justify-center gap-2 py-2 bg-amber-50 border border-amber-200 rounded-lg mb-2">
+            <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs font-medium text-amber-700">Reconnecting...</span>
+          </div>
+        )}
+        {connectionStatus === "disconnected" && (
+          <div className="flex items-center justify-center gap-2 py-2 bg-red-50 border border-red-200 rounded-lg mb-2">
+            <span className="text-xs font-medium text-red-700">Connection lost. Please refresh the page.</span>
+          </div>
+        )}
+
         {/* Play area: all players + table in a centered grid with equal gaps */}
         <div className="flex-1 flex items-center justify-center">
           <div className="grid grid-cols-[auto_480px_auto] grid-rows-[auto_260px] gap-32 items-center justify-items-center">
@@ -169,7 +203,7 @@ export default function GameBoard({
                 <TrickActionDisplay action={ta?.["3"] ?? null} />
               </div>
               {/* You (bottom edge) */}
-              <div className="absolute bottom-3 left-0 right-0 flex justify-center">
+              <div ref={tableSeat0Ref} className="absolute bottom-3 left-0 right-0 flex justify-center">
                 <TrickActionDisplay action={ta?.["0"] ?? null} />
               </div>
               {/* New trick label */}
@@ -217,6 +251,7 @@ export default function GameBoard({
             groups={groups}
             groupedCardIds={groupedCardIds}
             onGroupClick={handleGroupClick}
+            hiddenIds={flyingCards ? new Set(flyingCards.cards.map((c) => c.id)) : undefined}
           />
         </div>
 
@@ -279,6 +314,15 @@ export default function GameBoard({
           )}
         </div>
       </div>
+
+      {/* Card fly animation overlay */}
+      {flyingCards && (
+        <FlyingCards
+          cards={flyingCards.cards}
+          fromRects={flyingCards.fromRects}
+          toRect={flyingCards.toRect}
+        />
+      )}
 
       {/* Game over modal */}
       {gameOver && (

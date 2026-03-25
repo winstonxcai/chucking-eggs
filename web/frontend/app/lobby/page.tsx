@@ -119,7 +119,7 @@ function LobbyContent() {
         {status.room_code && (
           <div className="bg-surface border border-border rounded-xl p-5 flex flex-col items-center gap-3">
             <span className="text-xs font-semibold text-text-secondary tracking-widest uppercase">Room Code</span>
-            <span className="text-4xl font-bold tracking-widest text-foreground font-mono">
+            <span data-testid="room-code" className="text-4xl font-bold tracking-widest text-foreground font-mono">
               {status.room_code}
             </span>
             <div className="flex items-center gap-2 text-xs text-text-secondary">

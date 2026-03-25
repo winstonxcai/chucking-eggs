@@ -7,7 +7,7 @@ on top of the HeuristicBot foundation.
 from __future__ import annotations
 
 from ..cards import BOMB_TYPES, ComboType, Rank, is_wild, level_order_key
-from ..combos import generate_all_leads, generate_responses
+from ..combos import generate_all_leads
 from .heuristic_bot import HandPlan, _breaks_bomb, _find_combo, _pass_combo
 from .base import Agent
 
@@ -16,6 +16,7 @@ _LEVEL_ORDER_TYPES = frozenset({
     ComboType.SINGLE, ComboType.PAIR,
     ComboType.TRIPLE, ComboType.FULL_HOUSE,
 })
+
 
 
 def estimate_moves_to_empty(hand: set, level_rank: int) -> int:
@@ -92,12 +93,15 @@ class StrategicBot(Agent):
             if len(combo.cards) == len(hand):
                 return combo
 
-        # --- Partner is out → I need to finish fast ---
-        if env.is_out[partner]:
+        # --- Endgame planning (≤5 cards): find optimal play sequence ---
+        if len(hand) <= 5:
+            endgame = self._endgame_lead(legal, hand)
+            if endgame:
+                return endgame
             return self._aggressive_lead(legal, plan)
 
-        # --- I'm close to winning (≤ 5 cards) → play aggressively ---
-        if len(hand) <= 5:
+        # --- Partner is out → I need to finish fast ---
+        if env.is_out[partner]:
             return self._aggressive_lead(legal, plan)
 
         # --- Partner is close to winning → lead combos that help them ---
@@ -107,6 +111,21 @@ class StrategicBot(Agent):
 
         # --- Standard play: shed efficiently ---
         return self._efficient_lead(legal, plan)
+
+    def _endgame_lead(self, legal: list, hand: set):
+        """With ≤5 cards, find a play that leads to going out in 2 plays."""
+        for combo in legal:
+            if combo.type == ComboType.PASS:
+                continue
+            remaining = hand - set(combo.cards)
+            if not remaining:
+                return combo  # go out in one play
+            # Check if remaining forms a single legal combo
+            remaining_leads = generate_all_leads(remaining, self.level_rank)
+            for rl in remaining_leads:
+                if rl.type != ComboType.PASS and len(rl.cards) == len(remaining):
+                    return combo  # this + next empties hand
+        return None
 
     def _aggressive_lead(self, legal: list, plan: HandPlan):
         """Play strongest combos to finish fast."""
@@ -208,6 +227,15 @@ class StrategicBot(Agent):
                 return beats[0]  # go out!
             return _pass_combo(legal)
 
+        # --- Red Joker over Black Joker (always take this free win) ---
+        if (trick.type == ComboType.SINGLE
+                and any(c.rank == Rank.BLACK_JOKER for c in trick.cards)):
+            rj_play = [m for m in legal
+                       if m.type == ComboType.SINGLE
+                       and any(c.rank == Rank.RED_JOKER for c in m.cards)]
+            if rj_play:
+                return rj_play[0]
+
         # --- Opponent winning ---
         same_type = [m for m in legal
                      if m.type == trick.type and m.type != ComboType.PASS]
@@ -243,7 +271,6 @@ class StrategicBot(Agent):
             should_bomb = (
                 opp_min_cards <= 5             # opponent about to win
                 or partner_close               # partner needs the lead
-                or trick.type in BOMB_TYPES    # they bombed, bomb back
                 or len(hand) <= 4              # I'm about to win
             )
 

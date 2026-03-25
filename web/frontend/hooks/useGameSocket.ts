@@ -1,30 +1,73 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GameState, ServerMessage, ComboDTO, GameOverMsg } from "@/lib/types";
+import type { GameState, ServerMessage, GameOverMsg } from "@/lib/types";
 
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
 
-export function useGameSocket(gameId: string | null) {
+const MAX_RETRIES = 5;
+const BACKOFF_BASE = 1000; // 1s, 2s, 4s, 8s, 8s
+
+export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
+
+export function useGameSocket(gameId: string | null, reconnectToken: string | null = null) {
   const wsRef = useRef<WebSocket | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [aiThinking, setAiThinking] = useState<number | null>(null);
   const [gameOver, setGameOver] = useState<GameOverMsg | null>(null);
   const [connected, setConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
 
-  useEffect(() => {
-    if (!gameId) return;
+  const retriesRef = useRef(0);
+  const intentionalCloseRef = useRef(false);
+  const gameIdRef = useRef(gameId);
+  const tokenRef = useRef(reconnectToken);
 
-    setGameOver(null);
-    setGameState(null);
-    setAiThinking(null);
+  // Keep refs in sync
+  gameIdRef.current = gameId;
+  tokenRef.current = reconnectToken;
 
-    const ws = new WebSocket(`${WS_BASE}/ws/game/${gameId}`);
+  const connect = useCallback(() => {
+    const gid = gameIdRef.current;
+    const token = tokenRef.current;
+    if (!gid) return;
+
+    const params = token ? `?token=${encodeURIComponent(token)}` : "";
+    const ws = new WebSocket(`${WS_BASE}/ws/game/${gid}${params}`);
     wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onerror = () => setConnected(false);
+    ws.onopen = () => {
+      setConnected(true);
+      setConnectionStatus("connected");
+      retriesRef.current = 0;
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+      wsRef.current = null;
+
+      // Don't reconnect if intentionally closed or game is over
+      if (intentionalCloseRef.current) {
+        setConnectionStatus("disconnected");
+        return;
+      }
+
+      // Attempt reconnection with exponential backoff
+      if (retriesRef.current < MAX_RETRIES) {
+        setConnectionStatus("reconnecting");
+        const delay = Math.min(BACKOFF_BASE * 2 ** retriesRef.current, 8000);
+        retriesRef.current++;
+        setTimeout(() => {
+          if (gameIdRef.current) connect();
+        }, delay);
+      } else {
+        setConnectionStatus("disconnected");
+      }
+    };
+
+    ws.onerror = () => {
+      // onclose will fire after this
+    };
 
     ws.onmessage = (event) => {
       const msg: ServerMessage = JSON.parse(event.data);
@@ -35,7 +78,6 @@ export function useGameSocket(gameId: string | null) {
           setAiThinking(null);
           break;
         case "move_played":
-          // We'll get a full game_state after AI turns complete
           break;
         case "ai_thinking":
           setAiThinking(msg.seat);
@@ -43,18 +85,35 @@ export function useGameSocket(gameId: string | null) {
         case "game_over":
           setGameOver(msg);
           setAiThinking(null);
+          // Clear session — game is done, no need to reconnect
+          sessionStorage.removeItem("gd_game_id");
+          sessionStorage.removeItem("gd_reconnect_token");
           break;
         case "error":
           console.error("Game error:", msg.message);
           break;
       }
     };
+  }, []);
+
+  useEffect(() => {
+    if (!gameId) return;
+
+    setGameOver(null);
+    setGameState(null);
+    setAiThinking(null);
+    retriesRef.current = 0;
+    intentionalCloseRef.current = false;
+    setConnectionStatus("connecting");
+
+    connect();
 
     return () => {
-      ws.close();
+      intentionalCloseRef.current = true;
+      wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [gameId]);
+  }, [gameId, connect]);
 
   const playCards = useCallback((cardIds: string[]) => {
     wsRef.current?.send(JSON.stringify({ type: "play_cards", card_ids: cardIds }));
@@ -74,5 +133,5 @@ export function useGameSocket(gameId: string | null) {
     wsRef.current?.send(JSON.stringify({ type: "delete_group", group_id: groupId }));
   }, []);
 
-  return { gameState, aiThinking, gameOver, connected, playCards, pass, createGroup, deleteGroup };
+  return { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup };
 }

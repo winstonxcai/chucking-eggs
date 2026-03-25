@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import time
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,9 @@ class GameRoom:
         self._was_leading = True  # track trick boundaries
 
         self._start_time = time.time()
+        self.last_activity = time.time()
+        self.disconnected_at: float | None = None
+        self.reconnect_token = secrets.token_urlsafe(16)
         self.groups: list[dict] = []
 
         # Pick bot personalities
@@ -151,6 +155,7 @@ class GameRoom:
             await self.send_game_state()
 
     async def handle_message(self, data: dict) -> None:
+        self.last_activity = time.time()
         msg_type = data.get("type")
         if msg_type == "play_cards":
             await self._handle_play(data.get("card_ids", []))

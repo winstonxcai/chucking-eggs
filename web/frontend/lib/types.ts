@@ -59,6 +59,7 @@ export interface GameState {
   level_rank: number;
   rewards: Record<number, number> | null;
   groups: CardGroup[];
+  sf_options: Record<string, { label: string; cardIds: string[] }[]>;
 }
 
 export interface MovePlayedMsg {

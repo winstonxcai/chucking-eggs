@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
-import { findMatchingCombo, findStraightFlushes, validateCombo } from "@/lib/cards";
+import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
 import OpponentPanel from "./OpponentPanel";
 import GameControls from "./GameControls";
@@ -146,15 +146,18 @@ export default function GameBoard({
     setSelectedIds(new Set(group.cardIds));
   }, []);
 
-  // --- Straight flush finder ---
+  // --- Straight flush finder (computed by backend) ---
   const sfBySuit = useMemo(() => {
-    const ungrouped = gameState.my_hand.filter((c) => !groupedCardIds.has(c.id));
+    const handById = new Map(gameState.my_hand.map((c) => [c.id, c]));
     const result: Record<number, { label: string; cards: CardDTO[] }[]> = {};
     [0, 1, 2, 3].forEach((suit) => {
-      result[suit] = findStraightFlushes(ungrouped, suit);
+      result[suit] = (gameState.sf_options[suit] ?? []).map(({ label, cardIds }) => ({
+        label,
+        cards: cardIds.map((id) => handById.get(id)).filter(Boolean) as CardDTO[],
+      }));
     });
     return result;
-  }, [gameState.my_hand, groupedCardIds]);
+  }, [gameState.sf_options, gameState.my_hand]);
 
   const handleFlushSelect = useCallback((cards: CardDTO[]) => {
     setSelectedIds(new Set(cards.map((c) => c.id)));

@@ -5,7 +5,7 @@ from __future__ import annotations
 from itertools import combinations as _combinations
 
 from guandan.cards import BOMB_TYPES, Card, ComboType, Rank, Suit, is_wild, level_order_key
-from guandan.combos import Combo
+from guandan.combos import Combo, _add_straight_flushes
 from guandan.game import GuanDanEnv
 
 SUIT_SYMBOLS = {Suit.SPADE: "\u2660", Suit.HEART: "\u2665", Suit.DIAMOND: "\u2666", Suit.CLUB: "\u2663"}
@@ -154,6 +154,39 @@ def _expand_natural_pairs(raw_moves: list[Combo], hand: set, level_rank: int) ->
     return raw_moves + new_combos
 
 
+def _compute_sf_options(
+    hand: set[Card],
+    grouped_ids: set[str],
+    level_rank: int,
+) -> dict[str, list[dict]]:
+    """Compute SF options by suit from non-grouped hand cards.
+
+    Returns {suit_str: [{label, cardIds}]} where suit_str is "0"-"3".
+    Deduplicates by natural-card set so each unique SF appears only once.
+    """
+    ungrouped = {c for c in hand if f"{c.rank}-{c.suit}-{c.deck}" not in grouped_ids}
+    wilds = [c for c in ungrouped if is_wild(c, level_rank)]
+    sf_combos: list[Combo] = []
+    _add_straight_flushes(sf_combos, ungrouped, wilds, level_rank)
+
+    options: dict[str, list[dict]] = {"0": [], "1": [], "2": [], "3": []}
+    seen: set[frozenset] = set()
+    for combo in sf_combos:
+        card_ids = [f"{c.rank}-{c.suit}-{c.deck}" for c in combo.cards]
+        key = frozenset(card_ids)
+        if key in seen:
+            continue
+        seen.add(key)
+        naturals = [c for c in combo.cards if not is_wild(c, level_rank)]
+        if not naturals:
+            continue
+        suit = naturals[0].suit
+        top = combo.key  # top rank of window: 5 = A-low, 14 = A-high
+        label = "A-5 SF" if top == 5 else f"{RANK_NAMES.get(top, top)}-high SF"
+        options[str(suit)].append({"label": label, "cardIds": card_ids})
+    return options
+
+
 def serialize_game_state(
     env: GuanDanEnv,
     game_id: str,
@@ -215,6 +248,9 @@ def serialize_game_state(
                 env.level_rank,
             ))
 
+    grouped_ids = {cid for g in (groups or []) for cid in g["cardIds"]}
+    sf_options = _compute_sf_options(env.hands[human_seat], grouped_ids, env.level_rank)
+
     return {
         "game_id": game_id,
         "my_seat": human_seat,
@@ -230,4 +266,5 @@ def serialize_game_state(
         "level_rank": env.level_rank,
         "rewards": env.get_rewards() if env.done else None,
         "groups": groups or [],
+        "sf_options": sf_options,
     }

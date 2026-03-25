@@ -65,13 +65,14 @@ def _selfplay_worker(
     epsilon: float,
     opp_lead_sd: dict | None = None,
     opp_follow_sd: dict | None = None,
+    use_gnn: bool = False,
 ) -> None:
     """CPU worker: self-play games with own model copies, push transitions."""
     from guandan.training.q_network import load_compat
 
     device = torch.device("cpu")
-    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
-    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
     load_compat(q_lead, lead_sd)
     load_compat(q_follow, follow_sd)
     q_lead.eval()
@@ -80,8 +81,8 @@ def _selfplay_worker(
     # Opponent: pool checkpoint or self-play
     opponent = None
     if opp_lead_sd is not None:
-        q_opp_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
-        q_opp_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+        q_opp_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
+        q_opp_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
         load_compat(q_opp_lead, opp_lead_sd)
         load_compat(q_opp_follow, opp_follow_sd)
         q_opp_lead.eval()
@@ -204,7 +205,7 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
             p = mp.Process(
                 target=_selfplay_worker,
                 args=(queue, lead_sd, follow_sd, level_rank, games_per_worker[i], eps,
-                      opp_lead_sd, opp_follow_sd),
+                      opp_lead_sd, opp_follow_sd, getattr(args, 'use_gnn', False)),
             )
             p.start()
             workers.append(p)
@@ -380,6 +381,8 @@ def main(args: argparse.Namespace | None = None) -> None:
                             help="Prob of sampling a pool opponent (0=disabled, 0.3=recommended)")
         parser.add_argument("--pool-add-interval", type=int, default=2000,
                             help="Add current weights to pool every N episodes")
+        parser.add_argument("--use-gnn", action="store_true",
+                            help="Enable GNN hand structure encoding")
         args = parser.parse_args()
 
     run_dir = Path("runs") / args.run_name
@@ -402,17 +405,25 @@ def main(args: argparse.Namespace | None = None) -> None:
     )
 
     level_rank = Rank.TWO
-    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
-    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    use_gnn = getattr(args, "use_gnn", False)
+    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
 
     log.info("Loading checkpoint: %s", args.resume)
     ckpt = torch.load(args.resume, map_location=device, weights_only=True)
-    from guandan.training.q_network import load_compat
-    load_compat(q_lead, ckpt["lead"])
-    load_compat(q_follow, ckpt["follow"])
+    from guandan.training.q_network import load_compat, load_with_gnn_expansion
+    if use_gnn:
+        log.info("GNN enabled — loading with MLP expansion (zero-init GNN columns)")
+        load_with_gnn_expansion(q_lead, ckpt["lead"])
+        load_with_gnn_expansion(q_follow, ckpt["follow"])
+    else:
+        load_compat(q_lead, ckpt["lead"])
+        load_compat(q_follow, ckpt["follow"])
 
     n_params = sum(p.numel() for p in q_lead.parameters())
     log.info("Network: %s params per head (%s total)", f"{n_params:,}", f"{2 * n_params:,}")
+    if use_gnn:
+        log.info("GNN enabled: hand structure graph with amortized inference")
 
     # Baseline eval
     best_wr = 0.0

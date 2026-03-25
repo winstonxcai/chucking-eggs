@@ -148,10 +148,13 @@ def play_episode(
 
         # GNN hand data: card identities + action mask
         hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
-        hand_arr = np.array(
-            [(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32
-        )
         hand_size = len(hand_list)
+        if hand_size > 0:
+            hand_arr = np.array(
+                [(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32
+            )
+        else:
+            hand_arr = np.zeros((0, 3), dtype=np.int32)
         played_set = {(c.rank, c.suit, c.deck) for c in legal[idx].cards}
         act_mask = np.array(
             [1.0 if (c.rank, c.suit, c.deck) in played_set else 0.0
@@ -159,7 +162,8 @@ def play_episode(
         )
         # Pad to max hand size (29)
         hand_padded = np.zeros((29, 3), dtype=np.int32)
-        hand_padded[:hand_size] = hand_arr
+        if hand_size > 0:
+            hand_padded[:hand_size] = hand_arr
         mask_padded = np.zeros(29, dtype=np.float32)
         mask_padded[:hand_size] = act_mask
 
@@ -212,16 +216,102 @@ def train_step(
 ) -> tuple[float, float] | None:
     """One gradient step with Q-loss + auxiliary hand prediction loss.
 
+    Automatically uses GNN graph reconstruction when q_net.use_gnn=True.
     Returns (q_loss, aux_loss) or None if buffer too small.
     """
     if len(buf) < batch_size:
         return None
+
+    # Dispatch to GNN training if enabled
+    if getattr(q_net, 'use_gnn', False):
+        from ..cards import Rank
+        return train_step_gnn(
+            q_net, buf, optimizer, batch_size, device,
+            level_rank=Rank.TWO, aux_weight=aux_weight,
+        )
 
     batch = buf.sample(batch_size, device)
     q_pred, hand_pred = q_net.forward_with_aux(
         batch["state"], batch["action"], batch["history"], batch["hist_len"]
     )
     q_loss = torch.nn.functional.mse_loss(q_pred, batch["return"])
+    aux_loss = torch.nn.functional.binary_cross_entropy(
+        hand_pred, batch["opponent_cards"]
+    )
+    total = q_loss + aux_weight * aux_loss
+
+    optimizer.zero_grad()
+    total.backward()
+    torch.nn.utils.clip_grad_norm_(q_net.parameters(), max_norm=1.0)
+    optimizer.step()
+
+    return q_loss.item(), aux_loss.item()
+
+
+def train_step_gnn(
+    q_net: QNetworkLSTM,
+    buf: ReplayBuffer,
+    optimizer: torch.optim.Optimizer,
+    batch_size: int,
+    device: torch.device,
+    level_rank: int,
+    aux_weight: float = 0.1,
+) -> tuple[float, float] | None:
+    """Training step with GNN graph reconstruction from buffer hand data.
+
+    Rebuilds hand graphs per sample, runs GNN, concatenates with flat features.
+    Falls back to standard train_step if q_net.use_gnn is False.
+    """
+    if not q_net.use_gnn:
+        return train_step(q_net, buf, optimizer, batch_size, device, aux_weight)
+
+    if len(buf) < batch_size:
+        return None
+
+    from ..cards import Card
+    from .hand_graph import build_hand_graph
+
+    batch = buf.sample(batch_size, device)
+    B = batch_size
+
+    # LSTM history (shared)
+    hist_emb = q_net.encode_history(batch["history"], batch["hist_len"])
+
+    # Rebuild graphs and compute GNN embeddings per sample
+    gnn_hand, gnn_action, gnn_remain = [], [], []
+    for i in range(B):
+        hs = batch["hand_size"][i].item()
+        if hs == 0:
+            gnn_hand.append(torch.zeros(q_net.gnn_out, device=device))
+            gnn_action.append(torch.zeros(q_net.gnn_out, device=device))
+            gnn_remain.append(torch.zeros(q_net.gnn_out, device=device))
+            continue
+
+        hd = batch["hand_cards"][i, :hs].cpu().numpy()
+        cards = [Card(int(r), int(s), int(d)) for r, s, d in hd]
+        nf, ei, ef = build_hand_graph(cards, level_rank)
+        nf, ei, ef = nf.to(device), ei.to(device), ef.to(device)
+
+        am_raw = batch["action_card_mask"][i, :hs].to(device)
+        rm_raw = 1.0 - am_raw
+
+        h_emb, a_emb, r_emb = q_net.hand_gnn(nf, ei, ef, am_raw, rm_raw)
+        gnn_hand.append(h_emb)
+        gnn_action.append(a_emb)
+        gnn_remain.append(r_emb)
+
+    gnn_hand = torch.stack(gnn_hand)
+    gnn_action = torch.stack(gnn_action)
+    gnn_remain = torch.stack(gnn_remain)
+
+    # MLP forward with GNN embeddings
+    x = torch.cat([batch["state"], batch["action"], hist_emb,
+                    gnn_hand, gnn_action, gnn_remain], dim=-1)
+    q_pred = q_net.mlp(x).squeeze(-1)
+    q_loss = torch.nn.functional.mse_loss(q_pred, batch["return"])
+
+    # Aux hand prediction loss (unchanged)
+    hand_pred = q_net.predict_opponent_cards(batch["state"], hist_emb)
     aux_loss = torch.nn.functional.binary_cross_entropy(
         hand_pred, batch["opponent_cards"]
     )
@@ -281,7 +371,10 @@ def pretrain_from_heuristic(
             opp_cards = encode_opponent_cards(env, player)
             # GNN hand data
             hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
-            hand_arr = np.array([(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32)
+            if hand_list:
+                hand_arr = np.array([(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32)
+            else:
+                hand_arr = np.zeros((0, 3), dtype=np.int32)
             played_set = {(c.rank, c.suit, c.deck) for c in action.cards}
             act_mask = np.array([1.0 if (c.rank, c.suit, c.deck) in played_set else 0.0
                                  for c in hand_list], dtype=np.float32)

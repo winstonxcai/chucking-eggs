@@ -180,12 +180,16 @@ class GameRunner:
             opp_cards = encode_opponent_cards(env, player)
             # GNN hand data
             hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
-            hand_arr = np.array([(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32)
+            if hand_list:
+                hand_arr = np.array([(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32)
+            else:
+                hand_arr = np.zeros((0, 3), dtype=np.int32)
             played_set = {(c.rank, c.suit, c.deck) for c in legal[idx].cards}
             act_mask = np.array([1.0 if (c.rank, c.suit, c.deck) in played_set else 0.0
                                  for c in hand_list], dtype=np.float32)
             hand_padded = np.zeros((29, 3), dtype=np.int32)
-            hand_padded[:len(hand_list)] = hand_arr
+            if len(hand_list) > 0:
+                hand_padded[:len(hand_list)] = hand_arr
             mask_padded = np.zeros(29, dtype=np.float32)
             mask_padded[:len(hand_list)] = act_mask
 

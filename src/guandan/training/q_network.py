@@ -133,8 +133,16 @@ class QNetworkLSTM(nn.Module):
     ) -> torch.Tensor:
         """MLP forward from pre-computed history embedding.
         [B, d_state], [B, d_action], [B, lstm_hidden] → [B]
+
+        When use_gnn=True, pads with zeros for missing GNN dims so the flat
+        forward path still works (GNN contribution = 0).
         """
         x = torch.cat([state, action, hist_emb], dim=-1)
+        if self.use_gnn:
+            # Pad with zeros for GNN embedding dims (3 × gnn_out)
+            B = x.size(0)
+            zeros = torch.zeros(B, 3 * self.gnn_out, device=x.device)
+            x = torch.cat([x, zeros], dim=-1)
         return self.mlp(x).squeeze(-1)
 
     def forward(

@@ -203,9 +203,13 @@ class GameRoom:
             "done": done,
         })
 
+        # Show the human's move on the table immediately
+        await self.send_game_state()
+
         if done:
             await self._send_game_over()
         else:
+            await asyncio.sleep(0.4)  # Brief pause so human sees their own play
             await self.run_ai_turns()
 
     async def _handle_play(self, card_ids: list[str]) -> None:

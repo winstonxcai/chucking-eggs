@@ -178,6 +178,17 @@ class GameRunner:
 
             # Record transition
             opp_cards = encode_opponent_cards(env, player)
+            # GNN hand data
+            hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
+            hand_arr = np.array([(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32)
+            played_set = {(c.rank, c.suit, c.deck) for c in legal[idx].cards}
+            act_mask = np.array([1.0 if (c.rank, c.suit, c.deck) in played_set else 0.0
+                                 for c in hand_list], dtype=np.float32)
+            hand_padded = np.zeros((29, 3), dtype=np.int32)
+            hand_padded[:len(hand_list)] = hand_arr
+            mask_padded = np.zeros(29, dtype=np.float32)
+            mask_padded[:len(hand_list)] = act_mask
+
             self._transitions[env_idx].append((
                 states[i],
                 np.array(action_lists[i][idx], dtype=np.float32),
@@ -185,6 +196,7 @@ class GameRunner:
                 hlens[i],
                 player,
                 opp_cards,
+                hand_padded, len(hand_list), mask_padded,
             ))
 
             self.envs[env_idx].step(legal[idx])
@@ -196,7 +208,9 @@ class GameRunner:
         partners = {0: 2, 1: 3, 2: 0, 3: 1}
         ts = self.team_spirit
         transitions = []
-        for (state, action, history, hist_len, player, opp_cards) in self._transitions[env_idx]:
+        for (state, action, history, hist_len, player, opp_cards,
+             hc, hs, am) in self._transitions[env_idx]:
             G = (1 - ts) * rewards[player] + ts * rewards[partners[player]]
-            transitions.append((state, action, history, hist_len, G, opp_cards))
+            transitions.append((state, action, history, hist_len, G, opp_cards,
+                                hc, hs, am))
         return transitions

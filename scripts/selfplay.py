@@ -311,8 +311,8 @@ def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
 
             batch_target = min(args.n_envs, args.episodes - episodes_done)
             for transitions in runner.generate_episodes(batch_target):
-                for (state, action, history, hist_len, mc_return, opp_cards) in transitions:
-                    buffer.push(state, action, history, hist_len, mc_return, opp_cards)
+                for trans in transitions:
+                    buffer.push(*trans)
                 episodes_done += 1
                 pbar.update(1)
 

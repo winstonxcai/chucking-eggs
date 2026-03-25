@@ -145,7 +145,28 @@ def play_episode(
                 idx = q_net(s, a, h, hl).argmax().item()
 
         opp_cards = encode_opponent_cards(env, player)
-        transitions[player].append((state_enc, action_encs[idx], history, hist_len, opp_cards))
+
+        # GNN hand data: card identities + action mask
+        hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
+        hand_arr = np.array(
+            [(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32
+        )
+        hand_size = len(hand_list)
+        played_set = {(c.rank, c.suit, c.deck) for c in legal[idx].cards}
+        act_mask = np.array(
+            [1.0 if (c.rank, c.suit, c.deck) in played_set else 0.0
+             for c in hand_list], dtype=np.float32
+        )
+        # Pad to max hand size (29)
+        hand_padded = np.zeros((29, 3), dtype=np.int32)
+        hand_padded[:hand_size] = hand_arr
+        mask_padded = np.zeros(29, dtype=np.float32)
+        mask_padded[:hand_size] = act_mask
+
+        transitions[player].append((
+            state_enc, action_encs[idx], history, hist_len, opp_cards,
+            hand_padded, hand_size, mask_padded,
+        ))
         env.step(legal[idx])
 
     rewards = env.get_rewards()
@@ -155,8 +176,8 @@ def play_episode(
         r_self = rewards[player]
         r_partner = rewards[partners[player]]
         mc_return = (1 - team_spirit) * r_self + team_spirit * r_partner
-        for s, a, h, hl, oc in tlist:
-            all_trans.append((s, a, h, hl, mc_return, oc))
+        for s, a, h, hl, oc, hc, hs, am in tlist:
+            all_trans.append((s, a, h, hl, mc_return, oc, hc, hs, am))
     return all_trans
 
 
@@ -258,14 +279,26 @@ def pretrain_from_heuristic(
             history, hist_len = encode_history(env, player, level_rank)
 
             opp_cards = encode_opponent_cards(env, player)
-            transitions[player].append((state_enc, action_enc, history, hist_len, opp_cards))
+            # GNN hand data
+            hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
+            hand_arr = np.array([(c.rank, c.suit, c.deck) for c in hand_list], dtype=np.int32)
+            played_set = {(c.rank, c.suit, c.deck) for c in action.cards}
+            act_mask = np.array([1.0 if (c.rank, c.suit, c.deck) in played_set else 0.0
+                                 for c in hand_list], dtype=np.float32)
+            hand_padded = np.zeros((29, 3), dtype=np.int32)
+            hand_padded[:len(hand_list)] = hand_arr
+            mask_padded = np.zeros(29, dtype=np.float32)
+            mask_padded[:len(hand_list)] = act_mask
+
+            transitions[player].append((state_enc, action_enc, history, hist_len, opp_cards,
+                                        hand_padded, len(hand_list), mask_padded))
             env.step(action)
 
         rewards = env.get_rewards()
         for player, tlist in transitions.items():
             mc_return = rewards[player]
-            for s, a, h, hl, oc in tlist:
-                buffer.push(s, a, h, hl, mc_return, oc)
+            for s, a, h, hl, oc, hc, hs, am in tlist:
+                buffer.push(s, a, h, hl, mc_return, oc, hc, hs, am)
                 total_trans += 1
 
         # Train on buffer
@@ -508,14 +541,14 @@ def train(args: argparse.Namespace) -> None:
                 for _ in range(batch_size_ep)
             ]
             for f in futures:
-                for s, a, h, hl, mc_return, oc in f.result():
-                    buffer.push(s, a, h, hl, mc_return, oc)
+                for s, a, h, hl, mc_return, oc, hc, hs, am in f.result():
+                    buffer.push(s, a, h, hl, mc_return, oc, hc, hs, am)
         else:
             trans = play_episode(
                 env, q_lead, q_follow, epsilon, device, opponent=None
             )
-            for s, a, h, hl, mc_return, oc in trans:
-                buffer.push(s, a, h, hl, mc_return, oc)
+            for s, a, h, hl, mc_return, oc, hc, hs, am in trans:
+                buffer.push(s, a, h, hl, mc_return, oc, hc, hs, am)
 
         # Gradient steps — scale with batch size
         loss_lead = None

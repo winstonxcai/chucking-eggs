@@ -173,10 +173,14 @@ export function validateCombo(
             new Set(nonWild.map((c) => c.suit)).size === 1;
           const lo = uniqueNWRanks[0] ?? 0;
           const hi = uniqueNWRanks[uniqueNWRanks.length - 1] ?? 0;
+          // Wilds fill highest positions first → extend window upward
+          const extra = wildCount - gaps;
+          const fullHi = Math.min(14, hi + extra);
+          const fullLo = lo - Math.max(0, hi + extra - 14);
           if (allSameSuit) {
-            return { valid: true, type: "STRAIGHT_FLUSH", name: `Straight Flush ${RANK_NAMES[lo] ?? ""}-${RANK_NAMES[hi] ?? ""}` };
+            return { valid: true, type: "STRAIGHT_FLUSH", name: `Straight Flush ${RANK_NAMES[fullLo] ?? fullLo}-${RANK_NAMES[fullHi] ?? fullHi}` };
           }
-          return { valid: true, type: "STRAIGHT", name: `Straight ${RANK_NAMES[lo] ?? ""}-${RANK_NAMES[hi] ?? ""}` };
+          return { valid: true, type: "STRAIGHT", name: `Straight ${RANK_NAMES[fullLo] ?? fullLo}-${RANK_NAMES[fullHi] ?? fullHi}` };
         }
       }
 
@@ -190,10 +194,11 @@ export function validateCombo(
             const allSameSuit = nonWild.length === 0 ||
               new Set(nonWild.map((c) => c.suit)).size === 1;
             const hi = lowRanks[lowRanks.length - 1];
+            const fullHi = hi + (wildCount - lowGaps);
             if (allSameSuit) {
-              return { valid: true, type: "STRAIGHT_FLUSH", name: `Straight Flush A-${RANK_NAMES[hi] ?? hi}` };
+              return { valid: true, type: "STRAIGHT_FLUSH", name: `Straight Flush A-${RANK_NAMES[fullHi] ?? fullHi}` };
             }
-            return { valid: true, type: "STRAIGHT", name: `Straight A-${RANK_NAMES[hi] ?? hi}` };
+            return { valid: true, type: "STRAIGHT", name: `Straight A-${RANK_NAMES[fullHi] ?? fullHi}` };
           }
         }
       }

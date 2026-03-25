@@ -63,12 +63,15 @@ export default function GameBoard({
   const tableSeat0Ref = useRef<HTMLDivElement>(null);
   const flyingStartRef = useRef<number | null>(null);
 
-  // Groups come from backend via gameState
-  const groups = gameState.groups;
+  // Optimistic local groups — updated immediately on Group/Ungroup, synced from server on game_state
+  const [localGroups, setLocalGroups] = useState<CardGroup[]>(gameState.groups);
+  useEffect(() => {
+    setLocalGroups(gameState.groups);
+  }, [gameState.groups]);
 
   const groupedCardIds = useMemo(
-    () => new Set(groups.flatMap((g) => g.cardIds)),
-    [groups]
+    () => new Set(localGroups.flatMap((g) => g.cardIds)),
+    [localGroups]
   );
 
   // --- Card selection ---
@@ -125,22 +128,37 @@ export default function GameBoard({
     setSelectedIds(new Set(combo.cards.map((c) => c.id)));
   }, []);
 
-  // --- Grouping (via backend) ---
+  // --- Grouping (optimistic: update locally then sync to backend) ---
   const handleGroup = useCallback(() => {
     if (selectedIds.size === 0) return;
     const selectedCards = gameState.my_hand.filter((c) => selectedIds.has(c.id));
     const result = validateCombo(selectedCards);
     if (!result) return;
-    onCreateGroup(selectedCards.map((c) => c.id), result.type, result.name);
+    const cardIds = selectedCards.map((c) => c.id);
+    const idSet = new Set(cardIds);
+    const newGroup: CardGroup = {
+      id: `grp-temp-${Date.now()}`,
+      cardIds,
+      comboType: result.type,
+      comboName: result.name,
+    };
+    setLocalGroups((prev) => [
+      ...prev.filter((g) => !g.cardIds.some((cid) => idSet.has(cid))),
+      newGroup,
+    ]);
+    onCreateGroup(cardIds, result.type, result.name);
     setSelectedIds(new Set());
   }, [selectedIds, gameState.my_hand, onCreateGroup]);
 
   const handleUngroup = useCallback(() => {
     if (selectedIds.size === 0) return;
-    const toDelete = groups.find((g) => g.cardIds.some((cid) => selectedIds.has(cid)));
-    if (toDelete) onDeleteGroup(toDelete.id);
+    const toDelete = localGroups.find((g) => g.cardIds.some((cid) => selectedIds.has(cid)));
+    if (toDelete) {
+      setLocalGroups((prev) => prev.filter((g) => g.id !== toDelete.id));
+      onDeleteGroup(toDelete.id);
+    }
     setSelectedIds(new Set());
-  }, [selectedIds, groups, onDeleteGroup]);
+  }, [selectedIds, localGroups, onDeleteGroup]);
 
   const handleGroupClick = useCallback((group: CardGroup) => {
     setSelectedIds((prev) => {
@@ -266,7 +284,7 @@ export default function GameBoard({
             cards={gameState.my_hand}
             selectedIds={selectedIds}
             onToggleCard={toggleCard}
-            groups={groups}
+            groups={localGroups}
             groupedCardIds={groupedCardIds}
             onGroupClick={handleGroupClick}
             hiddenIds={flyingCards ? new Set(flyingCards.cards.map((c) => c.id)) : undefined}
@@ -281,7 +299,7 @@ export default function GameBoard({
             onGroup={handleGroup}
             onUngroup={handleUngroup}
             canGroup={selectedIds.size > 0}
-            canUngroup={groups.some((g) =>
+            canUngroup={localGroups.some((g) =>
               g.cardIds.some((cid) => selectedIds.has(cid))
             )}
           />
@@ -295,11 +313,11 @@ export default function GameBoard({
           <span className="text-[13px] font-semibold text-text-secondary tracking-wider uppercase">
             Groups
           </span>
-          {groups.length === 0 ? (
+          {localGroups.length === 0 ? (
             <span className="text-sm text-text-secondary">No groups yet</span>
           ) : (
             <div className="flex flex-col gap-1.5">
-              {groups.map((group) => (
+              {localGroups.map((group) => (
                 <button
                   key={group.id}
                   className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-background border border-border hover:border-accent hover:text-accent text-left transition-colors"

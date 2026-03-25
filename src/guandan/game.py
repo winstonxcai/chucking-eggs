@@ -63,8 +63,8 @@ class GuanDanEnv:
     # ─── Game end logic ─────────────────────────────────
 
     def _winning_team_done(self) -> bool:
-        """Game ends once 3 players have gone out."""
-        return sum(self.is_out) >= 3
+        """Game ends once both players on a team have gone out."""
+        return (self.is_out[0] and self.is_out[2]) or (self.is_out[1] and self.is_out[3])
 
     def _finalize_game(self) -> None:
         """Add remaining players to finish order and end game."""

@@ -33,8 +33,8 @@ def test_random_games_complete(n: int = 100):
     assert crashes == 0, f"{crashes}/{n} games failed to complete"
 
 
-def test_game_ends_when_three_out():
-    """The game should end once 3 players have gone out."""
+def test_game_ends_when_team_done():
+    """The game should end once both players on a team have gone out."""
     env = GuanDanEnv()
     for _ in range(100):
         env.reset()
@@ -42,7 +42,8 @@ def test_game_ends_when_three_out():
             legal = env.legal_moves()
             env.step(random.choice(legal))
 
-        assert sum(env.is_out) >= 3
+        # Both players on the winning team must be out
+        assert (env.is_out[0] and env.is_out[2]) or (env.is_out[1] and env.is_out[3])
         assert len(env.finish_order) == 4
 
 

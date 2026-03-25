@@ -92,3 +92,36 @@ export type ServerMessage =
   | GameOverMsg
   | AIThinkingMsg
   | ErrorMsg;
+
+// Phase 2: room / lobby types
+
+export type RoomMode = "solo" | "duo" | "quad";
+
+export interface RoomSeatInfo {
+  seat: number;
+  is_human: boolean;
+  connected: boolean;
+  name: string;
+}
+
+export interface RoomStatus {
+  game_id: string;
+  mode: RoomMode;
+  room_code: string | null;
+  started: boolean;
+  seats: RoomSeatInfo[];
+}
+
+export interface CreateRoomResponse {
+  game_id: string;
+  room_code: string | null;
+  seat: number;
+  reconnect_token: string;
+}
+
+export interface JoinRoomResponse {
+  game_id: string;
+  room_code: string;
+  seat: number;
+  reconnect_token: string;
+}

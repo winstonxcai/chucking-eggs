@@ -1,12 +1,33 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { DIFFICULTY_INFO } from "@/lib/bots";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const difficulties = ["easy", "medium", "hard", "expert"] as const;
 
 export default function Home() {
   const router = useRouter();
+  const [creatingRoom, setCreatingRoom] = useState(false);
+
+  async function handleCreateRoom(difficulty: string) {
+    setCreatingRoom(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/room/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "duo", difficulty }),
+      });
+      const data = await res.json();
+      router.push(
+        `/lobby?game_id=${data.game_id}&seat=${data.seat}&token=${encodeURIComponent(data.reconnect_token)}`
+      );
+    } catch {
+      setCreatingRoom(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4">
@@ -22,26 +43,53 @@ export default function Home() {
           </p>
         </div>
 
-        {/* Difficulty picker */}
-        <div className="grid grid-cols-2 gap-3 w-full">
-          {difficulties.map((diff) => {
-            const info = DIFFICULTY_INFO[diff];
-            return (
-              <button
-                key={diff}
-                className="flex flex-col items-center gap-2 p-5 bg-surface border border-border rounded-xl hover:border-accent hover:shadow-md transition-all cursor-pointer group"
-                onClick={() => router.push(`/game?difficulty=${diff}`)}
-              >
-                <span className="text-3xl">{info.emoji}</span>
-                <span className="text-sm font-semibold text-foreground group-hover:text-accent transition-colors">
-                  {info.label}
-                </span>
-                <span className="text-xs text-text-secondary text-center">
-                  {info.description}
-                </span>
-              </button>
-            );
-          })}
+        {/* Solo difficulty picker */}
+        <div className="w-full flex flex-col gap-3">
+          <span className="text-xs font-semibold text-text-secondary tracking-wider uppercase text-center">
+            Play Solo
+          </span>
+          <div className="grid grid-cols-2 gap-3">
+            {difficulties.map((diff) => {
+              const info = DIFFICULTY_INFO[diff];
+              return (
+                <button
+                  key={diff}
+                  className="flex flex-col items-center gap-2 p-5 bg-surface border border-border rounded-xl hover:border-accent hover:shadow-md transition-all cursor-pointer group"
+                  onClick={() => router.push(`/game?difficulty=${diff}`)}
+                >
+                  <span className="text-3xl">{info.emoji}</span>
+                  <span className="text-sm font-semibold text-foreground group-hover:text-accent transition-colors">
+                    {info.label}
+                  </span>
+                  <span className="text-xs text-text-secondary text-center">
+                    {info.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Multiplayer section */}
+        <div className="w-full flex flex-col gap-3">
+          <span className="text-xs font-semibold text-text-secondary tracking-wider uppercase text-center">
+            Play with Friends
+          </span>
+          <div className="flex gap-3">
+            <button
+              className="flex-1 py-3 bg-surface border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent transition-all disabled:opacity-50"
+              onClick={() => handleCreateRoom("medium")}
+              disabled={creatingRoom}
+            >
+              {creatingRoom ? "Creating…" : "Create Room"}
+            </button>
+            <button
+              className="flex-1 py-3 bg-surface border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent transition-all"
+              onClick={() => router.push("/join")}
+            >
+              Join Room
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -10,7 +10,7 @@ const BACKOFF_BASE = 1000; // 1s, 2s, 4s, 8s, 8s
 
 export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
-export function useGameSocket(gameId: string | null, reconnectToken: string | null = null) {
+export function useGameSocket(gameId: string | null, reconnectToken: string | null = null, seat: number = 0) {
   const wsRef = useRef<WebSocket | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [aiThinking, setAiThinking] = useState<number | null>(null);
@@ -22,18 +22,22 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
   const intentionalCloseRef = useRef(false);
   const gameIdRef = useRef(gameId);
   const tokenRef = useRef(reconnectToken);
+  const seatRef = useRef(seat);
 
   // Keep refs in sync
   gameIdRef.current = gameId;
   tokenRef.current = reconnectToken;
+  seatRef.current = seat;
 
   const connect = useCallback(() => {
     const gid = gameIdRef.current;
     const token = tokenRef.current;
+    const seatNum = seatRef.current;
     if (!gid) return;
 
-    const params = token ? `?token=${encodeURIComponent(token)}` : "";
-    const ws = new WebSocket(`${WS_BASE}/ws/game/${gid}${params}`);
+    const params = new URLSearchParams({ seat: String(seatNum) });
+    if (token) params.set("token", token);
+    const ws = new WebSocket(`${WS_BASE}/ws/game/${gid}?${params.toString()}`);
     wsRef.current = ws;
 
     ws.onopen = () => {

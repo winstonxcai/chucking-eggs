@@ -201,9 +201,9 @@ def serialize_game_state(
     legal_moves = []
     is_my_turn = env.current_player == human_seat and not env.done
     if is_my_turn:
-        raw_moves = _expand_natural_pairs(
-            env.legal_moves(human_seat), env.hands[human_seat], env.level_rank
-        )
+        raw_moves = env.legal_moves(human_seat)
+        if env.current_trick is None:
+            raw_moves = _expand_natural_pairs(raw_moves, env.hands[human_seat], env.level_rank)
         non_pass = [c for c in raw_moves if c.type != ComboType.PASS]
         non_pass.sort(key=lambda c: combo_sort_key(c, env.level_rank))
         for combo in non_pass:

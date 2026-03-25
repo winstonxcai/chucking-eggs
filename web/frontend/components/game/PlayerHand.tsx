@@ -54,7 +54,9 @@ export default function PlayerHand({
             </span>
             <div className="flex gap-0.5">
               {groupCards.map((card) => (
-                <CardComponent key={card.id} card={card} size="sm" selected={isSelected} />
+                <div key={card.id} onClick={(e) => { e.stopPropagation(); onToggleCard(card.id); }}>
+                  <CardComponent card={card} size="sm" selected={selectedIds.has(card.id)} />
+                </div>
               ))}
             </div>
           </div>
@@ -84,6 +86,7 @@ export default function PlayerHand({
             {rankGroup.slice(1).map((card) => (
               <div
                 key={card.id}
+                data-card-id={card.id}
                 className={`w-9 h-[22px] flex items-center justify-center rounded cursor-pointer -mt-1 ${
                   selectedIds.has(card.id)
                     ? "bg-surface border-2 border-accent shadow-[0_1px_4px_rgba(217,119,87,0.15)]"

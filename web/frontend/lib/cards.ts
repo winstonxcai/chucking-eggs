@@ -50,13 +50,14 @@ export function groupByRank(cards: CardDTO[]): CardDTO[][] {
  *
  *  Pass 1: exact ID match (rank-suit-deck).
  *  Pass 2: deck-normalized — same (rank,suit) multiset, different deck.
+ *          Returns the legal combo with the user's selected card objects
+ *          substituted in, so the correct deck copies are played.
  *  Pass 3: N-of-a-kind bomb — all same rank, matching bomb type in legal moves.
- *
- *  Passes 2 & 3 return the *legal* combo object so that Play sends the
- *  canonical card IDs to the backend (which does exact matching). */
+ */
 export function findMatchingCombo(
   selectedIds: Set<string>,
-  legalMoves: ComboDTO[]
+  legalMoves: ComboDTO[],
+  hand?: CardDTO[]
 ): ComboDTO | null {
   if (selectedIds.size === 0) return null;
 
@@ -72,6 +73,13 @@ export function findMatchingCombo(
     }
   }
 
+  // Resolve selected card objects for Pass 2 substitution
+  const selectedCards = hand
+    ? Array.from(selectedIds)
+        .map((id) => hand.find((c) => c.id === id))
+        .filter((c): c is CardDTO => c !== undefined)
+    : [];
+
   // Pass 2: deck-normalized — compare (rank,suit) multisets ignoring deck
   const selRS = [...selectedIds]
     .map((id) => id.split("-").slice(0, 2).join("-"))
@@ -83,7 +91,12 @@ export function findMatchingCombo(
       .map((c) => `${c.rank}-${c.suit}`)
       .sort()
       .join(",");
-    if (comboRS === selRS) return combo;
+    if (comboRS === selRS) {
+      // Return with user's actual cards so the right deck copies get played
+      return selectedCards.length === combo.cards.length
+        ? { ...combo, cards: selectedCards }
+        : combo;
+    }
   }
 
   // Pass 3: N-of-a-kind bomb — all selected cards share the same rank
@@ -166,6 +179,24 @@ export function validateCombo(
           return { valid: true, type: "STRAIGHT", name: `Straight ${RANK_NAMES[lo] ?? ""}-${RANK_NAMES[hi] ?? ""}` };
         }
       }
+
+      // Ace-low fallback: remap rank 14 → 1 and retry (handles A-2-3-4-5 window)
+      if (uniqueNWRanks.includes(14)) {
+        const lowRanks = uniqueNWRanks.map(r => r === 14 ? 1 : r).sort((a, b) => a - b);
+        const lowSpan = lowRanks[lowRanks.length - 1] - lowRanks[0];
+        if (lowSpan <= 4) {
+          const lowGaps = lowSpan > 0 ? lowSpan - (lowRanks.length - 1) : 0;
+          if (lowGaps <= wildCount) {
+            const allSameSuit = nonWild.length === 0 ||
+              new Set(nonWild.map((c) => c.suit)).size === 1;
+            const hi = lowRanks[lowRanks.length - 1];
+            if (allSameSuit) {
+              return { valid: true, type: "STRAIGHT_FLUSH", name: `Straight Flush A-${RANK_NAMES[hi] ?? hi}` };
+            }
+            return { valid: true, type: "STRAIGHT", name: `Straight A-${RANK_NAMES[hi] ?? hi}` };
+          }
+        }
+      }
     }
   }
 
@@ -219,13 +250,15 @@ export function findStraightFlushes(
 
   // Iterate high to low: wilds always fill the highest possible position.
   // For each set of natural cards, only the highest window is kept.
-  for (let start = 10; start >= 2; start--) {
+  // start=1 is the Ace-low window (A-2-3-4-5): seq position 1 maps to rank 14 (Ace).
+  for (let start = 10; start >= 1; start--) {
     const windowCards: CardDTO[] = [];
     let wildsNeeded = 0;
 
     for (let r = start; r < start + 5; r++) {
-      if (rankToCard.has(r)) {
-        windowCards.push(rankToCard.get(r)!);
+      const lookupRank = r === 1 ? 14 : r; // Ace-low: seq pos 1 = rank 14
+      if (rankToCard.has(lookupRank)) {
+        windowCards.push(rankToCard.get(lookupRank)!);
       } else {
         wildsNeeded++;
       }
@@ -241,8 +274,7 @@ export function findStraightFlushes(
     }
 
     const selected = [...windowCards, ...wildCards.slice(0, wildsNeeded)];
-    const highRank = start + 4;
-    const label = `${RANK_NAMES[highRank] ?? highRank}-high SF`;
+    const label = start === 1 ? "A-5 SF" : `${RANK_NAMES[start + 4] ?? start + 4}-high SF`;
     results.push({ label, cards: selected });
   }
 

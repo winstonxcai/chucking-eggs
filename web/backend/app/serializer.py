@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from itertools import combinations as _combinations
 
 from guandan.cards import BOMB_TYPES, Card, ComboType, Rank, Suit, is_wild, level_order_key
-from guandan.combos import Combo, _add_straight_flushes
+from guandan.combos import Combo, _add_straight_flushes, generate_all_leads, generate_responses
 from guandan.game import GuanDanEnv
 
 SUIT_SYMBOLS = {Suit.SPADE: "\u2660", Suit.HEART: "\u2665", Suit.DIAMOND: "\u2666", Suit.CLUB: "\u2663"}
@@ -119,40 +118,6 @@ def sort_hand(cards: set[Card], level_rank: int) -> list[Card]:
     return sorted(cards, key=sort_key)
 
 
-def _expand_natural_pairs(raw_moves: list[Combo], hand: set, level_rank: int) -> list[Combo]:
-    """Ensure all unique-suit-pair combos are present in legal_moves.
-
-    The backend pair generator takes cards[:2] per rank. In a double deck, if
-    deck-0 of one suit is grouped on the frontend, only deck-1 of a different
-    suit may form a valid pair — but that combo won't be generated unless we
-    enumerate all suit combinations here.
-    """
-    # Build {rank: {suit: representative_card}} for non-wild naturals
-    by_rank_suit: dict[int, dict[int, Card]] = {}
-    for c in hand:
-        if not is_wild(c, level_rank) and c.rank < Rank.BLACK_JOKER:
-            by_rank_suit.setdefault(c.rank, {}).setdefault(c.suit, c)
-
-    # Track existing natural pairs so we don't duplicate them
-    existing: set[tuple] = set()
-    for combo in raw_moves:
-        if combo.type == ComboType.PAIR and combo.wild_count == 0:
-            existing.add(tuple(sorted((c.rank, c.suit) for c in combo.cards)))
-
-    new_combos: list[Combo] = []
-    for rank, suit_map in by_rank_suit.items():
-        suit_cards = sorted(suit_map.values(), key=lambda c: c.suit)
-        for c1, c2 in _combinations(suit_cards, 2):
-            key = tuple(sorted([(c1.rank, c1.suit), (c2.rank, c2.suit)]))
-            if key not in existing:
-                existing.add(key)
-                new_combos.append(Combo(
-                    ComboType.PAIR, rank, [c1, c2],
-                    length=2, wild_count=0,
-                ))
-
-    return raw_moves + new_combos
-
 
 def _compute_sf_options(
     hand: set[Card],
@@ -233,22 +198,25 @@ def serialize_game_state(
     # Legal moves sorted smallest → biggest (only when it's the human's turn)
     legal_moves = []
     is_my_turn = env.current_player == human_seat and not env.done
+    grouped_ids = {cid for g in (groups or []) for cid in g["cardIds"]}
+    ungrouped_hand = {
+        c for c in env.hands[human_seat]
+        if f"{c.rank}-{c.suit}-{c.deck}" not in grouped_ids
+    }
     if is_my_turn:
-        raw_moves = env.legal_moves(human_seat)
         if env.current_trick is None:
-            raw_moves = _expand_natural_pairs(raw_moves, env.hands[human_seat], env.level_rank)
+            raw_moves = generate_all_leads(ungrouped_hand, env.level_rank)
+        else:
+            raw_moves = generate_responses(ungrouped_hand, env.level_rank, env.current_trick)
         non_pass = [c for c in raw_moves if c.type != ComboType.PASS]
         non_pass.sort(key=lambda c: combo_sort_key(c, env.level_rank))
         for combo in non_pass:
             legal_moves.append(combo_to_dto(combo, env.level_rank))
-        # Add pass at the end if it was in the original list
         if any(c.type == ComboType.PASS for c in raw_moves):
             legal_moves.append(combo_to_dto(
                 next(c for c in raw_moves if c.type == ComboType.PASS),
                 env.level_rank,
             ))
-
-    grouped_ids = {cid for g in (groups or []) for cid in g["cardIds"]}
     sf_options = _compute_sf_options(env.hands[human_seat], grouped_ids, env.level_rank)
 
     return {

@@ -143,7 +143,11 @@ export default function GameBoard({
   }, [selectedIds, groups, onDeleteGroup]);
 
   const handleGroupClick = useCallback((group: CardGroup) => {
-    setSelectedIds(new Set(group.cardIds));
+    setSelectedIds((prev) => {
+      const allSelected = group.cardIds.every((id) => prev.has(id));
+      if (allSelected) return new Set();
+      return new Set(group.cardIds);
+    });
   }, []);
 
   // --- Straight flush finder (computed by backend) ---
@@ -162,14 +166,6 @@ export default function GameBoard({
   const handleFlushSelect = useCallback((cards: CardDTO[]) => {
     setSelectedIds(new Set(cards.map((c) => c.id)));
   }, []);
-
-  // Filter legal moves to exclude combos where any card is already grouped
-  const filteredLegalMoves = useMemo(
-    () => gameState.legal_moves.filter(
-      (combo) => combo.is_pass || !combo.cards.some((c) => groupedCardIds.has(c.id))
-    ),
-    [gameState.legal_moves, groupedCardIds]
-  );
 
   // --- Layout data ---
   const partner = gameState.players.find((p) => p.seat === 2);
@@ -328,7 +324,7 @@ export default function GameBoard({
           </span>
           {gameState.is_my_turn ? (
             <ComboBrowser
-              legalMoves={filteredLegalMoves}
+              legalMoves={gameState.legal_moves}
               onSelectCombo={handleSelectCombo}
             />
           ) : (

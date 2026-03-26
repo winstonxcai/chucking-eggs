@@ -25,9 +25,9 @@ test("two users can create and join a duo room and both reach the game board", a
     await page2.goto("/join");
     await page2.locator('input[placeholder="XXXXXX"]').fill(roomCode!.trim());
     await page2.getByRole("button", { name: /join game/i }).click();
-    await expect(page2).toHaveURL(/\/lobby/, { timeout: 10_000 });
+    // page2 may pass through /lobby quickly — just wait for /game
 
-    // --- Both users should navigate to /game once the room starts ---
+    // --- Both users should reach /game (page1 via lobby redirect, page2 via join→lobby→game) ---
     await Promise.all([
       expect(page1).toHaveURL(/\/game/, { timeout: 20_000 }),
       expect(page2).toHaveURL(/\/game/, { timeout: 20_000 }),

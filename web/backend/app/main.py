@@ -164,7 +164,7 @@ async def room_status(game_id: str):
         game_id=room.game_id,
         mode=room.mode,
         room_code=room.room_code,
-        started=room.started,
+        started=room.started or (room.assigned_seats >= room.human_seats),
         seats=seats,
     )
 

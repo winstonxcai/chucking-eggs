@@ -298,7 +298,7 @@ export default function GameBoard({
             sfBySuit={sfBySuit}
             onGroup={handleGroup}
             onUngroup={handleUngroup}
-            canGroup={selectedIds.size > 0}
+            canGroup={selectedIds.size > 0 && !Array.from(selectedIds).some((id) => groupedCardIds.has(id))}
             canUngroup={localGroups.some((g) =>
               g.cardIds.some((cid) => selectedIds.has(cid))
             )}

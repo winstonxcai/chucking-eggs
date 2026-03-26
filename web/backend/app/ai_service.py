@@ -77,8 +77,8 @@ class AIService:
             print(f"No RL checkpoint at {checkpoint_path}, expert uses strategic fallback")
             return
         device = get_device()
-        q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
-        q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+        q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=True, gnn_out=128).to(device)
+        q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=True, gnn_out=128).to(device)
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
         lead_key = "lead_state_dict" if "lead_state_dict" in ckpt else "lead"
         follow_key = "follow_state_dict" if "follow_state_dict" in ckpt else "follow"

@@ -26,13 +26,14 @@ def main() -> None:
     parser.add_argument("--games", type=int, default=1000)
     parser.add_argument("--lstm-hidden", type=int, default=128)
     parser.add_argument("--mlp-hidden", type=int, default=512)
+    parser.add_argument("--use-gnn", action="store_true")
     args = parser.parse_args()
 
     device = get_device()
     print(f"Device: {device}")
 
-    q_lead = QNetworkLSTM(lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden).to(device)
-    q_follow = QNetworkLSTM(lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden).to(device)
+    q_lead = QNetworkLSTM(lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden, use_gnn=args.use_gnn, gnn_out=128).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden, use_gnn=args.use_gnn, gnn_out=128).to(device)
 
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=True)
     lead_key = "lead_state_dict" if "lead_state_dict" in ckpt else "lead"

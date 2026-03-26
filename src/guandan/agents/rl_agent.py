@@ -69,14 +69,31 @@ class RLAgentLSTM(Agent):
                 .expand(B, -1)
             )
             a = torch.tensor(action_encs, device=self.device)
-            h = (
-                torch.tensor(history, device=self.device)
-                .unsqueeze(0)
-                .expand(B, -1, -1)
-            )
-            hl = torch.tensor(
-                [hist_len], dtype=torch.long, device=self.device
-            ).expand(B)
-            idx = q_net(s, a, h, hl).argmax().item()
+
+            if q_net.use_gnn:
+                from ..training.hand_graph import build_hand_graph, encode_action_subgraph
+                hand_list = list(hand)
+                nf, ei, ef = build_hand_graph(hand_list, self.level_rank)
+                h_single = torch.tensor(history, device=self.device).unsqueeze(0)
+                hl_single = torch.tensor([hist_len], dtype=torch.long, device=self.device)
+                hist_emb = q_net.encode_history(h_single, hl_single)
+                hist_emb_batch = hist_emb.expand(B, -1)
+                action_masks = torch.stack(
+                    [encode_action_subgraph(m.cards, hand_list)[0] for m in legal])
+                remaining_masks = torch.stack(
+                    [encode_action_subgraph(m.cards, hand_list)[1] for m in legal])
+                idx = q_net.forward_amortized(
+                    s, a, hist_emb_batch, nf, ei, ef, action_masks, remaining_masks
+                ).argmax().item()
+            else:
+                h = (
+                    torch.tensor(history, device=self.device)
+                    .unsqueeze(0)
+                    .expand(B, -1, -1)
+                )
+                hl = torch.tensor(
+                    [hist_len], dtype=torch.long, device=self.device
+                ).expand(B)
+                idx = q_net(s, a, h, hl).argmax().item()
 
         return legal[idx]

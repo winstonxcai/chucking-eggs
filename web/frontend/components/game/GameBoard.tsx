@@ -342,7 +342,9 @@ export default function GameBoard({
           </span>
           {gameState.is_my_turn ? (
             <ComboBrowser
-              legalMoves={gameState.legal_moves}
+              legalMoves={gameState.legal_moves.filter(
+                (m) => !m.cards.every((c) => groupedCardIds.has(c.id))
+              )}
               onSelectCombo={handleSelectCombo}
             />
           ) : (

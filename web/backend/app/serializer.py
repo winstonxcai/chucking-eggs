@@ -217,6 +217,25 @@ def serialize_game_state(
                 next(c for c in raw_moves if c.type == ComboType.PASS),
                 env.level_rank,
             ))
+    if is_my_turn and groups:
+        hand_by_id = {f"{c.rank}-{c.suit}-{c.deck}": c for c in env.hands[human_seat]}
+        for group in groups:
+            group_cards = {hand_by_id[cid] for cid in group["cardIds"] if cid in hand_by_id}
+            if not group_cards:
+                continue
+            if env.current_trick is None:
+                grp_moves = generate_all_leads(group_cards, env.level_rank)
+            else:
+                grp_moves = generate_responses(group_cards, env.level_rank, env.current_trick)
+            grp_non_pass = [c for c in grp_moves if c.type != ComboType.PASS]
+            grp_non_pass.sort(key=lambda c: combo_sort_key(c, env.level_rank))
+            insert_pos = len(legal_moves)
+            if legal_moves and legal_moves[-1].get("is_pass"):
+                insert_pos -= 1
+            for combo in grp_non_pass:
+                legal_moves.insert(insert_pos, combo_to_dto(combo, env.level_rank))
+                insert_pos += 1
+
     sf_options = _compute_sf_options(env.hands[human_seat], grouped_ids, env.level_rank)
 
     return {

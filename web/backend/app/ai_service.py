@@ -22,6 +22,11 @@ BOT_POOLS = {
         {"name": "Turtle", "avatar": "turtle", "elo": 600},
         {"name": "Lamb", "avatar": "lamb", "elo": 600},
     ],
+    "casual": [
+        {"name": "Panda", "avatar": "panda", "elo": 800},
+        {"name": "Owl", "avatar": "owl", "elo": 800},
+        {"name": "Cat", "avatar": "cat", "elo": 800},
+    ],
     "medium": [
         {"name": "Fox", "avatar": "fox", "elo": 1000},
         {"name": "Raccoon", "avatar": "raccoon", "elo": 1000},
@@ -39,6 +44,7 @@ BOT_POOLS = {
 
 DIFFICULTY_TO_AGENT = {
     "easy": "greedy",
+    "casual": "xingdream",
     "medium": "heuristic",
     "hard": "strategic",
     "expert": "rl",  # falls back to strategic if no checkpoint
@@ -53,7 +59,7 @@ class AIService:
 
     def _load_agents(self) -> None:
         """Load rule-based agents, then try loading RL checkpoint."""
-        for agent_name in ("greedy", "heuristic", "strategic"):
+        for agent_name in ("greedy", "xingdream", "heuristic", "strategic"):
             self.agents[agent_name] = make_agent(agent_name, level_rank=Rank.TWO)
         self._try_load_rl_agent()
 

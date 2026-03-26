@@ -7,6 +7,11 @@ export const DIFFICULTY_INFO: Record<
     description: "Plays it safe. Great for learning.",
     emoji: "\ud83d\udc28",
   },
+  casual: {
+    label: "Casual",
+    description: "Straights-first style. A step up.",
+    emoji: "\ud83d\udc3c",
+  },
   medium: {
     label: "Medium",
     description: "Plans ahead. A real challenge.",

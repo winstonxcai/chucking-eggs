@@ -185,6 +185,16 @@ export default function GameBoard({
     setSelectedIds(new Set(cards.map((c) => c.id)));
   }, []);
 
+  const handleSaveState = useCallback(() => {
+    const blob = new Blob([JSON.stringify(gameState, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `game-state-${gameState.game_id}-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [gameState]);
+
   // --- Layout data ---
   const partner = gameState.players.find((p) => p.seat === 2);
   const leftOpp = gameState.players.find((p) => p.seat === 1);
@@ -351,6 +361,15 @@ export default function GameBoard({
             <span className="text-sm text-text-secondary">Not your turn</span>
           )}
         </div>
+
+        <div className="border-t border-border" />
+
+        <button
+          className="text-xs text-text-secondary hover:text-foreground transition-colors text-left"
+          onClick={handleSaveState}
+        >
+          Save state JSON
+        </button>
       </div>
 
       {/* Card fly animation overlay */}

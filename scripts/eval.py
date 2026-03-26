@@ -22,7 +22,7 @@ from guandan.training.train import evaluate
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate Guan Dan agent")
     parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--opponent", type=str, default="random", choices=["random", "greedy", "heuristic", "strategic", "monte_carlo"])
+    parser.add_argument("--opponent", type=str, default="random", choices=["random", "greedy", "heuristic", "strategic", "monte_carlo", "xingdream"])
     parser.add_argument("--games", type=int, default=1000)
     parser.add_argument("--lstm-hidden", type=int, default=128)
     parser.add_argument("--mlp-hidden", type=int, default=512)

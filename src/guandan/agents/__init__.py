@@ -20,6 +20,7 @@ from .monte_carlo_bot import MonteCarloBot
 from .random_bot import RandomBot
 from .rl_agent import RLAgentLSTM
 from .strategic_bot import StrategicBot
+from .xingdream_bot import XingDreamBot
 
 __all__ = [
     "Agent",
@@ -39,6 +40,7 @@ AGENT_REGISTRY: dict[str, type[Agent]] = {
     "heuristic": HeuristicBot,
     "strategic": StrategicBot,
     "monte_carlo": MonteCarloBot,
+    "xingdream": XingDreamBot,
 }
 
 

@@ -6,7 +6,7 @@ import { DIFFICULTY_INFO } from "@/lib/bots";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const difficulties = ["easy", "casual", "medium", "hard", "expert"] as const;
+const difficulties = ["easy", "casual", "medium", "hard", "competition", "expert", "master"] as const;
 
 export default function Home() {
   const router = useRouter();

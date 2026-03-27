@@ -246,6 +246,7 @@ class Strategy(object):
             self.restrictedActionRV[type] = 0
             self.freeActionRV[type] = 0
             self.handRV[type] = 0
+        self.restrictedActionRV['PASS'] = 0  # fix: 'PASS' not in cardTypes but accessed by UpdateRVByRestHandsCount
         self.UpdateRVByRoleAtBeginning()
         self.UpdateRVATBeginning()
         self.UpdateRVATEnding()

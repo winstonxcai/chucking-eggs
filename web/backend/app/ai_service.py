@@ -16,45 +16,66 @@ from guandan.training.q_network import QNetworkLSTM, get_device
 
 
 # Bot personalities per difficulty
+# ELOs are approximate, derived from Glicko-2 calibration (updated from wr_matrix runs).
 BOT_POOLS = {
     "easy": [
-        {"name": "Koala", "avatar": "koala", "elo": 600},
-        {"name": "Turtle", "avatar": "turtle", "elo": 600},
-        {"name": "Lamb", "avatar": "lamb", "elo": 600},
+        {"name": "Koala", "avatar": "koala", "elo": 1421},
+        {"name": "Turtle", "avatar": "turtle", "elo": 1421},
+        {"name": "Lamb", "avatar": "lamb", "elo": 1421},
+    ],
+    "wjsd": [
+        {"name": "Wjsd", "avatar": "dragon", "elo": 1250},
     ],
     "casual": [
-        {"name": "Panda", "avatar": "panda", "elo": 800},
-        {"name": "Owl", "avatar": "owl", "elo": 800},
-        {"name": "Cat", "avatar": "cat", "elo": 800},
+        {"name": "Panda", "avatar": "panda", "elo": 1566},
+        {"name": "Owl", "avatar": "owl", "elo": 1566},
+        {"name": "Cat", "avatar": "cat", "elo": 1566},
     ],
     "medium": [
-        {"name": "Fox", "avatar": "fox", "elo": 1000},
-        {"name": "Raccoon", "avatar": "raccoon", "elo": 1000},
-        {"name": "Wolf", "avatar": "wolf", "elo": 1000},
+        {"name": "Fox", "avatar": "fox", "elo": 1492},
+        {"name": "Raccoon", "avatar": "raccoon", "elo": 1492},
+        {"name": "Wolf", "avatar": "wolf", "elo": 1492},
     ],
     "hard": [
-        {"name": "Tiger", "avatar": "tiger", "elo": 1350},
-        {"name": "Falcon", "avatar": "falcon", "elo": 1350},
-        {"name": "Leopard", "avatar": "leopard", "elo": 1350},
+        {"name": "Tiger", "avatar": "tiger", "elo": 1703},
+        {"name": "Falcon", "avatar": "falcon", "elo": 1703},
+        {"name": "Leopard", "avatar": "leopard", "elo": 1703},
     ],
     "competition": [
         {"name": "Lalala", "avatar": "dragon", "elo": 1550},
     ],
+    "yaoji": [
+        {"name": "Yaoji", "avatar": "dragon", "elo": 1760},
+    ],
+    "jidan": [
+        {"name": "Jidan", "avatar": "dragon", "elo": 1775},
+    ],
     "expert": [
-        {"name": "Dragon", "avatar": "dragon", "elo": 1700},
+        {"name": "Dragon", "avatar": "dragon", "elo": 1790},
+    ],
+    "hulalala": [
+        {"name": "Hulalala", "avatar": "dragon", "elo": 1820},
+    ],
+    "liuzha": [
+        {"name": "Liuzha", "avatar": "dragon", "elo": 1840},
     ],
     "master": [
-        {"name": "NoAI", "avatar": "dragon", "elo": 1950},
+        {"name": "NoAI", "avatar": "dragon", "elo": 1766},
     ],
 }
 
 DIFFICULTY_TO_AGENT = {
     "easy": "greedy",
+    "wjsd": "wjsd",           # SAU 3rd Prize (2020 NJUPT)
     "casual": "xingdream",
     "medium": "heuristic",
     "hard": "strategic",
     "competition": "lalala",  # SEU 1st Prize (Li Jing)
+    "yaoji": "yaoji",         # NUAA 3rd Prize (2020 NJUPT)
+    "jidan": "jidan",         # NUAA 2nd Prize (2020 NJUPT)
     "expert": "rl",           # falls back to strategic if no checkpoint
+    "hulalala": "hulalala",   # SEU 3rd Prize (2020 NJUPT)
+    "liuzha": "liuzha",       # SEU 2nd Prize (2020 NJUPT)
     "master": "noai",         # Fudan 2nd Prize (Chen Yuguan)
 }
 
@@ -67,7 +88,9 @@ class AIService:
 
     def _load_agents(self) -> None:
         """Load rule-based agents, then try loading RL checkpoint."""
-        for agent_name in ("greedy", "xingdream", "heuristic", "strategic", "lalala", "noai"):
+        for agent_name in ("greedy", "xingdream", "heuristic", "strategic",
+                           "lalala", "noai", "wjsd", "yaoji", "jidan",
+                           "hulalala", "liuzha"):
             self.agents[agent_name] = make_agent(agent_name, level_rank=Rank.TWO)
         self._try_load_rl_agent()
 

@@ -100,7 +100,8 @@ class RoomStatusResponse(BaseModel):
 @app.post("/api/game/create", response_model=CreateGameResponse)
 async def create_game(req: CreateGameRequest):
     assert game_manager is not None
-    if req.difficulty not in ("easy", "casual", "medium", "hard", "competition", "expert", "master"):
+    if req.difficulty not in ("easy", "wjsd", "casual", "medium", "competition", "hard",
+         "yaoji", "jidan", "expert", "hulalala", "liuzha", "master"):
         req.difficulty = "medium"
     room = game_manager.create_game(req.difficulty)
     return CreateGameResponse(
@@ -118,7 +119,8 @@ async def create_room(req: CreateRoomRequest):
     assert game_manager is not None
     if req.mode not in ("solo", "duo", "quad"):
         req.mode = "solo"
-    if req.difficulty not in ("easy", "casual", "medium", "hard", "competition", "expert", "master"):
+    if req.difficulty not in ("easy", "wjsd", "casual", "medium", "competition", "hard",
+         "yaoji", "jidan", "expert", "hulalala", "liuzha", "master"):
         req.difficulty = "medium"
     room = game_manager.create_room(req.mode, req.difficulty)
     seat = 0  # creator always gets seat 0

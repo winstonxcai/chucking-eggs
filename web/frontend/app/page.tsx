@@ -6,7 +6,7 @@ import { DIFFICULTY_INFO } from "@/lib/bots";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const difficulties = ["easy", "casual", "medium", "hard", "competition", "expert", "master"] as const;
+const difficulties = ["easy", "wjsd", "casual", "medium", "competition", "hard", "yaoji", "jidan", "expert", "hulalala", "liuzha", "master"] as const;
 
 export default function Home() {
   const router = useRouter();
@@ -63,6 +63,9 @@ export default function Home() {
                   </span>
                   <span className="text-xs text-text-secondary text-center">
                     {info.description}
+                  </span>
+                  <span className="text-xs font-mono text-text-secondary opacity-60">
+                    {info.elo} ELO
                   </span>
                 </button>
               );

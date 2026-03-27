@@ -13,13 +13,13 @@ export default function Home() {
   const router = useRouter();
   const [creatingRoom, setCreatingRoom] = useState(false);
 
-  async function handleCreateRoom(difficulty: string) {
+  async function handleCreateRoom(mode: "duo" | "quad", difficulty: string) {
     setCreatingRoom(true);
     try {
       const res = await fetch(`${API_BASE}/api/room/create`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "duo", difficulty }),
+        body: JSON.stringify({ mode, difficulty }),
       });
       const data = await res.json();
       router.push(
@@ -82,10 +82,17 @@ export default function Home() {
           <div className="flex gap-3">
             <button
               className="flex-1 py-3 bg-surface border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent transition-all disabled:opacity-50"
-              onClick={() => handleCreateRoom("medium")}
+              onClick={() => handleCreateRoom("duo", "medium")}
               disabled={creatingRoom}
             >
-              {creatingRoom ? "Creating…" : "Create Room"}
+              {creatingRoom ? "Creating…" : "2-Player"}
+            </button>
+            <button
+              className="flex-1 py-3 bg-surface border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent transition-all disabled:opacity-50"
+              onClick={() => handleCreateRoom("quad", "medium")}
+              disabled={creatingRoom}
+            >
+              {creatingRoom ? "Creating…" : "4-Player"}
             </button>
             <button
               className="flex-1 py-3 bg-surface border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent transition-all"

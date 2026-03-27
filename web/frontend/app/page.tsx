@@ -6,7 +6,8 @@ import { DIFFICULTY_INFO } from "@/lib/bots";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const difficulties = ["easy", "wjsd", "casual", "medium", "competition", "hard", "yaoji", "jidan", "expert", "hulalala", "liuzha", "master"] as const;
+// Ordered by calibrated Glicko-2 ELO (see runs/wr_matrix_v2/)
+const difficulties = ["wjsd", "liuzha", "hulalala", "easy", "medium", "competition", "casual", "hard", "master", "yaoji", "jidan", "expert"] as const;
 
 export default function Home() {
   const router = useRouter();

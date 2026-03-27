@@ -15,52 +15,53 @@ from guandan.game import GuanDanEnv
 from guandan.training.q_network import QNetworkLSTM, get_device
 
 
-# Bot personalities per difficulty
-# ELOs are approximate, derived from Glicko-2 calibration (updated from wr_matrix runs).
+# Bot personalities per difficulty.
+# ELOs are calibrated Glicko-2 ratings from a 13-bot round-robin WR matrix
+# (200 games/matchup, 31,200 total). See runs/wr_matrix_v2/results.json.
 BOT_POOLS = {
-    "easy": [
-        {"name": "Koala", "avatar": "koala", "elo": 1421},
-        {"name": "Turtle", "avatar": "turtle", "elo": 1421},
-        {"name": "Lamb", "avatar": "lamb", "elo": 1421},
-    ],
     "wjsd": [
-        {"name": "Wjsd", "avatar": "dragon", "elo": 1250},
-    ],
-    "casual": [
-        {"name": "Panda", "avatar": "panda", "elo": 1566},
-        {"name": "Owl", "avatar": "owl", "elo": 1566},
-        {"name": "Cat", "avatar": "cat", "elo": 1566},
-    ],
-    "medium": [
-        {"name": "Fox", "avatar": "fox", "elo": 1492},
-        {"name": "Raccoon", "avatar": "raccoon", "elo": 1492},
-        {"name": "Wolf", "avatar": "wolf", "elo": 1492},
-    ],
-    "hard": [
-        {"name": "Tiger", "avatar": "tiger", "elo": 1703},
-        {"name": "Falcon", "avatar": "falcon", "elo": 1703},
-        {"name": "Leopard", "avatar": "leopard", "elo": 1703},
-    ],
-    "competition": [
-        {"name": "Lalala", "avatar": "dragon", "elo": 1550},
-    ],
-    "yaoji": [
-        {"name": "Yaoji", "avatar": "dragon", "elo": 1760},
-    ],
-    "jidan": [
-        {"name": "Jidan", "avatar": "dragon", "elo": 1775},
-    ],
-    "expert": [
-        {"name": "Dragon", "avatar": "dragon", "elo": 1790},
-    ],
-    "hulalala": [
-        {"name": "Hulalala", "avatar": "dragon", "elo": 1820},
+        {"name": "Wjsd", "avatar": "dragon", "elo": 1212},
     ],
     "liuzha": [
-        {"name": "Liuzha", "avatar": "dragon", "elo": 1840},
+        {"name": "Liuzha", "avatar": "dragon", "elo": 1260},
+    ],
+    "hulalala": [
+        {"name": "Hulalala", "avatar": "dragon", "elo": 1264},
+    ],
+    "easy": [
+        {"name": "Koala", "avatar": "koala", "elo": 1415},
+        {"name": "Turtle", "avatar": "turtle", "elo": 1415},
+        {"name": "Lamb", "avatar": "lamb", "elo": 1415},
+    ],
+    "medium": [
+        {"name": "Fox", "avatar": "fox", "elo": 1461},
+        {"name": "Raccoon", "avatar": "raccoon", "elo": 1461},
+        {"name": "Wolf", "avatar": "wolf", "elo": 1461},
+    ],
+    "competition": [
+        {"name": "Lalala", "avatar": "dragon", "elo": 1464},
+    ],
+    "casual": [
+        {"name": "Panda", "avatar": "panda", "elo": 1523},
+        {"name": "Owl", "avatar": "owl", "elo": 1523},
+        {"name": "Cat", "avatar": "cat", "elo": 1523},
+    ],
+    "hard": [
+        {"name": "Tiger", "avatar": "tiger", "elo": 1621},
+        {"name": "Falcon", "avatar": "falcon", "elo": 1621},
+        {"name": "Leopard", "avatar": "leopard", "elo": 1621},
     ],
     "master": [
-        {"name": "NoAI", "avatar": "dragon", "elo": 1766},
+        {"name": "NoAI", "avatar": "dragon", "elo": 1726},
+    ],
+    "yaoji": [
+        {"name": "Yaoji", "avatar": "dragon", "elo": 1772},
+    ],
+    "jidan": [
+        {"name": "Jidan", "avatar": "dragon", "elo": 1779},
+    ],
+    "expert": [
+        {"name": "Dragon", "avatar": "dragon", "elo": 1786},
     ],
 }
 

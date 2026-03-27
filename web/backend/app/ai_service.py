@@ -96,7 +96,9 @@ class AIService:
         self._try_load_rl_agent()
 
     def _try_load_rl_agent(self) -> None:
-        checkpoint_path = Path(__file__).resolve().parents[3] / "checkpoints" / "selfplay_best.pt"
+        checkpoints_dir = Path(__file__).resolve().parents[3] / "checkpoints"
+        prod_files = sorted(checkpoints_dir.glob("prod_*.pt"))
+        checkpoint_path = prod_files[-1] if prod_files else checkpoints_dir / "selfplay_best.pt"
         if not checkpoint_path.exists():
             print(f"No RL checkpoint at {checkpoint_path}, expert uses strategic fallback")
             return
@@ -115,9 +117,8 @@ class AIService:
         q_lead.eval()
         q_follow.eval()
         self.agents["rl"] = RLAgentLSTM(q_lead, q_follow, device)
-        ep = ckpt.get("episode", "?")
-        self.rl_checkpoint_name = f"selfplay_best_ep{ep}"
-        print(f"Loaded RL agent from {checkpoint_path} (ep {ep})")
+        self.rl_checkpoint_name = checkpoint_path.stem
+        print(f"Loaded RL agent from {checkpoint_path}")
 
     def get_agent(self, difficulty: str) -> Agent:
         agent_name = DIFFICULTY_TO_AGENT[difficulty]

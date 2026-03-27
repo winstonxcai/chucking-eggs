@@ -21,9 +21,12 @@ from queue import Empty
 
 import numpy as np
 import torch
+from datetime import datetime
 from tqdm import tqdm
 
-from guandan.agents import GreedyBot, HeuristicBot, RandomBot, RLAgentLSTM, StrategicBot
+from guandan.agents import (GreedyBot, HeuristicBot, JidanBot, NoAIBot,
+                             RandomBot, RLAgentLSTM, StrategicBot, YaojiBot,
+                             make_agent)
 from guandan.cards import Rank
 from guandan.game import GuanDanEnv
 from guandan.training.game_runner import GameRunner
@@ -66,6 +69,7 @@ def _selfplay_worker(
     opp_lead_sd: dict | None = None,
     opp_follow_sd: dict | None = None,
     use_gnn: bool = False,
+    opp_name: str | None = None,
 ) -> None:
     """CPU worker: self-play games with own model copies, push transitions."""
     from guandan.training.q_network import load_compat
@@ -78,9 +82,14 @@ def _selfplay_worker(
     q_lead.eval()
     q_follow.eval()
 
-    # Opponent: pool checkpoint or self-play
+    # Opponent: named agent > pool checkpoint > self-play
+    import random as _random
     opponent = None
-    if opp_lead_sd is not None:
+    if opp_name == "competition":
+        opponent = make_agent(_random.choice(["yaoji", "jidan", "noai"]), level_rank)
+    elif opp_name:
+        opponent = make_agent(opp_name, level_rank)
+    elif opp_lead_sd is not None:
         q_opp_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
         q_opp_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
         load_compat(q_opp_lead, opp_lead_sd)
@@ -110,6 +119,9 @@ def _run_eval(q_lead, q_follow, device, level_rank, n_games_per_opp: int = 200) 
         ("Greedy",    GreedyBot(level_rank),    min(n_games_per_opp, 200)),
         ("Heuristic", HeuristicBot(level_rank), n_games_per_opp),
         ("Strategic", StrategicBot(level_rank), n_games_per_opp),
+        ("Yaoji",     YaojiBot(level_rank),     n_games_per_opp),
+        ("Jidan",     JidanBot(level_rank),     n_games_per_opp),
+        ("NoAI",      NoAIBot(level_rank),      n_games_per_opp),
     ]
 
     log.info("%-12s | %5s | %6s | %5s %5s %5s", "Opponent", "Games", "WR", "1-2", "1-3", "1-4")
@@ -205,7 +217,8 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
             p = mp.Process(
                 target=_selfplay_worker,
                 args=(queue, lead_sd, follow_sd, level_rank, games_per_worker[i], eps,
-                      opp_lead_sd, opp_follow_sd, getattr(args, 'use_gnn', False)),
+                      opp_lead_sd, opp_follow_sd, getattr(args, 'use_gnn', False),
+                      getattr(args, 'train_opponent', None)),
             )
             p.start()
             workers.append(p)
@@ -248,12 +261,20 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
                         eval_games = getattr(args, "eval_games", 200)
                         results = _run_eval(q_lead, q_follow, device, level_rank, eval_games)
                         wr_h = results.get("heuristic", 0)
-                        if wr_h > best_wr:
-                            best_wr = wr_h
+                        wr_comp = (results.get("yaoji", 0) + results.get("jidan", 0) + results.get("noai", 0)) / 3
+                        wr_gate = (wr_h + wr_comp) / 2
+                        if wr_gate > best_wr:
+                            best_wr = wr_gate
+                            ckpt_dict = {"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
+                                         "episode": episodes_done, "wr_gate": wr_gate,
+                                         "wr_heuristic": wr_h, "wr_competition": wr_comp}
                             path = os.path.join(args.checkpoint_dir, "selfplay_best.pt")
-                            torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                                        "episode": episodes_done, "wr_heuristic": wr_h}, path)
-                            log.info("★ New best: %.1f%% vs Heuristic → %s", wr_h * 100, path)
+                            torch.save(ckpt_dict, path)
+                            prod_ts = datetime.now().strftime("%m_%d_%H_%M")
+                            prod_path = os.path.join(args.checkpoint_dir, f"prod_{prod_ts}.pt")
+                            torch.save(ckpt_dict, prod_path)
+                            log.info("★ New best: gate=%.1f%% (h=%.1f%%, comp=%.1f%%) → %s",
+                                     wr_gate * 100, wr_h * 100, wr_comp * 100, prod_path)
 
                     # Save checkpoint
                     if episodes_done > 0 and episodes_done % args.save_interval == 0:
@@ -287,6 +308,17 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
     return best_wr
 
 
+class _CompetitionPool:
+    """Randomly picks from {Yaoji, Jidan, NoAI} on each act() call."""
+    import random as _r
+
+    def __init__(self, level_rank):
+        self._agents = [YaojiBot(level_rank), JidanBot(level_rank), NoAIBot(level_rank)]
+
+    def act(self, env, player):
+        return self._r.choice(self._agents).act(env, player)
+
+
 def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
                       args, device, level_rank, best_wr):
     """Single-threaded GameRunner with batched GPU inference."""
@@ -299,6 +331,14 @@ def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
         epsilon=args.epsilon_start,
     )
     runner.team_spirit = getattr(args, 'team_spirit', 0.0)
+
+    train_opp_name = getattr(args, "train_opponent", None)
+    if train_opp_name == "competition":
+        runner.opponent = _CompetitionPool(level_rank)
+    elif train_opp_name:
+        runner.opponent = make_agent(train_opp_name, level_rank=level_rank)
+    if runner.opponent is not None:
+        log.info("Training opponent: %s", train_opp_name)
 
     episodes_done = 0
 
@@ -331,12 +371,20 @@ def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
                 eval_games = getattr(args, "eval_games", 200)
                 results = _run_eval(q_lead, q_follow, device, level_rank, eval_games)
                 wr_h = results.get("heuristic", 0)
-                if wr_h > best_wr:
-                    best_wr = wr_h
+                wr_comp = (results.get("yaoji", 0) + results.get("jidan", 0) + results.get("noai", 0)) / 3
+                wr_gate = (wr_h + wr_comp) / 2
+                if wr_gate > best_wr:
+                    best_wr = wr_gate
+                    ckpt_dict = {"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
+                                 "episode": episodes_done, "wr_gate": wr_gate,
+                                 "wr_heuristic": wr_h, "wr_competition": wr_comp}
                     path = os.path.join(args.checkpoint_dir, "selfplay_best.pt")
-                    torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                                "episode": episodes_done, "wr_heuristic": wr_h}, path)
-                    log.info("★ New best: %.1f%% vs Heuristic → %s", wr_h * 100, path)
+                    torch.save(ckpt_dict, path)
+                    prod_ts = datetime.now().strftime("%m_%d_%H_%M")
+                    prod_path = os.path.join(args.checkpoint_dir, f"prod_{prod_ts}.pt")
+                    torch.save(ckpt_dict, prod_path)
+                    log.info("★ New best: gate=%.1f%% (h=%.1f%%, comp=%.1f%%) → %s",
+                             wr_gate * 100, wr_h * 100, wr_comp * 100, prod_path)
 
             if episodes_done > 0 and episodes_done % args.save_interval == 0:
                 path = os.path.join(args.checkpoint_dir, f"selfplay_ep{episodes_done}.pt")
@@ -383,6 +431,9 @@ def main(args: argparse.Namespace | None = None) -> None:
                             help="Add current weights to pool every N episodes")
         parser.add_argument("--use-gnn", action="store_true",
                             help="Enable GNN hand structure encoding")
+        parser.add_argument("--train-opponent", type=str, default=None,
+                            choices=["yaoji", "jidan", "noai", "heuristic", "strategic", "competition"],
+                            help="Named opponent for training episodes seats 1&3 (None=self-play)")
         args = parser.parse_args()
 
     run_dir = Path("runs") / args.run_name
@@ -432,9 +483,11 @@ def main(args: argparse.Namespace | None = None) -> None:
         log.info("BASELINE EVAL (before self-play)")
         log.info("=" * 60)
         baseline = _run_eval(q_lead, q_follow, device, level_rank, eval_games)
-        best_wr = baseline.get("heuristic", 0)
-        log.info("Baseline: %.1f%% vs Heuristic, %.1f%% vs Strategic",
-                 baseline.get("heuristic", 0) * 100, baseline.get("strategic", 0) * 100)
+        wr_h0 = baseline.get("heuristic", 0)
+        wr_comp0 = (baseline.get("yaoji", 0) + baseline.get("jidan", 0) + baseline.get("noai", 0)) / 3
+        best_wr = (wr_h0 + wr_comp0) / 2
+        log.info("Baseline gate=%.1f%% (h=%.1f%%, comp=%.1f%%, strategic=%.1f%%)",
+                 best_wr * 100, wr_h0 * 100, wr_comp0 * 100, baseline.get("strategic", 0) * 100)
 
     if args.episodes == 0:
         log.info("Episodes=0, exiting after baseline eval.")
@@ -471,7 +524,7 @@ def main(args: argparse.Namespace | None = None) -> None:
     _run_eval(q_lead, q_follow, device, level_rank, eval_games)
 
     log.info("Done. Total time: %.0fs (%.1fh)", time.time() - t0, (time.time() - t0) / 3600)
-    log.info("Best WR vs Heuristic: %.1f%%", best_wr * 100)
+    log.info("Best gate WR: %.1f%%", best_wr * 100)
 
 
 if __name__ == "__main__":

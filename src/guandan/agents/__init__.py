@@ -20,9 +20,15 @@ from .monte_carlo_bot import MonteCarloBot
 from .random_bot import RandomBot
 from .rl_agent import RLAgentLSTM
 from .strategic_bot import StrategicBot
+from .ez_bot import EzBot
+from .hulalala_bot import HulalalaBot
+from .jidan_bot import JidanBot
 from .lalala_bot import LalalaBot
+from .liuzha_bot import LiuzhaBot
 from .noai_bot import NoAIBot
+from .wjsd_bot import WjsdBot
 from .xingdream_bot import XingDreamBot
+from .yaoji_bot import YaojiBot
 
 __all__ = [
     "Agent",
@@ -45,6 +51,12 @@ AGENT_REGISTRY: dict[str, type[Agent]] = {
     "xingdream": XingDreamBot,
     "noai": NoAIBot,
     "lalala": LalalaBot,
+    "liuzha": LiuzhaBot,
+    "hulalala": HulalalaBot,
+    "yaoji": YaojiBot,
+    "jidan": JidanBot,
+    "ez": EzBot,
+    "wjsd": WjsdBot,
 }
 
 

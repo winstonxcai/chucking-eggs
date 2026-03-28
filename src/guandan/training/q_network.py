@@ -262,6 +262,45 @@ def load_with_gnn_expansion(model: QNetworkLSTM, old_state_dict: dict) -> None:
                         key, tuple(old_tensor.shape), tuple(new_tensor.shape))
 
     model.load_state_dict(new_sd)
-    gnn_keys = [k for k in new_sd if 'hand_gnn' in k]
-    if gnn_keys:
-        log.info("GNN params (random init): %d tensors", len(gnn_keys))
+    gnn_loaded = [k for k in old_state_dict if 'hand_gnn' in k and k in new_sd]
+    gnn_missing = [k for k in new_sd if 'hand_gnn' in k and k not in old_state_dict]
+    if gnn_loaded:
+        log.info("GNN params (loaded from checkpoint): %d tensors", len(gnn_loaded))
+    if gnn_missing:
+        log.info("GNN params (random init): %d tensors", len(gnn_missing))
+
+
+def checkpoint_has_gnn(state_dict: dict) -> bool:
+    """Check if a checkpoint state_dict has GNN-expanded MLP (input > 833)."""
+    mlp0 = state_dict.get("mlp.0.weight")
+    if mlp0 is None:
+        return False
+    return mlp0.shape[1] > STATE_DIM + ACTION_DIM + 128  # 833 = 417+160+256
+
+
+def load_strip_gnn(model: QNetworkLSTM, old_state_dict: dict) -> None:
+    """Load GNN-expanded checkpoint into non-GNN model, discarding dead GNN columns."""
+    new_sd = model.state_dict()
+    stripped = 0
+
+    for key, old_tensor in old_state_dict.items():
+        if 'hand_gnn' in key:
+            stripped += 1
+            continue
+        if key not in new_sd:
+            continue
+        new_tensor = new_sd[key]
+        if old_tensor.shape == new_tensor.shape:
+            new_sd[key] = old_tensor
+        elif 'mlp.0.weight' in key and old_tensor.shape[1] > new_tensor.shape[1]:
+            # Take only the non-GNN columns
+            new_sd[key] = old_tensor[:, :new_tensor.shape[1]]
+            log.info("Stripped GNN columns from %s: %s → %s", key,
+                     tuple(old_tensor.shape), tuple(new_tensor.shape))
+        else:
+            log.warning("Shape mismatch for %s: %s vs %s",
+                        key, tuple(old_tensor.shape), tuple(new_tensor.shape))
+
+    model.load_state_dict(new_sd)
+    if stripped:
+        log.info("Stripped %d GNN param tensors from checkpoint", stripped)

@@ -143,8 +143,16 @@ def main() -> None:
     q_lead  = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     ckpt = torch.load(args.resume, map_location=device, weights_only=True)
-    q_lead.load_state_dict(ckpt["lead"], strict=False)
-    q_follow.load_state_dict(ckpt["follow"], strict=False)
+    lead_key = "lead_state_dict" if "lead_state_dict" in ckpt else "lead"
+    follow_key = "follow_state_dict" if "follow_state_dict" in ckpt else "follow"
+    from guandan.training.q_network import load_strip_gnn, checkpoint_has_gnn, load_compat
+    if checkpoint_has_gnn(ckpt[lead_key]):
+        print("Detected GNN-expanded checkpoint — stripping GNN columns")
+        load_strip_gnn(q_lead, ckpt[lead_key])
+        load_strip_gnn(q_follow, ckpt[follow_key])
+    else:
+        load_compat(q_lead, ckpt[lead_key])
+        load_compat(q_follow, ckpt[follow_key])
     q_lead.eval()
     q_follow.eval()
 

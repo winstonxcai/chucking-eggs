@@ -68,15 +68,14 @@ def _selfplay_worker(
     epsilon: float,
     opp_lead_sd: dict | None = None,
     opp_follow_sd: dict | None = None,
-    use_gnn: bool = False,
     opp_name: str | None = None,
 ) -> None:
     """CPU worker: self-play games with own model copies, push transitions."""
     from guandan.training.q_network import load_compat
 
     device = torch.device("cpu")
-    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
-    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
+    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     load_compat(q_lead, lead_sd)
     load_compat(q_follow, follow_sd)
     q_lead.eval()
@@ -90,8 +89,8 @@ def _selfplay_worker(
     elif opp_name:
         opponent = make_agent(opp_name, level_rank)
     elif opp_lead_sd is not None:
-        q_opp_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
-        q_opp_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
+        q_opp_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+        q_opp_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
         load_compat(q_opp_lead, opp_lead_sd)
         load_compat(q_opp_follow, opp_follow_sd)
         q_opp_lead.eval()
@@ -181,6 +180,8 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
 
     episodes_done = 0
     last_sync = 0
+    next_eval_at = args.eval_interval
+    next_save_at = args.save_interval
 
     while episodes_done < args.episodes:
         # Determine batch size for this round
@@ -217,7 +218,7 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
             p = mp.Process(
                 target=_selfplay_worker,
                 args=(queue, lead_sd, follow_sd, level_rank, games_per_worker[i], eps,
-                      opp_lead_sd, opp_follow_sd, getattr(args, 'use_gnn', False),
+                      opp_lead_sd, opp_follow_sd,
                       getattr(args, 'train_opponent', None)),
             )
             p.start()
@@ -253,7 +254,8 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
                             train_step(q_follow, buffer, opt_follow, args.batch_size, device)
 
                     # Eval
-                    if episodes_done > 0 and episodes_done % args.eval_interval == 0:
+                    if episodes_done >= next_eval_at:
+                        next_eval_at += args.eval_interval
                         log.info("=" * 60)
                         log.info("EVAL @ episode %d/%d | ε=%.3f | buffer=%d",
                                  episodes_done, args.episodes, eps, len(buffer))
@@ -277,7 +279,8 @@ def _train_multiprocess(q_lead, q_follow, opt_lead, opt_follow, buffer,
                                      wr_gate * 100, wr_h * 100, wr_comp * 100, prod_path)
 
                     # Save checkpoint
-                    if episodes_done > 0 and episodes_done % args.save_interval == 0:
+                    if episodes_done >= next_save_at:
+                        next_save_at += args.save_interval
                         path = os.path.join(args.checkpoint_dir, f"selfplay_ep{episodes_done}.pt")
                         torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
                                     "episode": episodes_done}, path)
@@ -341,6 +344,8 @@ def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
         log.info("Training opponent: %s", train_opp_name)
 
     episodes_done = 0
+    next_eval_at = args.eval_interval
+    next_save_at = args.save_interval
 
     with tqdm(total=args.episodes, desc="Self-play", unit="ep") as pbar:
         while episodes_done < args.episodes:
@@ -363,7 +368,8 @@ def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
 
             pbar.set_postfix(eps=f"{eps:.3f}", buf=f"{len(buffer):,}")
 
-            if episodes_done > 0 and episodes_done % args.eval_interval == 0:
+            if episodes_done >= next_eval_at:
+                next_eval_at += args.eval_interval
                 log.info("=" * 60)
                 log.info("EVAL @ episode %d/%d | ε=%.3f | buffer=%d",
                          episodes_done, args.episodes, eps, len(buffer))
@@ -386,7 +392,8 @@ def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
                     log.info("★ New best: gate=%.1f%% (h=%.1f%%, comp=%.1f%%) → %s",
                              wr_gate * 100, wr_h * 100, wr_comp * 100, prod_path)
 
-            if episodes_done > 0 and episodes_done % args.save_interval == 0:
+            if episodes_done >= next_save_at:
+                next_save_at += args.save_interval
                 path = os.path.join(args.checkpoint_dir, f"selfplay_ep{episodes_done}.pt")
                 torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
                             "episode": episodes_done}, path)
@@ -429,8 +436,6 @@ def main(args: argparse.Namespace | None = None) -> None:
                             help="Prob of sampling a pool opponent (0=disabled, 0.3=recommended)")
         parser.add_argument("--pool-add-interval", type=int, default=2000,
                             help="Add current weights to pool every N episodes")
-        parser.add_argument("--use-gnn", action="store_true",
-                            help="Enable GNN hand structure encoding")
         parser.add_argument("--train-opponent", type=str, default=None,
                             choices=["yaoji", "jidan", "noai", "heuristic", "strategic", "competition"],
                             help="Named opponent for training episodes seats 1&3 (None=self-play)")
@@ -456,25 +461,24 @@ def main(args: argparse.Namespace | None = None) -> None:
     )
 
     level_rank = Rank.TWO
-    use_gnn = getattr(args, "use_gnn", False)
-    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
-    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=use_gnn).to(device)
+    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
 
     log.info("Loading checkpoint: %s", args.resume)
     ckpt = torch.load(args.resume, map_location=device, weights_only=True)
-    from guandan.training.q_network import load_compat, load_with_gnn_expansion
-    if use_gnn:
-        log.info("GNN enabled — loading with MLP expansion (zero-init GNN columns)")
-        load_with_gnn_expansion(q_lead, ckpt["lead"])
-        load_with_gnn_expansion(q_follow, ckpt["follow"])
+    lead_key = "lead_state_dict" if "lead_state_dict" in ckpt else "lead"
+    follow_key = "follow_state_dict" if "follow_state_dict" in ckpt else "follow"
+    from guandan.training.q_network import load_compat, load_strip_gnn, checkpoint_has_gnn
+    if checkpoint_has_gnn(ckpt[lead_key]):
+        log.info("Detected GNN-expanded checkpoint — stripping dead GNN columns")
+        load_strip_gnn(q_lead, ckpt[lead_key])
+        load_strip_gnn(q_follow, ckpt[follow_key])
     else:
-        load_compat(q_lead, ckpt["lead"])
-        load_compat(q_follow, ckpt["follow"])
+        load_compat(q_lead, ckpt[lead_key])
+        load_compat(q_follow, ckpt[follow_key])
 
     n_params = sum(p.numel() for p in q_lead.parameters())
     log.info("Network: %s params per head (%s total)", f"{n_params:,}", f"{2 * n_params:,}")
-    if use_gnn:
-        log.info("GNN enabled: hand structure graph with amortized inference")
 
     # Baseline eval
     best_wr = 0.0

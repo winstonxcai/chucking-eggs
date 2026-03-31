@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GameState, ServerMessage, GameOverMsg } from "@/lib/types";
 
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+const WS_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/^http/, "ws");
 
 const MAX_RETRIES = 5;
 const BACKOFF_BASE = 1000; // 1s, 2s, 4s, 8s, 8s
@@ -37,6 +37,8 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
 
     const params = new URLSearchParams({ seat: String(seatNum) });
     if (token) params.set("token", token);
+    const playerId = localStorage.getItem("ce_player_id");
+    if (playerId) params.set("player_id", playerId);
     const ws = new WebSocket(`${WS_BASE}/ws/game/${gid}?${params.toString()}`);
     wsRef.current = ws;
 

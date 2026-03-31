@@ -1,0 +1,24 @@
+app = "chucking-eggs"
+primary_region = "sin"  # Singapore — closest to HK
+
+[build]
+  dockerfile = "web/backend/Dockerfile"
+
+[env]
+  PORT = "8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false   # scale-to-zero kills active WebSocket connections
+  auto_start_machines = true
+  min_machines_running = 1     # always keep one instance alive
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

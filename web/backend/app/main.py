@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +15,8 @@ from pydantic import BaseModel
 from .ai_service import AIService
 from .game_manager import GameManager
 from .redis_client import close_redis
+from . import db
+from .elo import BOT_LEADERBOARD_ENTRIES
 
 ai_service: AIService | None = None
 game_manager: GameManager | None = None
@@ -24,10 +28,12 @@ async def lifespan(app: FastAPI):
     ai_service = AIService()
     game_manager = GameManager(ai_service)
     await game_manager.start_cleanup_loop()
-    print("AI agents loaded, server ready")
+    await db.init_db()
+    print("AI agents loaded, DB connected, server ready")
     yield
     await game_manager.stop_cleanup_loop()
     await close_redis()
+    await db.close_db()
     print("Shutting down")
 
 
@@ -91,6 +97,58 @@ class RoomStatusResponse(BaseModel):
     room_code: str | None
     started: bool
     seats: list[RoomSeatInfo]
+
+
+class ClaimUsernameRequest(BaseModel):
+    username: str
+    email: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/claim")
+async def claim_username(req: ClaimUsernameRequest):
+    from .auth import claim_username as _claim
+    return await _claim(req.username, req.email)
+
+
+# ---------------------------------------------------------------------------
+# Profile & Leaderboard
+# ---------------------------------------------------------------------------
+
+@app.get("/api/profile/{username}")
+async def get_profile(username: str):
+    player = await db.get_player_by_username(username)
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    stats = await db.get_player_stats(player["_id"])
+    # Serialize MongoDB ObjectId/_id fields
+    player_doc = {k: str(v) if k == "_id" else v for k, v in player.items()}
+    games = []
+    for g in stats.get("games", []):
+        game_doc = {k: str(v) if k == "_id" else v for k, v in g.items()}
+        # Convert datetime to ISO string
+        if "played_at" in game_doc and hasattr(game_doc["played_at"], "isoformat"):
+            game_doc["played_at"] = game_doc["played_at"].isoformat()
+        games.append(game_doc)
+    return {"player": player_doc, "games": games}
+
+
+@app.get("/api/leaderboard")
+async def get_leaderboard():
+    humans = await db.get_leaderboard()
+    human_entries = [
+        {
+            "username": p["username"],
+            "elo": p["elo"],
+            "games_played": p.get("games_played", 0),
+            "is_bot": False,
+        }
+        for p in humans
+    ]
+    return {"humans": human_entries, "bots": BOT_LEADERBOARD_ENTRIES}
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +239,7 @@ async def game_websocket(
     game_id: str,
     token: str = Query(default=""),
     seat: int = Query(default=0),
+    player_id: str = Query(default=""),
 ):
     assert game_manager is not None
 
@@ -188,6 +247,8 @@ async def game_websocket(
     room = None
     if token:
         room = game_manager.reconnect_seat(game_id, seat, token)
+        if room:
+            room.cancel_disconnect_takeover(seat)
 
     # Fall back to regular room lookup
     if room is None:
@@ -205,6 +266,10 @@ async def game_websocket(
 
     await room.connect(ws, seat)
 
+    # Register player_id for Elo tracking
+    if player_id:
+        room.player_ids[seat] = player_id
+
     # Determine whether this connection causes the game to start
     game_just_started = False
     if not room.started and all(s in room.connections for s in room.human_seats):
@@ -213,26 +278,32 @@ async def game_websocket(
 
     try:
         if game_just_started:
-            # Broadcast full state to all connected humans
             await room.broadcast_game_state()
-            # Run AI if the first player is an AI
             if room.env.current_player not in room.human_seats and not room.env.done:
                 await room.run_ai_turns()
         else:
-            # Send state only to this reconnecting/joining seat
             await room.send_game_state_to(seat)
-            # Solo mode: run AI if it's not the human's turn
             if (
                 room.started
                 and room.env.current_player not in room.human_seats
                 and not room.env.done
-                # Only the lowest-numbered connected seat triggers AI to avoid dups
                 and seat == min(room.connections.keys())
             ):
                 await room.run_ai_turns()
 
         while True:
-            raw = await ws.receive_text()
+            # AFK rope: use wait_for when it's this seat's turn and a deadline is set
+            deadline = room.turn_deadlines.get(seat)
+            if deadline is not None and room.env.current_player == seat:
+                remaining = max(0.5, deadline - asyncio.get_event_loop().time())
+                try:
+                    raw = await asyncio.wait_for(ws.receive_text(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    await room.handle_afk_timeout(seat)
+                    continue
+            else:
+                raw = await ws.receive_text()
+
             data = json.loads(raw)
             await room.handle_message(data, seat)
 
@@ -242,6 +313,7 @@ async def game_websocket(
         print(f"WebSocket error in game {game_id} seat {seat}: {e}")
     finally:
         game_manager.disconnect_seat(game_id, seat)
+        room.schedule_disconnect_takeover(seat)
 
 
 # ---------------------------------------------------------------------------

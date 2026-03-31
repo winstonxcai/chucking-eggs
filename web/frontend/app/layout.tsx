@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import AppShell from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
-  title: "Guan Dan | 掼蛋",
-  description: "Play the classic Chinese card game against AI opponents",
+  title: "Chucking Eggs",
+  description: "Play Guan Dan against ranked bots and friends",
 };
 
 export default function RootLayout({
@@ -13,7 +14,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full bg-background">
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }

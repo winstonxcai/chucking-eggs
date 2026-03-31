@@ -60,6 +60,7 @@ export interface GameState {
   rewards: Record<number, number> | null;
   groups: CardGroup[];
   sf_options: Record<string, { label: string; cardIds: string[] }[]>;
+  turn_deadline_ms?: number;
 }
 
 export interface MovePlayedMsg {

@@ -15,4 +15,4 @@ COPY web/backend/ /app/web/backend/
 
 ENV PYTHONPATH=/app/src:/app/web/backend
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/web/backend/app", "--reload-dir", "/app/src"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

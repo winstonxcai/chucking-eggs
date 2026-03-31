@@ -283,8 +283,11 @@ export default function GameBoard({
             matchingCombo={matchingCombo}
             isLeading={gameState.is_leading}
             isMyTurn={gameState.is_my_turn}
+            hasSelection={selectedIds.size > 0}
+            turnDeadlineMs={gameState.turn_deadline_ms}
             onPlay={handlePlay}
             onPass={handlePass}
+            onUnselect={() => setSelectedIds(new Set())}
           />
         </div>
 
@@ -362,14 +365,6 @@ export default function GameBoard({
           )}
         </div>
 
-        <div className="border-t border-border" />
-
-        <button
-          className="text-xs text-text-secondary hover:text-foreground transition-colors text-left"
-          onClick={handleSaveState}
-        >
-          Save state JSON
-        </button>
       </div>
 
       {/* Card fly animation overlay */}
@@ -387,6 +382,7 @@ export default function GameBoard({
           data={gameOver}
           humanSeat={gameState.my_seat}
           onPlayAgain={onPlayAgain}
+          onSaveState={handleSaveState}
         />
       )}
     </div>

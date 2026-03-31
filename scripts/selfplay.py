@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import multiprocessing as mp
 import os
@@ -32,7 +33,7 @@ from guandan.game import GuanDanEnv
 from guandan.training.game_runner import GameRunner
 from guandan.training.q_network import QNetworkLSTM, get_device
 from guandan.training.replay import ReplayBuffer
-from guandan.training.train import play_episode, train_step
+from guandan.training.train import play_episode, pretrain_from_heuristic, train_step
 
 
 def _setup_logging(log_path: Path) -> None:
@@ -322,6 +323,304 @@ class _CompetitionPool:
         return self._r.choice(self._agents).act(env, player)
 
 
+# ── Curriculum ──────────────────────────────────────────────────────────────
+
+@dataclasses.dataclass
+class CurriculumStage:
+    name: str
+    opponent: str | None       # "random", "greedy", "heuristic", "strategic", "competition", or None
+    wr_gate: float | None      # None = terminal (no gate check)
+    max_episodes: int
+    lr: float
+    epsilon_start: float
+    epsilon_end: float
+    eval_opponent: str         # agent name or "ladder" for full 7-bot eval
+    eval_interval: int
+    eval_games: int
+    clear_buffer: bool
+
+
+CURRICULUM_STAGES: list[CurriculumStage] = [
+    CurriculumStage(
+        name="random",
+        opponent="random",
+        wr_gate=0.90,
+        max_episodes=3000,
+        lr=1e-4,
+        epsilon_start=0.30,
+        epsilon_end=0.10,
+        eval_opponent="random",
+        eval_interval=500,
+        eval_games=100,
+        clear_buffer=True,
+    ),
+    CurriculumStage(
+        name="greedy",
+        opponent="greedy",
+        wr_gate=0.85,
+        max_episodes=5000,
+        lr=1e-4,
+        epsilon_start=0.25,
+        epsilon_end=0.08,
+        eval_opponent="greedy",
+        eval_interval=1000,
+        eval_games=100,
+        clear_buffer=True,
+    ),
+    CurriculumStage(
+        name="heuristic",
+        opponent="heuristic",
+        wr_gate=0.70,
+        max_episodes=8000,
+        lr=5e-5,
+        epsilon_start=0.20,
+        epsilon_end=0.05,
+        eval_opponent="heuristic",
+        eval_interval=1000,
+        eval_games=100,
+        clear_buffer=True,
+    ),
+    CurriculumStage(
+        name="strategic",
+        opponent="strategic",
+        wr_gate=0.60,
+        max_episodes=8000,
+        lr=3e-5,
+        epsilon_start=0.15,
+        epsilon_end=0.05,
+        eval_opponent="strategic",
+        eval_interval=1000,
+        eval_games=100,
+        clear_buffer=True,
+    ),
+    CurriculumStage(
+        name="competition",
+        opponent="competition",
+        wr_gate=None,
+        max_episodes=30000,
+        lr=3e-5,
+        epsilon_start=0.15,
+        epsilon_end=0.03,
+        eval_opponent="ladder",
+        eval_interval=5000,
+        eval_games=200,
+        clear_buffer=False,
+    ),
+]
+
+
+def _run_single_eval(q_lead, q_follow, device, level_rank,
+                     opponent_name: str, n_games: int = 100) -> float:
+    """Eval against one named opponent. Returns win rate."""
+    rl = RLAgentLSTM(q_lead, q_follow, device, level_rank)
+    opp = make_agent(opponent_name, level_rank=level_rank)
+    wins = 0
+    env = GuanDanEnv(level_rank)
+    for _ in range(n_games):
+        env.reset()
+        while not env.done:
+            p = env.current_player
+            if p in (0, 2):
+                env.step(rl.act(env, p))
+            else:
+                env.step(opp.act(env, p))
+        rewards = env.get_rewards()
+        if rewards[0] + rewards[2] > 0:
+            wins += 1
+    return wins / n_games
+
+
+def _run_stage(
+    stage: CurriculumStage,
+    runner: GameRunner,
+    q_lead, q_follow,
+    opt_lead, opt_follow,
+    buffer: ReplayBuffer,
+    args: argparse.Namespace,
+    device,
+    level_rank,
+    checkpoint_dir: str,
+) -> tuple[int, float]:
+    """Run one curriculum stage. Returns (episodes_consumed, best_wr_this_stage)."""
+    # Update LR (preserves Adam momentum)
+    for opt in (opt_lead, opt_follow):
+        for g in opt.param_groups:
+            g["lr"] = stage.lr
+
+    # Set opponent
+    if stage.opponent == "competition":
+        runner.opponent = _CompetitionPool(level_rank)
+    elif stage.opponent:
+        runner.opponent = make_agent(stage.opponent, level_rank=level_rank)
+    else:
+        runner.opponent = None
+
+    if stage.clear_buffer:
+        buffer.clear()
+
+    log.info("=" * 60)
+    log.info("STAGE: %s | opp=%s | gate=%s | max=%d | LR=%g | ε %.2f→%.2f",
+             stage.name,
+             stage.opponent or "self-play",
+             f"{stage.wr_gate * 100:.0f}%" if stage.wr_gate is not None else "terminal",
+             stage.max_episodes,
+             stage.lr,
+             stage.epsilon_start,
+             stage.epsilon_end)
+    log.info("=" * 60)
+
+    episodes_done = 0
+    best_wr = 0.0
+    next_eval_at = stage.eval_interval
+
+    with tqdm(total=stage.max_episodes, desc=f"Stage:{stage.name}", unit="ep") as pbar:
+        while episodes_done < stage.max_episodes:
+            eps = get_epsilon(
+                episodes_done, stage.max_episodes,
+                stage.epsilon_start, stage.epsilon_end, 0.80,
+            )
+            runner.epsilon = eps
+
+            batch_target = min(args.n_envs, stage.max_episodes - episodes_done)
+            for transitions in runner.generate_episodes(batch_target):
+                for trans in transitions:
+                    buffer.push(*trans)
+                episodes_done += 1
+                pbar.update(1)
+
+            if len(buffer) >= args.batch_size:
+                for _ in range(args.train_steps):
+                    train_step(q_lead, buffer, opt_lead, args.batch_size, device)
+                    train_step(q_follow, buffer, opt_follow, args.batch_size, device)
+
+            pbar.set_postfix(eps=f"{eps:.3f}", buf=f"{len(buffer):,}")
+
+            if episodes_done >= next_eval_at:
+                next_eval_at += stage.eval_interval
+                log.info("EVAL [%s] @ %d eps | ε=%.3f", stage.name, episodes_done, eps)
+
+                if stage.eval_opponent == "ladder":
+                    results = _run_eval(q_lead, q_follow, device, level_rank, stage.eval_games)
+                    wr_h = results.get("heuristic", 0)
+                    wr_comp = (results.get("yaoji", 0) + results.get("jidan", 0) + results.get("noai", 0)) / 3
+                    wr = (wr_h + wr_comp) / 2
+                    log.info("gate=%.1f%% (h=%.1f%%, comp=%.1f%%)", wr * 100, wr_h * 100, wr_comp * 100)
+                    if wr > best_wr:
+                        best_wr = wr
+                        ckpt_dict = {
+                            "lead": q_lead.state_dict(),
+                            "follow": q_follow.state_dict(),
+                            "episode": episodes_done,
+                            "wr_gate": wr,
+                            "wr_heuristic": wr_h,
+                            "wr_competition": wr_comp,
+                        }
+                        torch.save(ckpt_dict, os.path.join(checkpoint_dir, "selfplay_best.pt"))
+                        prod_ts = datetime.now().strftime("%m_%d_%H_%M")
+                        prod_path = os.path.join(checkpoint_dir, f"prod_{prod_ts}.pt")
+                        torch.save(ckpt_dict, prod_path)
+                        log.info("★ New best: gate=%.1f%% → %s", wr * 100, prod_path)
+                else:
+                    wr = _run_single_eval(
+                        q_lead, q_follow, device, level_rank,
+                        stage.eval_opponent, stage.eval_games,
+                    )
+                    log.info("WR vs %s: %.1f%%", stage.eval_opponent, wr * 100)
+                    if wr > best_wr:
+                        best_wr = wr
+
+                # Check gate
+                if stage.wr_gate is not None and best_wr >= stage.wr_gate:
+                    log.info("PASSED gate %.0f%% (best=%.1f%%) — advancing",
+                             stage.wr_gate * 100, best_wr * 100)
+                    return episodes_done, best_wr
+
+    if stage.wr_gate is not None:
+        log.warning("FAILED gate %.0f%% (best=%.1f%%) — advancing anyway (max_episodes hit)",
+                    stage.wr_gate * 100, best_wr * 100)
+
+    return episodes_done, best_wr
+
+
+def _train_curriculum(args: argparse.Namespace, device, level_rank) -> None:
+    """Curriculum training from random weights. Exp 1 of isolated pipeline."""
+    run_dir = Path("runs") / args.run_name
+    t0 = time.time()
+
+    log.info("=" * 60)
+    log.info("CURRICULUM TRAINING — fresh random weights")
+    log.info("Architecture: 417D state, 3×1024 MLP, LSTM 256")
+    log.info("=" * 60)
+
+    q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
+    n_params = sum(p.numel() for p in q_lead.parameters())
+    log.info("Network: %s params per head (%s total)", f"{n_params:,}", f"{2 * n_params:,}")
+
+    opt_lead = torch.optim.Adam(q_lead.parameters(), lr=1e-4)
+    opt_follow = torch.optim.Adam(q_follow.parameters(), lr=1e-4)
+    buffer = ReplayBuffer(capacity=args.buffer_size)
+
+    # Stage 0: Heuristic imitation pretrain
+    log.info("=" * 60)
+    log.info("STAGE: pretrain (heuristic imitation, %d games)", args.pretrain_games)
+    log.info("=" * 60)
+    pretrain_from_heuristic(
+        q_lead, q_follow, opt_lead, opt_follow, buffer, device,
+        n_games=args.pretrain_games,
+        batch_size=args.batch_size,
+        train_steps_per_game=args.train_steps,
+        eval_interval=500,
+        eval_games=100,
+        run_dir=run_dir,
+    )
+
+    # Validate pretrain WR
+    log.info("Post-pretrain eval vs heuristic (100 games):")
+    wr_pre = _run_single_eval(q_lead, q_follow, device, level_rank, "heuristic", 100)
+    log.info("Pretrain WR vs heuristic: %.1f%%", wr_pre * 100)
+
+    # Create GameRunner (reused across all stages)
+    runner = GameRunner(
+        n_envs=args.n_envs,
+        q_lead=q_lead,
+        q_follow=q_follow,
+        device=device,
+        level_rank=level_rank,
+        epsilon=0.20,
+    )
+
+    # Stages 1-5
+    total_episodes = 0
+    for stage in CURRICULUM_STAGES:
+        eps_consumed, best_wr = _run_stage(
+            stage, runner, q_lead, q_follow, opt_lead, opt_follow,
+            buffer, args, device, level_rank, args.checkpoint_dir,
+        )
+        total_episodes += eps_consumed
+        log.info("Stage %s complete: %d eps, best_wr=%.1f%%",
+                 stage.name, eps_consumed, best_wr * 100)
+
+    # Final ladder eval
+    log.info("=" * 60)
+    log.info("FINAL EVAL (full ladder, 200 games each)")
+    log.info("=" * 60)
+    results = _run_eval(q_lead, q_follow, device, level_rank, 200)
+    wr_h = results.get("heuristic", 0)
+    wr_comp = (results.get("yaoji", 0) + results.get("jidan", 0) + results.get("noai", 0)) / 3
+    log.info("Final gate=%.1f%% (h=%.1f%%, comp=%.1f%%)",
+             (wr_h + wr_comp) / 2 * 100, wr_h * 100, wr_comp * 100)
+    log.info("Total curriculum time: %.0fs (%.1fh)", time.time() - t0, (time.time() - t0) / 3600)
+    log.info("Total RL episodes: %d", total_episodes)
+
+    if wr_comp > 0.55:
+        log.info("comp avg %.1f%% > 55%% → Experiment 2 (behavior regulation) is next", wr_comp * 100)
+    elif wr_comp <= 0.51:
+        log.info("comp avg %.1f%% ≤ 51%% → problem is scale, skip to Modal", wr_comp * 100)
+    else:
+        log.info("comp avg %.1f%% — borderline, investigate before Experiment 2", wr_comp * 100)
+
+
 def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
                       args, device, level_rank, best_wr):
     """Single-threaded GameRunner with batched GPU inference."""
@@ -407,7 +706,12 @@ def _train_gamerunner(q_lead, q_follow, opt_lead, opt_follow, buffer,
 def main(args: argparse.Namespace | None = None) -> None:
     if args is None:
         parser = argparse.ArgumentParser(description="Self-play fine-tuning")
-        parser.add_argument("--resume", type=str, required=True)
+        parser.add_argument("--resume", type=str, default=None)
+        parser.add_argument("--mode", type=str, default="selfplay",
+                            choices=["selfplay", "curriculum"],
+                            help="selfplay=fine-tune from checkpoint; curriculum=train from scratch")
+        parser.add_argument("--pretrain-games", type=int, default=2000,
+                            help="Heuristic imitation games for curriculum stage 0")
         parser.add_argument("--episodes", type=int, default=20000)
         parser.add_argument("--workers", type=int, default=0,
                             help="CPU workers for parallel game gen (0=GameRunner)")
@@ -447,20 +751,32 @@ def main(args: argparse.Namespace | None = None) -> None:
 
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     device = get_device()
-    t0 = time.time()
 
+    log.info("Device: %s", device)
+    log.info("Run dir: %s", run_dir)
+    log.info("Mode: %s", getattr(args, "mode", "selfplay"))
+
+    level_rank = Rank.TWO
+
+    # Curriculum mode: fresh weights, no checkpoint needed
+    if getattr(args, "mode", "selfplay") == "curriculum":
+        _train_curriculum(args, device, level_rank)
+        return
+
+    # Selfplay mode: requires --resume
+    if not args.resume:
+        raise ValueError("--resume is required for selfplay mode")
+
+    t0 = time.time()
     n_workers = getattr(args, "workers", 0)
     eval_games = getattr(args, "eval_games", 200)
     no_baseline = getattr(args, "no_baseline", False)
 
-    log.info("Device: %s", device)
-    log.info("Run dir: %s", run_dir)
     log.info(
         "Episodes: %d | Workers: %d | Train-steps: %d | LR: %g | Batch: %d | Eval-games: %d",
         args.episodes, n_workers, args.train_steps, args.lr, args.batch_size, eval_games,
     )
 
-    level_rank = Rank.TWO
     q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
     q_follow = QNetworkLSTM(lstm_hidden=256, hidden=1024).to(device)
 

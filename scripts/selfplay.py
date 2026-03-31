@@ -411,9 +411,9 @@ def main(args: argparse.Namespace | None = None) -> None:
         parser.add_argument("--episodes", type=int, default=20000)
         parser.add_argument("--workers", type=int, default=0,
                             help="CPU workers for parallel game gen (0=GameRunner)")
-        parser.add_argument("--n-envs", type=int, default=64,
+        parser.add_argument("--n-envs", type=int, default=128,
                             help="Parallel envs for GameRunner (when workers=0)")
-        parser.add_argument("--train-steps", type=int, default=4)
+        parser.add_argument("--train-steps", type=int, default=2)
         parser.add_argument("--batch-size", type=int, default=1024)
         parser.add_argument("--lr", type=float, default=3e-5)
         parser.add_argument("--buffer-size", type=int, default=250000)

@@ -7,8 +7,6 @@ import torch
 
 from .encoding import ACTION_DIM, D_MOVE, MAX_HISTORY, OPP_CARDS_DIM, STATE_DIM
 
-GNN_EMB_DIM = 384  # 3 × 128 (hand_emb + action_emb + remain_emb)
-
 
 class ReplayBuffer:
     """Ring buffer with pre-allocated numpy arrays for state/action/history/return."""
@@ -35,8 +33,6 @@ class ReplayBuffer:
         self.opponent_cards = np.zeros(
             (capacity, OPP_CARDS_DIM), dtype=np.float32
         )
-        # Pre-computed GNN embeddings (384 = 3×128: hand + action + remain)
-        self.gnn_emb = np.zeros((capacity, GNN_EMB_DIM), dtype=np.float32)
 
     def push(
         self,
@@ -46,7 +42,6 @@ class ReplayBuffer:
         hist_len: int,
         mc_return: float,
         opponent_cards: np.ndarray | None = None,
-        gnn_emb: np.ndarray | None = None,
     ) -> None:
         i = self.idx
         self.states[i] = state
@@ -60,10 +55,6 @@ class ReplayBuffer:
             self.opponent_cards[i] = opponent_cards
         else:
             self.opponent_cards[i] = 0.0
-        if gnn_emb is not None:
-            self.gnn_emb[i] = gnn_emb
-        else:
-            self.gnn_emb[i] = 0.0
         self.idx = (self.idx + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
@@ -76,7 +67,6 @@ class ReplayBuffer:
             "hist_len": torch.tensor(self.hist_lens[indices]),
             "return": torch.tensor(self.returns[indices]),
             "opponent_cards": torch.tensor(self.opponent_cards[indices]),
-            "gnn_emb": torch.tensor(self.gnn_emb[indices]),
         }
         if device is not None:
             batch["state"] = batch["state"].to(device)
@@ -85,7 +75,6 @@ class ReplayBuffer:
             # hist_len stays on CPU for pack_padded_sequence
             batch["return"] = batch["return"].to(device)
             batch["opponent_cards"] = batch["opponent_cards"].to(device)
-            batch["gnn_emb"] = batch["gnn_emb"].to(device)
         return batch
 
     def clear(self) -> None:

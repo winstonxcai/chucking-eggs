@@ -146,22 +146,8 @@ def play_episode(
 
         opp_cards = encode_opponent_cards(env, player)
 
-        # Pre-compute GNN embeddings if enabled
-        gnn_emb = np.zeros(384, dtype=np.float32)
-        if getattr(q_net, 'use_gnn', False):
-            from .hand_graph import build_hand_graph, encode_action_subgraph
-            hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
-            if hand_list:
-                nf, ei, ef = build_hand_graph(hand_list, env.level_rank)
-                am, rm = encode_action_subgraph(legal[idx].cards, hand_list)
-                with torch.no_grad():
-                    h_emb, a_emb, r_emb = q_net.hand_gnn(
-                        nf.to(device), ei.to(device), ef.to(device),
-                        am.to(device), rm.to(device))
-                gnn_emb = torch.cat([h_emb, a_emb, r_emb]).cpu().numpy()
-
         transitions[player].append((
-            state_enc, action_encs[idx], history, hist_len, opp_cards, gnn_emb,
+            state_enc, action_encs[idx], history, hist_len, opp_cards,
         ))
         env.step(legal[idx])
 
@@ -172,8 +158,8 @@ def play_episode(
         r_self = rewards[player]
         r_partner = rewards[partners[player]]
         mc_return = (1 - team_spirit) * r_self + team_spirit * r_partner
-        for s, a, h, hl, oc, ge in tlist:
-            all_trans.append((s, a, h, hl, mc_return, oc, ge))
+        for s, a, h, hl, oc in tlist:
+            all_trans.append((s, a, h, hl, mc_return, oc))
     return all_trans
 
 
@@ -208,8 +194,6 @@ def train_step(
 ) -> tuple[float, float] | None:
     """One gradient step with Q-loss + auxiliary hand prediction loss.
 
-    When use_gnn=True, uses pre-computed GNN embeddings from the buffer
-    (no graph reconstruction — embeddings computed during episode collection).
     Returns (q_loss, aux_loss) or None if buffer too small.
     """
     if len(buf) < batch_size:
@@ -217,15 +201,8 @@ def train_step(
 
     batch = buf.sample(batch_size, device)
     hist_emb = q_net.encode_history(batch["history"], batch["hist_len"])
-
-    if getattr(q_net, 'use_gnn', False):
-        # Use pre-computed GNN embeddings from buffer
-        x = torch.cat([batch["state"], batch["action"], hist_emb,
-                        batch["gnn_emb"]], dim=-1)
-        q_pred = q_net.mlp(x).squeeze(-1)
-    else:
-        q_pred = q_net.forward_from_embedding(
-            batch["state"], batch["action"], hist_emb)
+    q_pred = q_net.forward_from_embedding(
+        batch["state"], batch["action"], hist_emb)
 
     q_loss = torch.nn.functional.mse_loss(q_pred, batch["return"])
 
@@ -365,17 +342,15 @@ def pretrain_from_heuristic(
             history, hist_len = encode_history(env, player, level_rank)
 
             opp_cards = encode_opponent_cards(env, player)
-            # No GNN pre-compute in pretrain (no q_net available)
-            gnn_emb = np.zeros(384, dtype=np.float32)
 
-            transitions[player].append((state_enc, action_enc, history, hist_len, opp_cards, gnn_emb))
+            transitions[player].append((state_enc, action_enc, history, hist_len, opp_cards))
             env.step(action)
 
         rewards = env.get_rewards()
         for player, tlist in transitions.items():
             mc_return = rewards[player]
-            for s, a, h, hl, oc, ge in tlist:
-                buffer.push(s, a, h, hl, mc_return, oc, ge)
+            for s, a, h, hl, oc in tlist:
+                buffer.push(s, a, h, hl, mc_return, oc)
                 total_trans += 1
 
         # Train on buffer

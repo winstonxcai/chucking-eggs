@@ -131,7 +131,7 @@ class GameRunner:
         return lead, follow
 
     def _batch_inference(self, pending: list, q_net: QNetworkLSTM) -> None:
-        """Batched forward: LSTM once per decision, MLP per action."""
+        """Batched forward: LSTM once per decision, mega-batch MLP across all."""
         N = len(pending)
         states, hists, hlens, action_lists = [], [], [], []
 
@@ -158,41 +158,35 @@ class GameRunner:
         with torch.no_grad():
             hist_emb = q_net.encode_history(hist_pad, hlens_t)  # [N, lstm_hidden]
 
-        # Per-decision MLP + action selection
+        # Mega-batch MLP: flatten all (state, action, hist_emb) across all decisions
+        all_states, all_actions, all_hists = [], [], []
+        offsets = [0]
         for i, (env_idx, player, legal, is_leading) in enumerate(pending):
             B = len(legal)
-            a_enc = torch.tensor(
+            all_states.append(states_t[i].unsqueeze(0).expand(B, -1))
+            all_actions.append(torch.tensor(
                 np.array(action_lists[i]), dtype=torch.float32, device=self.device
-            )
-            s_exp = states_t[i].unsqueeze(0).expand(B, -1)
-            h_exp = hist_emb[i].unsqueeze(0).expand(B, -1)
+            ))
+            all_hists.append(hist_emb[i].unsqueeze(0).expand(B, -1))
+            offsets.append(offsets[-1] + B)
 
-            with torch.no_grad():
-                q_vals = q_net.forward_from_embedding(s_exp, a_enc, h_exp)
+        mega_s = torch.cat(all_states)
+        mega_a = torch.cat(all_actions)
+        mega_h = torch.cat(all_hists)
+        with torch.no_grad():
+            all_q = q_net.forward_from_embedding(mega_s, mega_a, mega_h)
 
-            # ε-greedy
+        # ε-greedy per decision + record transitions
+        for i, (env_idx, player, legal, is_leading) in enumerate(pending):
+            env = self.envs[env_idx]
+            q_vals = all_q[offsets[i]:offsets[i + 1]]
+
             if random.random() < self.epsilon:
-                idx = random.randint(0, B - 1)
+                idx = random.randint(0, len(legal) - 1)
             else:
                 idx = q_vals.argmax().item()
 
-            # Record transition
             opp_cards = encode_opponent_cards(env, player)
-
-            # Pre-compute GNN embeddings if enabled
-            gnn_emb = np.zeros(384, dtype=np.float32)
-            if getattr(q_net, 'use_gnn', False):
-                from .hand_graph import build_hand_graph, encode_action_subgraph
-                hand_list = sorted(env.hands[player], key=lambda c: (c.rank, c.suit, c.deck))
-                if hand_list:
-                    nf, ei, ef = build_hand_graph(hand_list, self.level_rank)
-                    am_g, rm_g = encode_action_subgraph(legal[idx].cards, hand_list)
-                    with torch.no_grad():
-                        h_emb, a_emb, r_emb = q_net.hand_gnn(
-                            nf.to(self.device), ei.to(self.device), ef.to(self.device),
-                            am_g.to(self.device), rm_g.to(self.device))
-                    gnn_emb = torch.cat([h_emb, a_emb, r_emb]).cpu().numpy()
-
             self._transitions[env_idx].append((
                 states[i],
                 np.array(action_lists[i][idx], dtype=np.float32),
@@ -200,7 +194,6 @@ class GameRunner:
                 hlens[i],
                 player,
                 opp_cards,
-                gnn_emb,
             ))
 
             self.envs[env_idx].step(legal[idx])
@@ -212,9 +205,8 @@ class GameRunner:
         partners = {0: 2, 1: 3, 2: 0, 3: 1}
         ts = self.team_spirit
         transitions = []
-        for (state, action, history, hist_len, player, opp_cards,
-             gnn_emb) in self._transitions[env_idx]:
+        for (state, action, history, hist_len, player,
+             opp_cards) in self._transitions[env_idx]:
             G = (1 - ts) * rewards[player] + ts * rewards[partners[player]]
-            transitions.append((state, action, history, hist_len, G, opp_cards,
-                                gnn_emb))
+            transitions.append((state, action, history, hist_len, G, opp_cards))
         return transitions

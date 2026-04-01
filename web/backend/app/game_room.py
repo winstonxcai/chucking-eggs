@@ -218,10 +218,13 @@ class GameRoom:
             trick_plays=self.trick_plays,
             groups=self.groups_by_seat.get(seat, []),
         )
-        # Include AFK deadline when it's this seat's turn
+        # Include AFK deadline when it's this seat's turn.
+        # turn_deadlines stores monotonic time (for asyncio.wait_for); convert to
+        # wall-clock Unix ms so the frontend can compare against Date.now().
         deadline = self.turn_deadlines.get(seat)
         if deadline is not None and self.env.current_player == seat:
-            state["turn_deadline_ms"] = int(deadline * 1000)
+            remaining = deadline - asyncio.get_event_loop().time()
+            state["turn_deadline_ms"] = int((time.time() + remaining) * 1000)
         await self.send_to(seat, {"type": "game_state", **state})
 
     async def broadcast_game_state(self) -> None:
@@ -277,19 +280,16 @@ class GameRoom:
         with open(DATA_DIR / "human_games.jsonl", "a") as f:
             f.write(json.dumps(record) + "\n")
 
-    async def _persist_to_db(self) -> None:
-        """Save game to MongoDB and update Elo for all human seats.
+    async def _compute_elo_changes(self, rewards: dict[int, int]) -> dict[int, dict]:
+        """Fetch player docs and compute Elo changes. Returns {} on any DB error.
 
-        Wrapped in try/except — a DB failure must NOT block game-over delivery.
+        Return value: {seat: {delta, before, after, username}}
+        Runs before game-over broadcast so Elo info can be included in the message.
         """
         try:
             from . import db as _db
             from .elo import compute_elo_delta, BOT_ELOS
 
-            fo = self.env.finish_order
-            rewards = self.env.get_rewards()
-
-            # Fetch current Elo + games_played for each human seat
             human_docs: dict[int, dict] = {}
             for seat in self.human_seats:
                 pid = self.player_ids.get(seat)
@@ -298,14 +298,12 @@ class GameRoom:
                     if doc:
                         human_docs[seat] = doc
 
-            # Compute Elo delta per human seat
-            # Team A: seats 0+2, Team B: seats 1+3
             def _seat_elo(seat: int) -> int:
                 if seat in human_docs:
                     return human_docs[seat]["elo"]
                 return self.player_infos[seat].get("elo") or BOT_ELOS.get(self.difficulty, 1500)
 
-            new_elos: dict[int, int] = {}
+            elo_changes: dict[int, dict] = {}
             for seat in self.human_seats:
                 if seat not in human_docs:
                     continue
@@ -320,9 +318,27 @@ class GameRoom:
                     won=rewards[seat] > 0,
                     reward=rewards[seat],
                 )
-                new_elos[seat] = human_docs[seat]["elo"] + delta
+                before = human_docs[seat]["elo"]
+                elo_changes[seat] = {
+                    "delta": delta,
+                    "before": before,
+                    "after": before + delta,
+                    "username": human_docs[seat].get("username"),
+                }
+            return elo_changes
+        except Exception:
+            logger.exception("Elo computation failed for game %s", self.game_id)
+            return {}
 
-            # Build game document
+    async def _persist_to_db(self, rewards: dict[int, int], elo_changes: dict[int, dict]) -> None:
+        """Save game to MongoDB and update Elo. Uses pre-computed elo_changes.
+
+        Wrapped in try/except — a DB failure must NOT block game-over delivery.
+        """
+        try:
+            from . import db as _db
+
+            fo = self.env.finish_order
             game_doc = {
                 "_id": self.game_id,
                 "mode": self.mode,
@@ -332,7 +348,12 @@ class GameRoom:
                 "players": [
                     {
                         "player_id": self.player_ids.get(seat) if seat in self.human_seats else None,
-                        "display_name": self.player_infos[seat]["name"],
+                        # Use actual username (from elo_changes) so profile page can match by display_name
+                        "display_name": (
+                            elo_changes[seat]["username"]
+                            if seat in elo_changes and elo_changes[seat].get("username")
+                            else self.player_infos[seat]["name"]
+                        ),
                         "is_bot": seat not in self.human_seats,
                         "seat": seat,
                         "finish_pos": fo.index(seat) + 1 if seat in fo else -1,
@@ -340,29 +361,27 @@ class GameRoom:
                             "win" if rewards[seat] > 0
                             else ("loss" if rewards[seat] < 0 else "neutral")
                         ),
-                        "elo_before": human_docs.get(seat, {}).get("elo") if seat in self.human_seats else None,
-                        "elo_after": new_elos.get(seat) if seat in self.human_seats else None,
+                        "elo_before": elo_changes.get(seat, {}).get("before"),
+                        "elo_after": elo_changes.get(seat, {}).get("after"),
                     }
                     for seat in range(4)
                 ],
             }
-
             await _db.save_game(game_doc)
-
-            # Update each human's Elo
-            for seat, new_elo in new_elos.items():
+            for seat, change in elo_changes.items():
                 pid = self.player_ids.get(seat)
                 if pid:
-                    await _db.update_player_elo(pid, new_elo)
-
+                    await _db.update_player_elo(pid, change["after"])
         except Exception:
             logger.exception("DB persistence failed for game %s — game-over still delivered", self.game_id)
 
     async def _send_game_over(self) -> None:
         self._record_game_result_local()
-        # DB persistence runs concurrently — never blocks game-over broadcast
-        asyncio.create_task(self._persist_to_db())
         rewards = self.env.get_rewards()
+        # Compute Elo before broadcasting so the modal can show the change
+        elo_changes = await self._compute_elo_changes(rewards)
+        # DB persistence runs in background — never blocks game-over broadcast
+        asyncio.create_task(self._persist_to_db(rewards, elo_changes))
         await self.broadcast({
             "type": "game_over",
             "finish_order": self.env.finish_order,
@@ -371,6 +390,10 @@ class GameRoom:
                 {"seat": i, "name": self.player_infos[i]["name"]}
                 for i in self.env.finish_order
             ],
+            "elo_changes": {
+                str(seat): {"delta": v["delta"], "before": v["before"], "after": v["after"]}
+                for seat, v in elo_changes.items()
+            },
         })
 
     # ---------------------------------------------------------------------------
@@ -394,8 +417,8 @@ class GameRoom:
                         await asyncio.sleep(AI_THINK_PAUSE)
                         combo = await self.ai_service.get_ai_move(self.agent, self.env, seat)
                 else:
-                    # Human's turn — set AFK deadline and stop
-                    self.turn_deadlines[seat] = time.time() + HUMAN_TURN_TIMEOUT_S
+                    # Human's turn — set AFK deadline (monotonic for wait_for) and stop
+                    self.turn_deadlines[seat] = asyncio.get_event_loop().time() + HUMAN_TURN_TIMEOUT_S
                     break
 
                 next_player, done = self.env.step(combo)

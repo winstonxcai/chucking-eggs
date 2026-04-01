@@ -12,6 +12,7 @@ const difficulties = ["wjsd", "liuzha", "hulalala", "easy", "medium", "competiti
 export default function Home() {
   const router = useRouter();
   const [creatingRoom, setCreatingRoom] = useState(false);
+  const [soloOpen, setSoloOpen] = useState(false);
 
   async function handleCreateRoom(mode: "duo" | "quad", difficulty: string) {
     setCreatingRoom(true);
@@ -42,33 +43,40 @@ export default function Home() {
         </div>
 
         {/* Solo difficulty picker */}
-        <div className="w-full flex flex-col gap-3">
-          <span className="text-xs font-semibold text-text-secondary tracking-wider uppercase text-center">
-            Play Solo
-          </span>
-          <div className="grid grid-cols-2 gap-3">
-            {difficulties.map((diff) => {
-              const info = DIFFICULTY_INFO[diff];
-              return (
-                <button
-                  key={diff}
-                  className="flex flex-col items-center gap-2 p-5 bg-surface border border-border rounded-xl hover:border-accent hover:shadow-md transition-all cursor-pointer group"
-                  onClick={() => router.push(`/game?difficulty=${diff}`)}
-                >
-                  <span className="text-3xl">{info.emoji}</span>
-                  <span className="text-sm font-semibold text-foreground group-hover:text-accent transition-colors">
-                    {info.label}
-                  </span>
-                  <span className="text-xs text-text-secondary text-center">
-                    {info.description}
-                  </span>
-                  <span className="text-xs font-mono text-text-secondary opacity-60">
-                    {info.elo} ELO
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+        <div className="w-full flex flex-col gap-1">
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 bg-surface border border-border rounded-xl hover:border-accent transition-all group"
+            onClick={() => setSoloOpen((o) => !o)}
+          >
+            <span className="text-sm font-semibold text-foreground group-hover:text-accent transition-colors">
+              Play Solo
+            </span>
+            <span className="text-text-secondary text-sm">{soloOpen ? "▴" : "▾"}</span>
+          </button>
+
+          {soloOpen && (
+            <div className="border border-border rounded-xl overflow-hidden">
+              {difficulties.map((diff, i) => {
+                const info = DIFFICULTY_INFO[diff];
+                return (
+                  <button
+                    key={diff}
+                    className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-background transition-colors text-left group ${
+                      i < difficulties.length - 1 ? "border-b border-border" : ""
+                    }`}
+                    onClick={() => router.push(`/game?difficulty=${diff}`)}
+                  >
+                    <span className="text-xl w-7 shrink-0">{info.emoji}</span>
+                    <span className="text-sm font-semibold text-foreground group-hover:text-accent transition-colors w-24 shrink-0">
+                      {info.label}
+                    </span>
+                    <span className="text-xs text-text-secondary flex-1 truncate">{info.description}</span>
+                    <span className="text-xs font-mono text-text-secondary opacity-60 shrink-0">{info.elo}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Multiplayer section */}

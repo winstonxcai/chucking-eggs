@@ -18,7 +18,7 @@ def get_player_id(x_player_id: Optional[str] = Header(default=None)) -> Optional
     return x_player_id
 
 
-async def claim_username(username: str, email: Optional[str] = None) -> dict:
+async def claim_username(username: str, email: Optional[str] = None, is_test: bool = False) -> dict:
     """Claim a username and create an account. Raises 409 if taken.
 
     Returns: {"player_id": str, "username": str, "elo": int}
@@ -31,5 +31,5 @@ async def claim_username(username: str, email: Optional[str] = None) -> dict:
     if await _db.is_username_taken(username):
         raise HTTPException(status_code=409, detail="Username already taken.")
     player_id = str(uuid.uuid4())
-    player = await _db.get_or_create_player(player_id, username, email)
+    player = await _db.get_or_create_player(player_id, username, email, is_test=is_test)
     return {"player_id": player_id, "username": username, "elo": player["elo"]}

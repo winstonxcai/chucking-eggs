@@ -45,7 +45,7 @@ export default function LeaderboardPage() {
   }
 
   return (
-    <div className="max-w-2xl px-8 py-8">
+    <div className="max-w-2xl mx-auto px-8 py-8">
       <h1 className="text-2xl font-bold text-foreground mb-6">Leaderboard</h1>
 
       <div className="bg-surface border border-border rounded-xl overflow-hidden">

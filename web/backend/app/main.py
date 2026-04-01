@@ -102,6 +102,7 @@ class RoomStatusResponse(BaseModel):
 class ClaimUsernameRequest(BaseModel):
     username: str
     email: Optional[str] = None
+    is_test: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ class ClaimUsernameRequest(BaseModel):
 @app.post("/api/auth/claim")
 async def claim_username(req: ClaimUsernameRequest):
     from .auth import claim_username as _claim
-    return await _claim(req.username, req.email)
+    return await _claim(req.username, req.email, req.is_test)
 
 
 # ---------------------------------------------------------------------------

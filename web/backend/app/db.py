@@ -45,7 +45,7 @@ async def is_username_taken(username: str) -> bool:
     return await get_db().players.find_one({"username": username}, {"_id": 1}) is not None
 
 
-async def get_or_create_player(player_id: str, username: str, email: Optional[str] = None) -> dict:
+async def get_or_create_player(player_id: str, username: str, email: Optional[str] = None, is_test: bool = False) -> dict:
     """Insert player if not exists. Returns the (possibly pre-existing) doc."""
     db = get_db()
     doc = {
@@ -54,6 +54,7 @@ async def get_or_create_player(player_id: str, username: str, email: Optional[st
         "email": email,
         "elo": 1200,
         "games_played": 0,
+        "is_test": is_test,
         "created_at": datetime.utcnow(),
     }
     await db.players.update_one(
@@ -101,6 +102,6 @@ async def get_player_stats(player_id: str) -> dict:
 
 
 async def get_leaderboard() -> list[dict]:
-    """Top 50 human players by Elo."""
-    cursor = get_db().players.find({}, sort=[("elo", -1)], limit=50)
+    """Top 50 real (non-test) human players by Elo."""
+    cursor = get_db().players.find({"is_test": {"$ne": True}}, sort=[("elo", -1)], limit=50)
     return await cursor.to_list(length=50)

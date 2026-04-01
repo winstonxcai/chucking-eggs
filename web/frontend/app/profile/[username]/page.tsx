@@ -80,7 +80,7 @@ function ProfileContent() {
   const winPct = total > 0 ? Math.round((wins / total) * 100) : 0;
 
   return (
-    <div className="max-w-2xl px-8 py-8 flex flex-col gap-6">
+    <div className="max-w-2xl mx-auto px-8 py-8 flex flex-col gap-6">
       {/* Header */}
       <div className="bg-surface border border-border rounded-xl px-6 py-5 flex items-center justify-between">
         <div>

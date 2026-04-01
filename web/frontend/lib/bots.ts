@@ -7,19 +7,19 @@ export const DIFFICULTY_INFO: Record<
   wjsd: {
     label: "Wjsd",
     description: "SAU 3rd Prize \u00b7 2020 NJUPT entry.",
-    emoji: "\ud83c\udfc5",
+    emoji: "🦉",
     elo: 1212,
   },
   liuzha: {
     label: "Liuzha",
     description: "SEU 2nd Prize \u00b7 2020 NJUPT entry.",
-    emoji: "\ud83c\udfc5",
+    emoji: "🦋",
     elo: 1260,
   },
   hulalala: {
     label: "Hulalala",
     description: "SEU 3rd Prize \u00b7 2020 NJUPT entry.",
-    emoji: "\ud83c\udfc5",
+    emoji: "🐸",
     elo: 1264,
   },
   easy: {
@@ -61,13 +61,13 @@ export const DIFFICULTY_INFO: Record<
   yaoji: {
     label: "Yaoji",
     description: "NUAA 3rd Prize \u00b7 2020 NJUPT entry.",
-    emoji: "\ud83c\udfc5",
+    emoji: "✈️",
     elo: 1772,
   },
   jidan: {
     label: "Jidan",
     description: "NUAA 2nd Prize \u00b7 2020 NJUPT entry.",
-    emoji: "\ud83c\udfc5",
+    emoji: "🚀",
     elo: 1779,
   },
   expert: {

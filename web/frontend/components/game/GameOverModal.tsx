@@ -6,11 +6,13 @@ interface GameOverModalProps {
   data: GameOverMsg;
   humanSeat: number;
   onPlayAgain: () => void;
+  onSaveState: () => void;
 }
 
-export default function GameOverModal({ data, humanSeat, onPlayAgain }: GameOverModalProps) {
+export default function GameOverModal({ data, humanSeat, onPlayAgain, onSaveState }: GameOverModalProps) {
   const humanReward = data.rewards[humanSeat] ?? 0;
   const won = humanReward > 0;
+  const eloChange = data.elo_changes?.[String(humanSeat)];
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
@@ -18,10 +20,20 @@ export default function GameOverModal({ data, humanSeat, onPlayAgain }: GameOver
         <span className="text-2xl font-bold text-foreground">
           {won ? "Victory!" : "Defeat"}
         </span>
-        <span className="text-sm text-text-secondary">
-          Level change: {humanReward > 0 ? "+" : ""}
-          {humanReward}
-        </span>
+        {eloChange ? (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-text-secondary">
+              {eloChange.before} → {eloChange.after}
+            </span>
+            <span className={`text-sm font-semibold ${eloChange.delta >= 0 ? "text-team-green" : "text-team-red"}`}>
+              {eloChange.delta >= 0 ? "+" : ""}{eloChange.delta}
+            </span>
+          </div>
+        ) : (
+          <span className="text-sm text-text-secondary">
+            {humanReward > 0 ? "+" : ""}{humanReward} pts
+          </span>
+        )}
 
         <div className="w-full flex flex-col gap-1.5 py-2">
           {data.players.map((p, i) => (
@@ -46,6 +58,12 @@ export default function GameOverModal({ data, humanSeat, onPlayAgain }: GameOver
           onClick={onPlayAgain}
         >
           Play Again
+        </button>
+        <button
+          className="text-xs text-text-secondary hover:text-foreground transition-colors"
+          onClick={onSaveState}
+        >
+          Save state JSON
         </button>
       </div>
     </div>

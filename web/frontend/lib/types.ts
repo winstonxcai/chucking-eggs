@@ -77,6 +77,7 @@ export interface GameOverMsg {
   finish_order: number[];
   rewards: Record<number, number>;
   players: { seat: number; name: string }[];
+  elo_changes?: Record<string, { delta: number; before: number; after: number }>;
 }
 
 export interface AIThinkingMsg {

@@ -66,7 +66,17 @@ export default function GameBoard({
   // Optimistic local groups — updated immediately on Group/Ungroup, synced from server on game_state
   const [localGroups, setLocalGroups] = useState<CardGroup[]>(gameState.groups);
   useEffect(() => {
-    setLocalGroups(gameState.groups);
+    setLocalGroups((prev) => {
+      const serverCardSets = new Set(
+        gameState.groups.map((g) => [...g.cardIds].sort().join(","))
+      );
+      const pendingTemps = prev.filter(
+        (g) =>
+          g.id.startsWith("grp-temp-") &&
+          !serverCardSets.has([...g.cardIds].sort().join(","))
+      );
+      return [...gameState.groups, ...pendingTemps];
+    });
   }, [gameState.groups]);
 
   const groupedCardIds = useMemo(
@@ -225,7 +235,7 @@ export default function GameBoard({
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
               {partner && (
-                <OpponentPanel player={partner} thinking={aiThinking === 2} />
+                <OpponentPanel player={partner} thinking={aiThinking === 2} revealedHand={gameState.partner_hand} />
               )}
             </div>
 

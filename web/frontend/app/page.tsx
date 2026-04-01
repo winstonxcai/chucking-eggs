@@ -54,7 +54,7 @@ export default function Home() {
             <span className="text-text-secondary text-sm">{soloOpen ? "▴" : "▾"}</span>
           </button>
 
-          {soloOpen && (
+          <div className={`overflow-hidden transition-all duration-200 ease-out ${soloOpen ? "max-h-[700px] opacity-100" : "max-h-0 opacity-0"}`}>
             <div className="border border-border rounded-xl overflow-hidden">
               {difficulties.map((diff, i) => {
                 const info = DIFFICULTY_INFO[diff];
@@ -76,7 +76,7 @@ export default function Home() {
                 );
               })}
             </div>
-          )}
+          </div>
         </div>
 
         {/* Multiplayer section */}

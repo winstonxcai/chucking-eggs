@@ -18,7 +18,10 @@ from .greedy_bot import GreedyBot
 from .heuristic_bot import HeuristicBot
 from .monte_carlo_bot import MonteCarloBot
 from .random_bot import RandomBot
-from .rl_agent import RLAgentLSTM
+try:
+    from .rl_agent import RLAgentLSTM
+except ImportError:
+    RLAgentLSTM = None  # type: ignore[assignment,misc]
 from .strategic_bot import StrategicBot
 from .ez_bot import EzBot
 from .hulalala_bot import HulalalaBot

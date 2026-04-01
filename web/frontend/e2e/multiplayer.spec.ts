@@ -5,6 +5,13 @@ test("two users can create and join a duo room and both reach the game board", a
 }) => {
   const ctx1 = await browser.newContext();
   const ctx2 = await browser.newContext();
+  const fakePlayer = () => {
+    localStorage.setItem("ce_player_id", "test-player-00000000-0000-0000-0000-000000000000");
+    localStorage.setItem("ce_username", "testbot");
+    localStorage.setItem("ce_elo", "1200");
+  };
+  await ctx1.addInitScript(fakePlayer);
+  await ctx2.addInitScript(fakePlayer);
   const page1 = await ctx1.newPage();
   const page2 = await ctx2.newPage();
 
@@ -52,6 +59,12 @@ test("four users can create and join a quad room and all reach the game board", 
     browser.newContext(),
     browser.newContext(),
   ]);
+  const fakePlayer = () => {
+    localStorage.setItem("ce_player_id", "test-player-00000000-0000-0000-0000-000000000000");
+    localStorage.setItem("ce_username", "testbot");
+    localStorage.setItem("ce_elo", "1200");
+  };
+  await Promise.all(ctxs.map((ctx) => ctx.addInitScript(fakePlayer)));
   const [page1, page2, page3, page4] = await Promise.all(
     ctxs.map((ctx) => ctx.newPage())
   );

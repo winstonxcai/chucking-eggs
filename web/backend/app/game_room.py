@@ -394,7 +394,7 @@ class GameRoom:
                         combo = await self.ai_service.get_ai_move(self.agent, self.env, seat)
                 else:
                     # Human's turn — set AFK deadline and stop
-                    self.turn_deadlines[seat] = asyncio.get_event_loop().time() + HUMAN_TURN_TIMEOUT_S
+                    self.turn_deadlines[seat] = time.time() + HUMAN_TURN_TIMEOUT_S
                     break
 
                 next_player, done = self.env.step(combo)

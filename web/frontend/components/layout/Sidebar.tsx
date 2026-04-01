@@ -12,6 +12,7 @@ interface SidebarProps {
 const navItems = [
   { label: "Play", href: "/" },
   { label: "Leaderboard", href: "/leaderboard" },
+  { label: "Attributions", href: "/attributions" },
   { label: "Settings", href: "/settings" },
 ];
 

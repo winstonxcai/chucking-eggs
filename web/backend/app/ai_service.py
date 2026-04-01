@@ -6,13 +6,10 @@ import asyncio
 from functools import partial
 from pathlib import Path
 
-import torch
-
-from guandan.agents import Agent, RLAgentLSTM, make_agent
+from guandan.agents import Agent, make_agent
 from guandan.cards import Rank
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
-from guandan.training.q_network import QNetworkLSTM, get_device
 
 
 # Bot personalities per difficulty.
@@ -61,7 +58,7 @@ BOT_POOLS = {
         {"name": "Jidan", "avatar": "dragon", "elo": 1779},
     ],
     "expert": [
-        {"name": "Dragon", "avatar": "dragon", "elo": 1786},
+        {"name": "Expert", "avatar": "dragon", "elo": 1786},
     ],
 }
 
@@ -101,6 +98,13 @@ class AIService:
         checkpoint_path = prod_files[-1] if prod_files else checkpoints_dir / "selfplay_best.pt"
         if not checkpoint_path.exists():
             print(f"No RL checkpoint at {checkpoint_path}, expert uses strategic fallback")
+            return
+        try:
+            import torch
+            from guandan.agents import RLAgentLSTM
+            from guandan.training.q_network import QNetworkLSTM, get_device
+        except ImportError as e:
+            print(f"RL dependencies unavailable ({e}), expert uses strategic fallback")
             return
         device = get_device()
         q_lead = QNetworkLSTM(lstm_hidden=256, hidden=1024, use_gnn=True, gnn_out=128).to(device)
@@ -143,5 +147,6 @@ class AIService:
         pool = BOT_POOLS[difficulty]
         if len(pool) >= 3:
             return random.sample(pool, 3)
-        # If pool is small (expert has 1), repeat
-        return [random.choice(pool) for _ in range(3)]
+        # Single-entry pool: number each instance so they're distinguishable
+        base = pool[0]
+        return [dict(base, name=f"{base['name']} {i + 1}") for i in range(3)]

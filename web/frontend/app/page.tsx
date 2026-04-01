@@ -35,10 +35,7 @@ export default function Home() {
       <div className="max-w-md w-full flex flex-col items-center gap-8">
         {/* Title */}
         <div className="flex flex-col items-center gap-2">
-          <h1 className="text-4xl font-bold text-foreground tracking-tight">
-            掼蛋
-          </h1>
-          <h2 className="text-xl font-medium text-text-secondary">Guan Dan</h2>
+          <h1 className="text-4xl font-bold text-foreground tracking-tight">Guan Dan</h1>
           <p className="text-sm text-text-secondary text-center mt-2">
             Play the classic Chinese card game against AI opponents
           </p>

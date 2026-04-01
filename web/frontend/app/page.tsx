@@ -32,7 +32,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
+    <div className="min-h-screen flex flex-col items-center justify-center px-4">
       <div className="max-w-md w-full flex flex-col items-center gap-8">
         {/* Title */}
         <div className="flex flex-col items-center gap-1">

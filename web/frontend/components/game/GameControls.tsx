@@ -47,7 +47,7 @@ export default function GameControls({
     <div className={`flex flex-col items-center gap-2 ${!isMyTurn ? "invisible" : ""}`}>
       {/* Rope timer */}
       {showRope && (
-        <div className="w-48 h-1 bg-border rounded-full overflow-hidden">
+        <div data-testid="rope-timer" className="w-48 h-1 bg-border rounded-full overflow-hidden">
           <div
             className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
             style={{ width: `${progress * 100}%` }}

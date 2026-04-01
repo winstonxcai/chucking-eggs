@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import secrets
 import time
 from datetime import datetime, timezone
@@ -27,8 +28,8 @@ logger = logging.getLogger(__name__)
 ACTION_PAUSE = 0.9    # seconds each AI play is visible before next turn
 AI_THINK_PAUSE = 0.5  # seconds for "thinking" animation before AI move
 
-DISCONNECT_TAKEOVER_S = 60   # seconds before AI takes over a disconnected seat
-HUMAN_TURN_TIMEOUT_S = 90    # seconds before AFK auto-play kicks in
+DISCONNECT_TAKEOVER_S: int = int(os.getenv("DISCONNECT_TAKEOVER_S", "60"))
+HUMAN_TURN_TIMEOUT_S: int = int(os.getenv("HUMAN_TURN_TIMEOUT_S", "90"))
 
 
 def _human_seats_for_mode(mode: str) -> set[int]:

@@ -1,13 +1,15 @@
 "use client";
 
-import type { PlayerDTO } from "@/lib/types";
+import type { CardDTO, PlayerDTO } from "@/lib/types";
+import CardComponent from "./CardComponent";
 
 interface OpponentPanelProps {
   player: PlayerDTO;
   thinking?: boolean;
+  revealedHand?: CardDTO[];
 }
 
-export default function OpponentPanel({ player, thinking }: OpponentPanelProps) {
+export default function OpponentPanel({ player, thinking, revealedHand }: OpponentPanelProps) {
   const borderColor = player.is_teammate ? "border-l-team-green" : "border-l-team-red";
 
   return (
@@ -38,6 +40,13 @@ export default function OpponentPanel({ player, thinking }: OpponentPanelProps) 
                 : "Opponent"}
         </span>
       </div>
+      {revealedHand && revealedHand.length > 0 && (
+        <div className="flex flex-wrap gap-0.5 max-w-[200px] justify-center">
+          {revealedHand.map((card) => (
+            <CardComponent key={card.id} card={card} size="sm" />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

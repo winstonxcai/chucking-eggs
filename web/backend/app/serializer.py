@@ -238,6 +238,14 @@ def serialize_game_state(
 
     sf_options = _compute_sf_options(env.hands[human_seat], grouped_ids, env.level_rank)
 
+    # Reveal partner's hand once the human player has finished
+    partner_seat = (human_seat + 2) % 4
+    if human_seat in env.finish_order and env.hands[partner_seat]:
+        p_sorted = sort_hand(env.hands[partner_seat], env.level_rank)
+        partner_hand = [card_to_dto(c) for c in p_sorted]
+    else:
+        partner_hand = None
+
     return {
         "game_id": game_id,
         "my_seat": human_seat,
@@ -254,4 +262,5 @@ def serialize_game_state(
         "rewards": env.get_rewards() if env.done else None,
         "groups": groups or [],
         "sf_options": sf_options,
+        "partner_hand": partner_hand,
     }

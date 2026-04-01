@@ -27,7 +27,7 @@ export default function AttributionsPage() {
           to have both players finish all their cards.
         </p>
         <Link
-          href="https://www.pagat.com/climbing/guandan.html"
+          href="https://www.pagat.com/climbing/guan_dan.html"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:text-accent-hover transition-colors"

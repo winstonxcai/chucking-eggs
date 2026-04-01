@@ -4,16 +4,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Player } from "@/hooks/usePlayer";
 import { useActiveGame } from "@/hooks/useActiveGame";
+import { Gamepad2, Trophy, BookOpen, Settings } from "lucide-react";
 
 interface SidebarProps {
   player: Player | null;
 }
 
 const navItems = [
-  { label: "Play", href: "/" },
-  { label: "Leaderboard", href: "/leaderboard" },
-  { label: "Attributions", href: "/attributions" },
-  { label: "Settings", href: "/settings" },
+  { label: "Play", href: "/", icon: Gamepad2 },
+  { label: "Leaderboard", href: "/leaderboard", icon: Trophy },
+  { label: "Attributions", href: "/attributions", icon: BookOpen },
+  { label: "Settings", href: "/settings", icon: Settings },
 ];
 
 export default function Sidebar({ player }: SidebarProps) {
@@ -26,13 +27,13 @@ export default function Sidebar({ player }: SidebarProps) {
       style={{ minHeight: "100dvh" }}
     >
       {/* Brand */}
-      <div className="px-5 pt-6 pb-4">
-        <span className="text-base font-bold text-foreground tracking-tight">Chucking Eggs</span>
+      <div className="px-5 pt-8 pb-5">
+        <span className="text-lg font-bold text-foreground tracking-tight">Chucking Eggs</span>
       </div>
 
       {/* Nav */}
       <nav className="flex flex-col gap-0.5 px-3 flex-1">
-        {navItems.map(({ label, href }) => {
+        {navItems.map(({ label, href, icon: Icon }) => {
           const resolvedHref = label === "Play" && isInGame ? "/game" : href;
           const resolvedLabel = label === "Play" && isInGame ? "Resume" : label;
           const isActive = pathname === resolvedHref || (label === "Play" && pathname === "/game");
@@ -40,12 +41,13 @@ export default function Sidebar({ player }: SidebarProps) {
             <Link
               key={label}
               href={resolvedHref}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors border-l-2 ${
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ease-out border-l-2 ${
                 isActive
                   ? "border-accent text-accent bg-accent/5"
-                  : "border-transparent text-foreground hover:bg-border/50 hover:text-foreground"
+                  : "border-transparent text-foreground hover:bg-accent/8 hover:text-accent"
               }`}
             >
+              <Icon size={15} strokeWidth={isActive ? 2.5 : 2} />
               {resolvedLabel}
             </Link>
           );
@@ -57,10 +59,15 @@ export default function Sidebar({ player }: SidebarProps) {
         <div className="px-4 py-4 border-t border-border">
           <Link
             href={`/profile/${player.username}`}
-            className="flex flex-col gap-0.5 hover:opacity-70 transition-opacity"
+            className="flex items-center gap-2.5 hover:opacity-70 transition-opacity duration-150"
           >
-            <span className="text-sm font-semibold text-foreground truncate">{player.username}</span>
-            <span className="text-xs text-text-secondary">Elo {player.elo}</span>
+            <div className="w-7 h-7 rounded-full bg-accent/10 text-accent flex items-center justify-center text-xs font-bold shrink-0">
+              {player.username[0].toUpperCase()}
+            </div>
+            <div className="flex flex-col gap-0 min-w-0">
+              <span className="text-sm font-semibold text-foreground truncate">{player.username}</span>
+              <span className="text-xs text-text-secondary">Elo {player.elo}</span>
+            </div>
           </Link>
         </div>
       )}

@@ -50,9 +50,9 @@ export default function LeaderboardPage() {
 
       <div className="bg-surface border border-border rounded-xl overflow-hidden">
         {/* Header */}
-        <div className="grid grid-cols-[2rem_1fr_5rem_5rem_5rem] px-4 py-2.5 border-b border-border">
+        <div className="grid grid-cols-[2rem_1fr_5rem_5rem_5rem] px-4 py-3 border-b border-border">
           {["#", "Player", "Elo", "Games", "Win%"].map((h) => (
-            <span key={h} className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+            <span key={h} className="text-xs font-semibold text-text-secondary uppercase tracking-wide" title={h === "Win%" ? "Coming soon" : undefined}>
               {h}
             </span>
           ))}
@@ -71,7 +71,7 @@ export default function LeaderboardPage() {
               <span className={`text-sm font-medium flex items-center gap-2 ${isMe ? "text-accent" : "text-foreground"}`}>
                 {entry.username}
                 {isMe && (
-                  <span className="text-xs bg-accent/10 text-accent px-1.5 py-0.5 rounded-full font-semibold">you</span>
+                  <span className="text-xs bg-accent/10 text-accent px-1.5 py-0.5 rounded-md font-semibold">you</span>
                 )}
               </span>
               <span className="text-sm tabular-nums text-foreground">{entry.elo}</span>
@@ -95,7 +95,7 @@ export default function LeaderboardPage() {
             <span className="text-sm text-text-secondary">—</span>
             <span className="text-sm text-text-secondary flex items-center gap-2">
               {bot.username}
-              <span className="text-xs border border-border text-text-secondary px-1.5 py-0.5 rounded-full">bot</span>
+              <span className="text-xs border border-border text-foreground/50 bg-background px-1.5 py-0.5 rounded-md">bot</span>
             </span>
             <span className="text-sm tabular-nums text-text-secondary">{bot.elo}</span>
             <span className="text-sm text-text-secondary">—</span>

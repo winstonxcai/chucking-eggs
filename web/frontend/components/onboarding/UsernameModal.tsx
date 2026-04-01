@@ -26,8 +26,8 @@ export default function UsernameModal({ onClaim }: UsernameModalProps) {
   }, [username, email, onClaim]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-8 flex flex-col gap-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-8 flex flex-col gap-8">
         <div className="flex flex-col gap-1">
           <h2 className="text-xl font-bold text-foreground tracking-tight">Welcome to Chucking Eggs</h2>
           <p className="text-sm text-text-secondary">Play Guan Dan against ranked bots and friends</p>
@@ -46,7 +46,7 @@ export default function UsernameModal({ onClaim }: UsernameModalProps) {
               placeholder="e.g. tiger_slayer"
               maxLength={20}
               required
-              className={`w-full px-3 py-2.5 rounded-lg border text-sm text-foreground bg-background placeholder:text-text-secondary outline-none focus:ring-2 focus:ring-accent/30 transition-all ${
+              className={`w-full px-3 py-2.5 rounded-xl border text-sm text-foreground bg-background placeholder:text-text-secondary outline-none focus:ring-2 focus:ring-accent/30 transition-all duration-150 ${
                 error ? "border-team-red" : "border-border focus:border-accent"
               }`}
             />
@@ -63,7 +63,7 @@ export default function UsernameModal({ onClaim }: UsernameModalProps) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="your@email.com"
-              className="w-full px-3 py-2.5 rounded-lg border border-border text-sm text-foreground bg-background placeholder:text-text-secondary outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
+              className="w-full px-3 py-2.5 rounded-xl border border-border text-sm text-foreground bg-background placeholder:text-text-secondary outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all duration-150"
             />
             <span className="text-xs text-text-secondary">Add your email to recover your account from any device</span>
           </div>
@@ -71,7 +71,7 @@ export default function UsernameModal({ onClaim }: UsernameModalProps) {
           <button
             type="submit"
             disabled={loading || !username.trim()}
-            className="w-full py-3 rounded-lg bg-accent text-white font-semibold text-sm hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-1"
+            className="w-full py-3 rounded-xl bg-gradient-to-b from-accent to-accent-hover text-white font-semibold text-sm shadow-sm hover:opacity-90 transition-opacity duration-150 disabled:opacity-50 disabled:cursor-not-allowed mt-1"
           >
             {loading ? "Claiming…" : "Start Playing"}
           </button>

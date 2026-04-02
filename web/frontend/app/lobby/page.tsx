@@ -17,7 +17,7 @@ const MODE_LABEL: Record<RoomMode, string> = {
 };
 
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = useCallback(async () => {
     await navigator.clipboard.writeText(text);
@@ -29,7 +29,7 @@ function CopyButton({ text }: { text: string }) {
       onClick={copy}
       className="text-xs text-accent hover:underline transition-colors"
     >
-      {copied ? "Copied!" : "Copy"}
+      {copied ? "Copied!" : label}
     </button>
   );
 }
@@ -183,9 +183,26 @@ function LobbyContent() {
             <span data-testid="room-code" className="text-4xl font-bold tracking-widest text-foreground font-mono">
               {status.room_code}
             </span>
-            <div className="flex items-center gap-2 text-xs text-text-secondary">
-              <span>Share this code with friends</span>
-              <CopyButton text={status.room_code} />
+            <div className="flex items-center gap-3 text-xs text-text-secondary">
+              <CopyButton text={status.room_code} label="Copy Code" />
+              <span className="text-border">|</span>
+              <CopyButton text={`${window.location.origin}/join?code=${status.room_code}`} label="Copy Link" />
+              {typeof navigator !== "undefined" && navigator.share && (
+                <>
+                  <span className="text-border">|</span>
+                  <button
+                    onClick={() =>
+                      navigator.share({
+                        title: "Join my Guan Dan game",
+                        url: `${window.location.origin}/join?code=${status.room_code}`,
+                      }).catch(() => {})
+                    }
+                    className="text-accent hover:underline transition-colors"
+                  >
+                    Share
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}

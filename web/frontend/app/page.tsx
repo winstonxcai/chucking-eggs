@@ -11,11 +11,11 @@ const difficulties = ["wjsd", "liuzha", "hulalala", "easy", "medium", "competiti
 
 export default function Home() {
   const router = useRouter();
-  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [creatingRoom, setCreatingRoom] = useState<"duo" | "quad" | null>(null);
   const [soloOpen, setSoloOpen] = useState(false);
 
   async function handleCreateRoom(mode: "duo" | "quad", difficulty: string) {
-    setCreatingRoom(true);
+    setCreatingRoom(mode);
     try {
       const res = await fetch(`${API_BASE}/api/room/create`, {
         method: "POST",
@@ -23,11 +23,12 @@ export default function Home() {
         body: JSON.stringify({ mode, difficulty }),
       });
       const data = await res.json();
+      setCreatingRoom(null);
       router.push(
         `/lobby?game_id=${data.game_id}&seat=${data.seat}&token=${encodeURIComponent(data.reconnect_token)}`
       );
     } catch {
-      setCreatingRoom(false);
+      setCreatingRoom(null);
     }
   }
 
@@ -94,16 +95,16 @@ export default function Home() {
             <button
               className="flex-1 py-3 bg-background border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent hover:bg-accent/5 transition-all duration-150 ease-out disabled:opacity-50"
               onClick={() => handleCreateRoom("duo", "medium")}
-              disabled={creatingRoom}
+              disabled={creatingRoom !== null}
             >
-              {creatingRoom ? "Creating…" : "2-Player"}
+              {creatingRoom === "duo" ? "Creating…" : "2-Player"}
             </button>
             <button
               className="flex-1 py-3 bg-background border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent hover:bg-accent/5 transition-all duration-150 ease-out disabled:opacity-50"
               onClick={() => handleCreateRoom("quad", "medium")}
-              disabled={creatingRoom}
+              disabled={creatingRoom !== null}
             >
-              {creatingRoom ? "Creating…" : "4-Player"}
+              {creatingRoom === "quad" ? "Creating…" : "4-Player"}
             </button>
             <button
               className="flex-1 py-3 bg-background border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent hover:bg-accent/5 transition-all duration-150 ease-out"

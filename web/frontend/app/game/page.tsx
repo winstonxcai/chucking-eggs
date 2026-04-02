@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useGameSocket } from "@/hooks/useGameSocket";
+import { usePlayer } from "@/hooks/usePlayer";
 import GameBoard from "@/components/game/GameBoard";
 import { STORAGE_KEYS } from "@/lib/storage-keys";
 
@@ -71,6 +72,13 @@ function GameContent() {
 
   const { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup } =
     useGameSocket(gameId, reconnectToken, seat);
+
+  const { updateElo } = usePlayer();
+  useEffect(() => {
+    if (!gameOver?.elo_changes) return;
+    const change = gameOver.elo_changes[String(seat)];
+    if (change?.after != null) updateElo(change.after);
+  }, [gameOver, seat, updateElo]);
 
   const handlePlayAgain = useCallback(() => {
     sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);

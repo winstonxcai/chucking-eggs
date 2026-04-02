@@ -65,8 +65,9 @@ class GameRoom:
         self.last_activity = time.time()
         self.disconnected_seats: dict[int, float] = {}  # seat -> disconnect timestamp
 
-        # Trick tracking
-        self.trick_plays: list[tuple[int, Combo]] = []
+        # Trick tracking — dict persists each seat's last action so played cards
+        # stay on the board even after opponents respond (not cleared on new trick)
+        self.trick_plays: dict[int, Combo] = {}
         self._start_time = time.time()
 
         # AI lock — prevents concurrent AI run coroutines
@@ -99,6 +100,24 @@ class GameRoom:
         elif mode == "quad":
             for seat in [1, 2, 3]:
                 self.player_infos[seat] = {"name": f"Player {seat + 1}", "avatar": None, "elo": 1200}
+
+    # ---------------------------------------------------------------------------
+    # Difficulty
+    # ---------------------------------------------------------------------------
+
+    def set_difficulty(self, difficulty: str) -> None:
+        """Change bot difficulty before game starts (duo/solo modes)."""
+        self.difficulty = difficulty
+        bots = self.ai_service.pick_bots(difficulty)
+        self.agent = self.ai_service.get_agent(difficulty)
+        if self.mode == "solo":
+            self.player_infos[1] = bots[0]
+            self.player_infos[2] = bots[1]
+            self.player_infos[3] = bots[2]
+        elif self.mode == "duo":
+            # seats 1 and 3 are bots; seat 2 is human partner
+            self.player_infos[1] = bots[0]
+            self.player_infos[3] = bots[2]
 
     # ---------------------------------------------------------------------------
     # Backwards-compat properties (solo mode / Phase 1 tests)
@@ -240,9 +259,7 @@ class GameRoom:
     # ---------------------------------------------------------------------------
 
     def _record_move(self, seat: int, combo: Combo) -> None:
-        if combo.type != ComboType.PASS:
-            self.trick_plays = []
-        self.trick_plays.append((seat, combo))
+        self.trick_plays[seat] = combo
 
     # ---------------------------------------------------------------------------
     # Game result persistence (DB + Elo)

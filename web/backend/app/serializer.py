@@ -157,7 +157,7 @@ def serialize_game_state(
     game_id: str,
     human_seat: int,
     player_infos: list[dict],
-    trick_plays: list[tuple[int, Combo]] | None = None,
+    trick_plays: dict[int, Combo] | None = None,
     groups: list[dict] | None = None,
 ) -> dict:
     """Serialize full game state from the human player's perspective."""
@@ -186,7 +186,7 @@ def serialize_game_state(
     # Per-seat trick actions (geometric layout)
     trick_actions: dict[str, dict | None] = {"0": None, "1": None, "2": None, "3": None}
     if trick_plays:
-        for seat, combo in trick_plays:
+        for seat, combo in trick_plays.items():
             if combo.type == ComboType.PASS:
                 trick_actions[str(seat)] = {"type": "pass"}
             else:

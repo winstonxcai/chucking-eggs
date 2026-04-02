@@ -112,6 +112,10 @@ class ClaimUsernameRequest(BaseModel):
     is_test: bool = False
 
 
+class SetDifficultyRequest(BaseModel):
+    difficulty: str
+
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
@@ -199,6 +203,22 @@ async def create_room(req: CreateRoomRequest):
     )
 
 
+@app.post("/api/room/{game_id}/set_difficulty")
+async def set_room_difficulty(game_id: str, req: SetDifficultyRequest):
+    assert game_manager is not None
+    room = game_manager.get_room(game_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.started:
+        raise HTTPException(status_code=400, detail="Game already started")
+    valid = ("easy", "wjsd", "casual", "medium", "competition", "hard",
+             "yaoji", "jidan", "expert", "hulalala", "liuzha", "master")
+    if req.difficulty not in valid:
+        raise HTTPException(status_code=400, detail="Invalid difficulty")
+    room.set_difficulty(req.difficulty)
+    return {"ok": True}
+
+
 @app.post("/api/room/join/{room_code}", response_model=JoinRoomResponse)
 async def join_room(room_code: str):
     assert game_manager is not None
@@ -275,9 +295,16 @@ async def game_websocket(
 
     await room.connect(ws, seat)
 
-    # Register player_id for Elo tracking
+    # Register player_id and update display name from DB
     if player_id:
         room.player_ids[seat] = player_id
+        try:
+            player_doc = await db.get_player_by_id(player_id)
+            if player_doc:
+                room.player_infos[seat]["name"] = player_doc["username"]
+                room.player_infos[seat]["elo"] = player_doc.get("elo", 1200)
+        except Exception:
+            pass  # non-critical; display name stays as default
 
     # Determine whether this connection causes the game to start
     game_just_started = False

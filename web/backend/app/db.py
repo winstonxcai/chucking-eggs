@@ -51,12 +51,13 @@ async def get_or_create_player(player_id: str, username: str, email: Optional[st
     doc = {
         "_id": player_id,
         "username": username,
-        "email": email,
         "elo": 1200,
         "games_played": 0,
         "is_test": is_test,
         "created_at": datetime.utcnow(),
     }
+    if email:
+        doc["email"] = email
     await db.players.update_one(
         {"_id": player_id},
         {"$setOnInsert": doc},

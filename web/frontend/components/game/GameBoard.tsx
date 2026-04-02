@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Hand } from "lucide-react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -29,7 +30,12 @@ interface GameBoardProps {
 function TrickActionDisplay({ action }: { action: TrickAction | null }) {
   if (!action) return null;
   if (action.type === "pass") {
-    return <span className="text-xs text-text-secondary italic">Pass</span>;
+    return (
+      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-border text-xs text-text-secondary">
+        <Hand className="w-3 h-3 shrink-0" />
+        Pass
+      </span>
+    );
   }
   if (action.combo) {
     return (
@@ -254,19 +260,19 @@ export default function GameBoard({
             {/* Table surface — all trick actions inside */}
             <div className="col-start-2 row-start-2 relative w-[640px] h-[320px] border border-border rounded-2xl">
               {/* Partner (top edge) */}
-              <div className="absolute top-3 left-0 right-0 flex justify-center">
+              <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
                 <TrickActionDisplay action={ta?.["2"] ?? null} />
               </div>
               {/* Left opp (left edge) */}
-              <div className="absolute left-3 top-0 bottom-0 flex items-center">
+              <div data-testid="trick-seat-1" className="absolute left-3 top-0 bottom-0 flex items-center">
                 <TrickActionDisplay action={ta?.["1"] ?? null} />
               </div>
               {/* Right opp (right edge) */}
-              <div className="absolute right-3 top-0 bottom-0 flex items-center">
+              <div data-testid="trick-seat-3" className="absolute right-3 top-0 bottom-0 flex items-center">
                 <TrickActionDisplay action={ta?.["3"] ?? null} />
               </div>
               {/* You (bottom edge) */}
-              <div ref={tableSeat0Ref} className="absolute bottom-3 left-0 right-0 flex justify-center">
+              <div ref={tableSeat0Ref} data-testid="trick-seat-0" className="absolute bottom-3 left-0 right-0 flex justify-center">
                 {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} />}
               </div>
               {/* New trick label */}

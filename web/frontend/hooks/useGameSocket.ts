@@ -59,11 +59,9 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
         return;
       }
 
-      // Permanent failures — don't retry, clear stale session
+      // Permanent failures — don't retry, but keep session so a page refresh can reconnect
       if (event.code >= 4000) {
         console.error(`WebSocket closed: ${event.code} ${event.reason}`);
-        sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
-        sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
         setConnectionStatus("disconnected");
         return;
       }

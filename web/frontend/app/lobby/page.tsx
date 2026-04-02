@@ -3,6 +3,8 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { RoomStatus, RoomMode } from "@/lib/types";
+import { DIFFICULTY_INFO } from "@/lib/bots";
+import { STORAGE_KEYS } from "@/lib/storage-keys";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -13,6 +15,8 @@ const MODE_LABEL: Record<RoomMode, string> = {
   duo: "2-Player",
   quad: "4-Player",
 };
+
+const difficulties = ["wjsd", "liuzha", "hulalala", "easy", "medium", "competition", "casual", "hard", "master", "yaoji", "jidan", "expert"] as const;
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -41,7 +45,19 @@ function LobbyContent() {
 
   const [status, setStatus] = useState<RoomStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [difficulty, setDifficulty] = useState("medium");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Persist session to survive page refresh
+  useEffect(() => {
+    if (gameId && token) {
+      try {
+        sessionStorage.setItem(STORAGE_KEYS.GAME_ID, gameId);
+        sessionStorage.setItem(STORAGE_KEYS.RECONNECT_TOKEN, token);
+        sessionStorage.setItem(STORAGE_KEYS.SEAT, String(seat));
+      } catch { /* Safari private mode */ }
+    }
+  }, [gameId, seat, token]);
 
   const fetchStatus = useCallback(async () => {
     if (!gameId) return;
@@ -76,6 +92,17 @@ function LobbyContent() {
     };
   }, [gameId, token, fetchStatus]);
 
+  const changeDifficulty = useCallback(async (diff: string) => {
+    setDifficulty(diff);
+    try {
+      await fetch(`${API_BASE}/api/room/${gameId}/set_difficulty`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ difficulty: diff }),
+      });
+    } catch { /* non-critical */ }
+  }, [gameId]);
+
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -103,6 +130,8 @@ function LobbyContent() {
   const humanSeats = status.seats.filter((s) => s.is_human);
   const connectedCount = humanSeats.filter((s) => s.connected).length;
   const totalHumans = humanSeats.length;
+  const isHost = seat === 0;
+  const isDuo = status.mode === "duo";
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4">
@@ -114,6 +143,27 @@ function LobbyContent() {
             {MODE_LABEL[status.mode]} · {connectedCount}/{totalHumans} connected
           </span>
         </div>
+
+        {/* Duo difficulty picker (host only) */}
+        {isDuo && isHost && (
+          <div className="bg-surface border border-border rounded-xl p-4 flex flex-col gap-2">
+            <span className="text-xs font-semibold text-text-secondary tracking-widest uppercase">Bot Difficulty</span>
+            <select
+              value={difficulty}
+              onChange={(e) => changeDifficulty(e.target.value)}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:border-accent transition-colors"
+            >
+              {difficulties.map((diff) => {
+                const info = DIFFICULTY_INFO[diff];
+                return (
+                  <option key={diff} value={diff}>
+                    {info.emoji} {info.label} — {info.description}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
 
         {/* Room code */}
         {status.room_code && (

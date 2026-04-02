@@ -7,11 +7,12 @@ interface GameOverModalProps {
   data: GameOverMsg;
   humanSeat: number;
   onPlayAgain: () => void;
+  isMultiplayer?: boolean;
   onSaveState: () => void;
   onDismiss: () => void;
 }
 
-export default function GameOverModal({ data, humanSeat, onPlayAgain, onSaveState, onDismiss }: GameOverModalProps) {
+export default function GameOverModal({ data, humanSeat, onPlayAgain, isMultiplayer, onSaveState, onDismiss }: GameOverModalProps) {
   const humanReward = data.rewards[humanSeat] ?? 0;
   const won = humanReward > 0;
   const eloChange = data.elo_changes?.[String(humanSeat)];
@@ -72,7 +73,7 @@ export default function GameOverModal({ data, humanSeat, onPlayAgain, onSaveStat
           className="px-8 py-2.5 bg-gradient-to-b from-accent to-accent-hover text-white rounded-lg font-semibold text-sm shadow-sm hover:opacity-90 transition-opacity duration-150 cursor-pointer"
           onClick={onPlayAgain}
         >
-          Play Again
+          {isMultiplayer ? "Rematch" : "Play Again"}
         </button>
         <button
           className="text-xs text-border hover:text-text-secondary transition-colors duration-150"

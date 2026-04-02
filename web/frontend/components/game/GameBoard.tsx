@@ -22,6 +22,8 @@ interface GameBoardProps {
   onPlayCards: (cardIds: string[]) => void;
   onPass: () => void;
   onPlayAgain: () => void;
+  onRematch?: () => void;
+  isMultiplayer?: boolean;
   onCreateGroup: (cardIds: string[], comboType: string, comboName: string) => void;
   onDeleteGroup: (groupId: string) => void;
   latestError?: { message: string; key: number } | null;
@@ -58,6 +60,8 @@ export default function GameBoard({
   onPlayCards,
   onPass,
   onPlayAgain,
+  onRematch,
+  isMultiplayer,
   onCreateGroup,
   onDeleteGroup,
   latestError,
@@ -543,7 +547,8 @@ export default function GameBoard({
         <GameOverModal
           data={gameOver}
           humanSeat={gameState.my_seat}
-          onPlayAgain={onPlayAgain}
+          onPlayAgain={isMultiplayer && onRematch ? onRematch : onPlayAgain}
+          isMultiplayer={isMultiplayer}
           onSaveState={handleSaveState}
           onDismiss={() => setGameOverDismissed(true)}
         />

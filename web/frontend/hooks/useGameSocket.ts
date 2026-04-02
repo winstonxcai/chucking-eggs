@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GameState, ServerMessage, GameOverMsg } from "@/lib/types";
+import type { GameState, ServerMessage, GameOverMsg, RematchMsg } from "@/lib/types";
 import { STORAGE_KEYS } from "@/lib/storage-keys";
 
 const WS_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/^http/, "ws");
@@ -19,6 +19,7 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
   const [connected, setConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const [latestError, setLatestError] = useState<{ message: string; key: number } | null>(null);
+  const [rematch, setRematch] = useState<RematchMsg | null>(null);
   const errorKeyRef = useRef(0);
 
   const retriesRef = useRef(0);
@@ -117,6 +118,9 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
           errorKeyRef.current += 1;
           setLatestError({ message: msg.message, key: errorKeyRef.current });
           break;
+        case "rematch_created":
+          setRematch(msg);
+          break;
       }
     };
   }, []);
@@ -127,6 +131,7 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
     setGameOver(null);
     setGameState(null);
     setAiThinking(null);
+    setRematch(null);
     retriesRef.current = 0;
     intentionalCloseRef.current = false;
     setConnectionStatus("connecting");
@@ -162,5 +167,5 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
     wsSend({ type: "delete_group", group_id: groupId });
   }, [wsSend]);
 
-  return { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup, latestError };
+  return { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup, latestError, rematch };
 }

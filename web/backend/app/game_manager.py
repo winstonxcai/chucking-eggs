@@ -149,6 +149,20 @@ class GameManager:
     def reconnect_room(self, game_id: str, token: str) -> GameRoom | None:
         return self.reconnect_seat(game_id, 0, token)
 
+    async def create_rematch(self, game_id: str) -> GameRoom | None:
+        """Create a new room with the same mode/difficulty as a finished game, then broadcast to all players."""
+        old_room = self.rooms.get(game_id)
+        if old_room is None or not old_room.env.done:
+            return None
+        new_room = await self.create_room(old_room.mode, old_room.difficulty)
+        # Broadcast to all still-connected players in the old room
+        await old_room.broadcast({
+            "type": "rematch_created",
+            "game_id": new_room.game_id,
+            "room_code": new_room.room_code,
+        })
+        return new_room
+
     def remove_room(self, game_id: str) -> None:
         """Immediately remove a room (e.g. for completed / cancelled games)."""
         room = self.rooms.pop(game_id, None)

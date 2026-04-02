@@ -92,12 +92,19 @@ export interface ErrorMsg {
   message: string;
 }
 
+export interface RematchMsg {
+  type: "rematch_created";
+  game_id: string;
+  room_code: string | null;
+}
+
 export type ServerMessage =
   | (GameState & { type: "game_state" })
   | MovePlayedMsg
   | GameOverMsg
   | AIThinkingMsg
-  | ErrorMsg;
+  | ErrorMsg
+  | RematchMsg;
 
 // Phase 2: room / lobby types
 

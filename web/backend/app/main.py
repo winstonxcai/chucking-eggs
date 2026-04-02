@@ -259,6 +259,18 @@ async def room_status(game_id: str):
     )
 
 
+@app.post("/api/room/{game_id}/rematch")
+async def rematch(game_id: str):
+    assert game_manager is not None
+    new_room = await game_manager.create_rematch(game_id)
+    if new_room is None:
+        raise HTTPException(status_code=400, detail="Game not found or not finished")
+    return {
+        "game_id": new_room.game_id,
+        "room_code": new_room.room_code,
+    }
+
+
 # ---------------------------------------------------------------------------
 # WebSocket
 # ---------------------------------------------------------------------------

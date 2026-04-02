@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useGameSocket } from "@/hooks/useGameSocket";
 import { usePlayer } from "@/hooks/usePlayer";
 import GameBoard from "@/components/game/GameBoard";
@@ -10,6 +10,7 @@ import { STORAGE_KEYS } from "@/lib/storage-keys";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function GameContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [gameId, setGameId] = useState<string | null>(null);
   const [reconnectToken, setReconnectToken] = useState<string | null>(null);
@@ -70,7 +71,7 @@ function GameContent() {
     createGame();
   }, [difficulty, searchParams]);
 
-  const { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup, latestError } =
+  const { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup, latestError, rematch } =
     useGameSocket(gameId, reconnectToken, seat);
 
   const { updateElo } = usePlayer();
@@ -79,6 +80,29 @@ function GameContent() {
     const change = gameOver.elo_changes[String(seat)];
     if (change?.after != null) updateElo(change.after);
   }, [gameOver, seat, updateElo]);
+
+  // When another player initiates rematch, navigate to join the new room
+  const rematchHandled = useRef(false);
+  useEffect(() => {
+    if (!rematch || rematchHandled.current) return;
+    rematchHandled.current = true;
+    if (rematch.room_code) {
+      router.push(`/join?code=${rematch.room_code}`);
+    }
+  }, [rematch, router]);
+
+  const isMultiplayer = gameState ? gameState.players.filter((p) => p.is_human).length > 1 : false;
+
+  const handleRematch = useCallback(async () => {
+    if (!gameId) return;
+    try {
+      await fetch(`${API_BASE}/api/room/${gameId}/rematch`, { method: "POST" });
+      // The broadcast handler above will navigate us to the new room
+    } catch {
+      // Fallback: go home
+      router.push("/");
+    }
+  }, [gameId, router]);
 
   const handlePlayAgain = useCallback(() => {
     sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
@@ -136,6 +160,8 @@ function GameContent() {
       onPlayCards={playCards}
       onPass={pass}
       onPlayAgain={handlePlayAgain}
+      onRematch={handleRematch}
+      isMultiplayer={isMultiplayer}
       onCreateGroup={createGroup}
       onDeleteGroup={deleteGroup}
       latestError={latestError}

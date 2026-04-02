@@ -45,15 +45,16 @@ export default function GameControls({
 
   return (
     <div className={`flex flex-col items-center gap-2 ${!isMyTurn ? "invisible" : ""}`}>
-      {/* Rope timer */}
-      {showRope && (
-        <div data-testid="rope-timer" className="w-48 h-1 bg-border rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
-            style={{ width: `${progress * 100}%` }}
-          />
-        </div>
-      )}
+      {/* Rope timer — always rendered to reserve space, invisible when not your turn */}
+      <div
+        data-testid="rope-timer"
+        className={`w-48 h-1 bg-border rounded-full overflow-hidden ${!showRope ? "invisible" : ""}`}
+      >
+        <div
+          className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
+          style={{ width: `${progress * 100}%` }}
+        />
+      </div>
 
       <div className="flex items-center justify-center gap-3">
         <button

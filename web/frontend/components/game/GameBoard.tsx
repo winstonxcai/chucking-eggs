@@ -63,6 +63,11 @@ export default function GameBoard({
   const tableSeat0Ref = useRef<HTMLDivElement>(null);
   const flyingStartRef = useRef<number | null>(null);
 
+  // Sidebar accordion state
+  const [groupsOpen, setGroupsOpen] = useState(true);
+  const [legalOpen, setLegalOpen] = useState(true);
+  const [allOpen, setAllOpen] = useState(false);
+
   // Optimistic local groups — updated immediately on Group/Ungroup, synced from server on game_state
   const [localGroups, setLocalGroups] = useState<CardGroup[]>(gameState.groups);
   useEffect(() => {
@@ -329,30 +334,36 @@ export default function GameBoard({
         </div>
       </div>
 
-      {/* Sidebar: always visible, two sections */}
-      <div className="w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex flex-col gap-6">
+      {/* Sidebar: always visible, three collapsible sections */}
+      <div className="w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex flex-col gap-4">
         {/* Groups section */}
         <div className="flex flex-col gap-2">
-          <span className="text-[13px] font-semibold text-text-secondary tracking-wider uppercase">
-            Groups
-          </span>
-          {localGroups.length === 0 ? (
-            <span className="text-sm text-text-secondary">No groups yet</span>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {localGroups.map((group) => (
-                <button
-                  key={group.id}
-                  className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-background border border-border hover:border-accent hover:text-accent text-left transition-colors"
-                  onClick={() => handleGroupClick(group)}
-                >
-                  <span className="text-[13px] font-semibold text-foreground">
-                    {group.comboName}
-                  </span>
-                  <span className="text-xs text-text-secondary">{group.cardIds.length}c</span>
-                </button>
-              ))}
-            </div>
+          <button
+            onClick={() => setGroupsOpen((o) => !o)}
+            className="flex items-center justify-between w-full text-[13px] font-semibold text-text-secondary tracking-wider uppercase"
+          >
+            <span>Groups</span>
+            <span className="text-xs">{groupsOpen ? "▾" : "▸"}</span>
+          </button>
+          {groupsOpen && (
+            localGroups.length === 0 ? (
+              <span className="text-sm text-text-secondary">No groups yet</span>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {localGroups.map((group) => (
+                  <button
+                    key={group.id}
+                    className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-background border border-border hover:border-accent hover:text-accent text-left transition-colors"
+                    onClick={() => handleGroupClick(group)}
+                  >
+                    <span className="text-[13px] font-semibold text-foreground">
+                      {group.comboName}
+                    </span>
+                    <span className="text-xs text-text-secondary">{group.cardIds.length}c</span>
+                  </button>
+                ))}
+              </div>
+            )
           )}
         </div>
 
@@ -360,18 +371,45 @@ export default function GameBoard({
 
         {/* Legal combos section — excludes cards already in groups */}
         <div className="flex flex-col gap-2">
-          <span className="text-[13px] font-semibold text-text-secondary tracking-wider uppercase">
-            Legal Combos
-          </span>
-          {gameState.is_my_turn ? (
+          <button
+            onClick={() => setLegalOpen((o) => !o)}
+            className="flex items-center justify-between w-full text-[13px] font-semibold text-text-secondary tracking-wider uppercase"
+          >
+            <span>Legal Combos</span>
+            <span className="text-xs">{legalOpen ? "▾" : "▸"}</span>
+          </button>
+          {legalOpen && (
+            gameState.is_my_turn ? (
+              <ComboBrowser
+                legalMoves={gameState.legal_moves.filter(
+                  (m) => !m.cards.every((c) => groupedCardIds.has(c.id))
+                )}
+                onSelectCombo={handleSelectCombo}
+              />
+            ) : (
+              <span className="text-sm text-text-secondary">Not your turn</span>
+            )
+          )}
+        </div>
+
+        <div className="border-t border-border" />
+
+        {/* All combos section — all valid combos from hand, ignoring current trick */}
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => setAllOpen((o) => !o)}
+            className="flex items-center justify-between w-full text-[13px] font-semibold text-text-secondary tracking-wider uppercase"
+          >
+            <span>All Combos</span>
+            <span className="text-xs">{allOpen ? "▾" : "▸"}</span>
+          </button>
+          {allOpen && (
             <ComboBrowser
-              legalMoves={gameState.legal_moves.filter(
+              legalMoves={(gameState.all_moves ?? []).filter(
                 (m) => !m.cards.every((c) => groupedCardIds.has(c.id))
               )}
               onSelectCombo={handleSelectCombo}
             />
-          ) : (
-            <span className="text-sm text-text-secondary">Not your turn</span>
           )}
         </div>
 

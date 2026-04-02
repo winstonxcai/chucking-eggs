@@ -236,6 +236,12 @@ def serialize_game_state(
                 legal_moves.insert(insert_pos, combo_to_dto(combo, env.level_rank))
                 insert_pos += 1
 
+    # All combos from full hand in leading context (for hand analysis sidebar)
+    all_lead_raw = generate_all_leads(env.hands[human_seat], env.level_rank)
+    all_lead = [c for c in all_lead_raw if c.type != ComboType.PASS]
+    all_lead.sort(key=lambda c: combo_sort_key(c, env.level_rank))
+    all_moves = [combo_to_dto(c, env.level_rank) for c in all_lead]
+
     sf_options = _compute_sf_options(env.hands[human_seat], grouped_ids, env.level_rank)
 
     # Reveal partner's hand once the human player has finished
@@ -263,4 +269,5 @@ def serialize_game_state(
         "groups": groups or [],
         "sf_options": sf_options,
         "partner_hand": partner_hand,
+        "all_moves": all_moves,
     }

@@ -51,7 +51,7 @@ export default function EloChart({ data }: EloChartProps) {
             fontSize: "12px",
             color: "#1A1612",
           }}
-          formatter={(v: number) => [v, "Elo"]}
+          formatter={(v) => [v as number, "Elo"]}
         />
         <Area
           type="monotone"

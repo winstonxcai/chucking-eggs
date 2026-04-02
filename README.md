@@ -770,7 +770,7 @@ The app was functionally complete but rough around the edges. A focused polish p
 
 ```mermaid
 flowchart LR
-    GH["GitHub\nmaster branch"] -->|auto-deploy| VCL["Vercel\nNext.js\nchucking-eggs.vercel.app"]
+    GH["GitHub\nmain branch"] -->|auto-deploy| VCL["Vercel\nNext.js\nchucking-eggs.vercel.app"]
     VCL <-->|HTTPS + WSS\nCORS-gated| FLY["Fly.io\nFastAPI\nshared-cpu-1x 512MB\nmin 1 machine"]
     FLY <-->|Motor async\n5s timeout| ATLAS["MongoDB Atlas\nM0 · Singapore\nap-southeast-1"]
 ```

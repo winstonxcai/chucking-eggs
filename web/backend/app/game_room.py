@@ -25,8 +25,8 @@ from .serializer import combo_to_dto, serialize_game_state
 
 logger = logging.getLogger(__name__)
 
-ACTION_PAUSE = 0.9    # seconds each AI play is visible before next turn
-AI_THINK_PAUSE = 0.5  # seconds for "thinking" animation before AI move
+ACTION_PAUSE = 0.3    # seconds each AI play is visible before next turn
+AI_THINK_PAUSE = 0.2  # seconds for "thinking" animation before AI move
 
 DISCONNECT_TAKEOVER_S: int = int(os.getenv("DISCONNECT_TAKEOVER_S", "60"))
 HUMAN_TURN_TIMEOUT_S: int = int(os.getenv("HUMAN_TURN_TIMEOUT_S", "90"))

@@ -163,7 +163,7 @@ export default function GameBoard({
       flyingStartRef.current = null;
     }, remaining);
     return () => clearTimeout(t);
-  }, [gameState, flyingCards]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gameState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // On server error: immediately clear any stuck flying animation and show a toast
   useEffect(() => {

@@ -1,1113 +1,802 @@
-# Guan Dan DMC: 1-Day MVP Blueprint (Full Rules)
+# Guan Dan RL Agent — Development Log
 
-> **Goal**: Implement DMC end-to-end on **real Guan Dan** — correct rules, simplified training infrastructure
-> **Budget**: 1 intense day (~10–12 hours). Training runs overnight on CPU.
-> **Result**: Full Guan Dan engine + working DMC loop. Agent beats random within hours of training.
-> **Non-negotiable**: Game rules are production-correct. No shortcuts on combo types, wilds, teams, or bombs.
-> **Author**: Winston | Tsinghua SIGS — High Performance Geo-Computing Lab
+**Guan Dan (掼蛋)** is a 4-player, 2v2 team trick-taking card game played with a 108-card double deck. This project builds a competitive RL agent from scratch — full game engine with correct rules, Deep Monte Carlo training with LSTM Q-network, GNN hand structure encoding, QMIX team coordination, and a playable web app with 12 difficulty tiers calibrated by Glicko-2 ratings.
+
+**Current state** (Apr 2, 2026): RL agent is Elo #1 (1786) across 13 bots. Web app supports solo + duo + quad multiplayer with full accounts, Elo ratings, profiles, and leaderboard. Live at [chucking-eggs.fly.dev](https://chucking-eggs.fly.dev). 25 Playwright e2e tests, 90 pytest unit tests.
+
+**Author**: Winston | Tsinghua SIGS
+
+## Quick Start
+
+```bash
+# Run tests
+uv run pytest tests/ -v
+
+# Smoke train (~4-5h on M1 Pro)
+PYTHONPATH=src python -m guandan.training.train --quick
+
+# Full train (50K episodes)
+PYTHONPATH=src python -m guandan.training.train --episodes 50000
+
+# Evaluate checkpoint
+PYTHONPATH=src python scripts/eval.py --checkpoint <path> --opponent heuristic --games 500
+
+# Ladder eval (all opponents)
+PYTHONPATH=src python scripts/ladder.py --checkpoint <path>
+
+# WR matrix + Glicko-2 calibration
+PYTHONPATH=src python scripts/wr_matrix.py --games 200 --agents all
+
+# Web app (local dev)
+cd web && docker compose up
+
+# Modal GPU train
+./scripts/run_e2e.sh --modal
+```
 
 ---
 
-## 0. Design Philosophy: Correct Engine, Minimal Infrastructure
+## Timeline
 
-The game engine is the foundation everything else builds on. A bug in movegen or wild card logic will silently corrupt every training run downstream. So we build the engine right, and keep everything around it dead simple.
+### 1. Mar 3-4 — Project Reset: RL-First Strategy
 
-| Component | Full Plan | This MVP | Rationale |
-|-----------|-----------|----------|-----------|
-| **Game rules** | **Full Guan Dan** | **Full Guan Dan** | Non-negotiable. No simplified variants. |
-| **Combo types** | **All types** | **All types** | Singles, pairs, triples, straights, tubes, plates, full houses, 9 bomb tiers (quad→decuple + SF + 4-joker) |
-| **Wild cards** | **♥ of level rank** | **♥ of level rank** | Correct wild substitution in all combos |
-| **4 players, 2 teams** | **Yes** | **Yes** | Team dynamics are core to Guan Dan |
-| **Level rank** | **Rotates** | **Fixed (start at 2)** | Semantics identical; simplifies one variable for debugging |
-| **Scoring** | Rank-based (+3/+1/-1/-3) | Rank-based (+3/+1/-1/-3) | Same as full plan |
-| Movegen | Cython (<1ms) | **Pure Python** | Correct first, fast later |
-| Q-network | LSTM + ResNet (4M) | **MLP (100K)** | Same learning dynamics, faster iteration |
-| History encoding | LSTM over 20 moves | **Flat: last trick only** | Defer LSTM to scale-up |
-| Actors | 32 CPU (Modal) | **Single process** | Distributed is engineering, not algorithm |
-| Replay buffer | 2M transitions | **100K transitions** | Enough for signal |
-| Lead/follow split | 2 Q-networks | **1 Q-network** | Add split when engine is proven |
-| Soft-start | Heuristic mixing | **Pure ε-greedy** | Add when baseline works |
-| Oracle (PTIE) | Phase 2 | **Cut** | Phase 2 |
-| Hand prediction | Phase 3 | **Cut** | Phase 3 |
+#### Why
+
+The original plan was to build the web app first, then the RL agent. This was backwards — without a working agent, there's nothing meaningful to play against. Reversed the order: build correct game engine, train competitive agent, *then* wrap it in a web app.
+
+#### Architecture
+
+```mermaid
+flowchart LR
+    A[Game Engine\n108-card rules] --> B[Agent Hierarchy\nrandom → heuristic]
+    B --> C[RL Training\nDMC + Q-network]
+    C --> D[Web App\nplay vs trained agent]
+    style A fill:#4CAF50,color:#fff
+    style B fill:#4CAF50,color:#fff
+    style C fill:#FFC107,color:#000
+    style D fill:#9E9E9E,color:#fff
+```
+
+#### Methods
+
+Scrapped all prior web scaffolding. Wrote a 1-day MVP blueprint specifying production-correct Guan Dan rules (all combo types, wild cards, bombs, team play) as non-negotiable, with minimal training infrastructure. The key insight: game engine correctness is the foundation — a bug in movegen or wild logic silently corrupts every training run downstream.
+
+#### Results
+
+| Outcome | Detail |
+|---------|--------|
+| Decision | RL-first, app-second |
+| Foundation | Full Guan Dan rules spec (pagat.com reference) |
+| MVP scope | Correct engine + working DMC loop |
+
+#### Takeaway
+
+Clean slate with correct priorities. The engine must be right before anything else matters. → Led directly to the Day 1 build.
 
 ---
 
-## 1. Guan Dan Rules Reference (Source: pagat.com)
+### 2. Mar 13 — Agent Hierarchy + LSTM Q-Network Foundation
 
-This section is the ground truth. Every line of game engine code must comply with these rules. Source: https://www.pagat.com/climbing/guan_dan.html
+#### Why
 
-### 1.1 Deck, Players, and Deal
+Need baseline agents at varying skill levels to train against, plus a neural architecture that can learn from game history. A flat MLP can't reason about temporal sequences of play.
 
-- **2 standard decks** + **4 jokers** = **108 cards total**
-- Each standard deck: 13 ranks (2–A) × 4 suits (♠♥♦♣) = 52 cards
-- Jokers: 2 Black Jokers (小王), 2 Red Jokers (大王)
-- **Deal**: 27 cards to each of 4 players
-- **Seating**: Players 0, 1, 2, 3. Teams: {0, 2} vs {1, 3}
-- **Play direction**: **Counterclockwise** (right to left)
+#### Architecture
 
-### 1.2 Card Ranking: Two Orderings
+```mermaid
+flowchart TB
+    subgraph Agents["Agent Hierarchy"]
+        R[RandomBot] --> G[GreedyBot]
+        G --> H[HeuristicBot]
+        H --> S[StrategicBot]
+        S --> MC[MonteCarloBot]
+        MC --> RL[RLAgentLSTM]
+    end
 
-There are two distinct orderings. Getting this right is critical — most bugs come from mixing them up.
+    subgraph QNet["QNetworkLSTM"]
+        State["State\n417 dims"] --> MLP
+        Action["Action\n160 dims"] --> MLP
+        History["History\nT×83 dims"] --> LSTM["LSTM\n128 hidden"]
+        LSTM --> MLP["3-layer MLP\n512 hidden"]
+        MLP --> Q["Q-value"]
+    end
 
-**Natural order** (high to low): RJ, BJ, A, K, Q, J, 10, 9, 8, 7, 6, 5, 4, 3, 2, (A)
-- Aces can be low, ranking below 2, for forming sequences only
-- This ordering is used for: **straights, tubes, plates, straight flushes**
-
-**Level order** (high to low): RJ, BJ, **[level cards]**, A, K, Q, J, 10, 9, 8, 7, 6, 5, 4, 3, 2
-- Level cards are promoted above aces, below black jokers
-- Level cards' natural position is skipped (e.g., at level 7: ...8, 6, 5...)
-- This ordering is used for: **singles, pairs, triples, full houses, ranking N-of-a-kind bombs**
-
-**Example at level 2 (first hand)**:
-- Natural order: RJ, BJ, A, K, Q, J, 10, 9, 8, 7, 6, 5, 4, 3, 2, (A)
-- Level order: RJ, BJ, **2**, A, K, Q, J, 10, 9, 8, 7, 6, 5, 4, 3
-
-**Example at level 8**:
-- Natural order: RJ, BJ, A, K, Q, J, 10, 9, 8, 7, 6, 5, 4, 3, 2, (A)
-- Level order: RJ, BJ, **8**, A, K, Q, J, 10, 9, 7, 6, 5, 4, 3, 2
-
-### 1.3 Level Rank and Wild Cards
-
-- Each team has a **level** starting at 2, advancing through 3...K, A as they win hands
-- The **level cards** are all cards matching the current level rank
-- **Wild cards**: The two ♥ of the current level rank are wild (e.g., at level 2, both ♥2 are wild)
-- **Wild substitution**: A wild can represent **any card except a joker**
-- **Wild as single/pair**: When played as a single, a wild ranks as a level card (above A, below BJ). Two wilds together form a pair equal to a pair of level cards.
-- **Wild in combos**: Can fill any position in any combination. Player must declare what each wild represents.
-- **Two wilds can stand for different cards** in the same combination
-- **Wilds in bombs**: Allowed in all bomb types **except** the four-joker bomb
-- **For MVP**: Fix level at 2 for all hands (all mechanics are identical; just one fewer variable)
-
-### 1.4 Ordinary Combinations (7 Types)
-
-```
-Type            Size    Description                                          Ranked by
-──────────────────────────────────────────────────────────────────────────────────────────
-SINGLE          1       One card                                             Level order
-PAIR            2       Two cards of same rank                               Level order
-                        (BJ+BJ or RJ+RJ ok; BJ+RJ is NOT a pair)
-TRIPLE          3       Three cards of same rank                             Level order
-                        (no triple of jokers possible → highest = 3 level cards)
-FULL_HOUSE      5       Triple + Pair                                        Triple's rank
-                        (ranked by triple in level order; pair rank irrelevant)      (level order)
-STRAIGHT        5       5 consecutive cards in NATURAL order,                Top card
-                        NOT all the same suit                                (natural order)
-TUBE (连对)     6       3 consecutive PAIRS in NATURAL order                 Top pair
-                        (no joker pairs; level cards in natural position)     (natural order)
-PLATE (钢板)    6       2 consecutive TRIPLES in NATURAL order               Top triple
-                        (level cards in natural position)                     (natural order)
+    RL --> QNet
 ```
 
-**Critical rules for sequences (straights, tubes, plates)**:
-- **Level cards take their NATURAL position**, not level position. At level 7, a 7 sits between 6 and 8 in a straight, NOT above A.
-- **Aces can be high or low**: 10-J-Q-K-A (highest straight) and A-2-3-4-5 (lowest straight, ranked by the 5) are both valid
-- **No wrapping**: K-A-2-3-4, Q-K-A-2-3, J-Q-K-A-2 are NOT valid
-- **Jokers cannot appear** in straights, tubes, or plates
-- **Tubes are exactly 3 pairs** (6 cards). Not more, not fewer.
-- **Plates are exactly 2 triples** (6 cards). Not more, not fewer.
-- **Straights are exactly 5 cards**. Not more, not fewer.
-- **A straight must NOT be all one suit** — that would be a straight flush (a bomb)
-- Lowest tube: A-A-2-2-3-3 (ranked by 3). Highest tube: Q-Q-K-K-A-A (ranked by A)
-- Lowest plate: A-A-A-2-2-2 (ranked by 2). Highest plate: K-K-K-A-A-A (ranked by A)
+#### Methods
 
-### 1.5 Bombs (9 Types, Strictly Ordered Low→High)
+Built 5 rule-based agents forming a difficulty ladder: RandomBot (uniform legal moves), GreedyBot (cheapest legal option), HeuristicBot (partner-aware rules), StrategicBot (bomb/endgame planning), MonteCarloBot (parallel rollouts with strategic pruning). The Q-network uses an LSTM to encode move history (83 dims per move) into a context vector, concatenated with state (417 dims) and action (160 dims) encodings before a 3-layer MLP. Added MPS (Apple Metal) device auto-detection, structured logging (metrics.jsonl, config.json, train.log).
 
-```
-Tier   Type              Size    Description
-─────────────────────────────────────────────────────────────────────────
-1      QUADRUPLE         4       4 cards of same rank
-2      QUINTUPLE         5       5 cards of same rank
-3      STRAIGHT FLUSH    5       5 consecutive same-suit cards (natural order)
-4      SEXTUPLE          6       6 cards of same rank
-5      SEPTUPLE          7       7 cards of same rank
-6      OCTUPLE           8       8 cards of same rank
-7      NONUPLE           9       9 cards of same rank (requires wilds)
-8      DECUPLE           10      10 cards of same rank (requires wilds)
-9      FOUR-JOKER        4       2 BJ + 2 RJ (highest bomb)
-```
+#### Results
 
-**Within each N-of-a-kind tier**: ranked by card rank in **level order** (level cards highest within their tier, since there aren't enough jokers to make joker-based N-of-a-kind)
+| Metric | Value |
+|--------|-------|
+| Agent tiers | 5 rule-based + 1 RL |
+| Q-network params | ~3.7M (lead + follow heads) |
+| State encoding | 417 dims (hand + played + unknown + positions + level) |
+| Action encoding | 160 dims |
+| History encoding | LSTM over T×83 move vectors |
+| Device | MPS auto-detected on M1 Pro |
+| vs Random | Beats random after initial training |
 
-**Straight flushes**: ranked by top card in **natural order**. Lowest: A♠-2♠-3♠-4♠-5♠. Highest: 10♠-J♠-Q♠-K♠-A♠. Level has no effect on straight flush ranking.
+#### Takeaway
 
-**Key hierarchy facts**:
-- Any bomb beats any non-bomb combo
-- Straight flush sits BETWEEN quintuple and sextuple
-- The highest quintuple (5 level-cards) is beaten by the lowest straight flush (A-2-3-4-5 suited)
-- Nonuple/decuple require wilds (only 2 wilds exist, so max 1 decuple or 2 nonuples per hand)
-- Four-joker bomb beats everything
-
-**Wild cards in bombs**: Wilds can be used in ALL bomb types except four-joker. Examples at level 2:
-- 3 naturals of rank 9 + 1 wild = quadruple of 9s
-- 4 naturals of rank 9 + 1 wild = quintuple of 9s
-- 3 naturals + 2 wilds = quintuple
-- 8 naturals of rank 9 (from double deck) + 2 wilds = decuple of 9s
-
-### 1.6 Turn and Trick Mechanics
-
-- **Leading**: The trick leader plays any ordinary combo or any bomb
-- Play proceeds **counterclockwise**
-- **Responding to ordinary combo**: Play a higher combo **of the same type**, or play any bomb, or pass
-- **Responding to bomb**: Play a higher bomb, or pass
-- **Passing does NOT lock you out**: A player who passes can still play on a later turn in the same trick
-- **Trick end**: 3 consecutive passes after the last play → trick over, last player who played leads next trick
-- **Players who are out**: Simply skipped on their turn. They always count as passing.
-
-### 1.7 Going Out, Finish Order, and Game End
-
-- A player **goes out** when they play their last card(s)
-- **Play continues until both members of the winning team have gone out**
-- The finish order (1st through 4th) determines the round outcome
-- **Partner leads rule**: If a player whose turn it is to lead has no cards left, the lead passes to their **partner**
-
-### 1.8 Scoring (Level Promotion)
-
-The team of the player who finishes first wins the hand. The finish positions of both teammates determine promotion:
-
-| Result | Promotion |
-|--------|-----------|
-| **1-2 win** (teammates finish 1st & 2nd) | Winners promoted **4 levels** |
-| **1-3 win** (teammates finish 1st & 3rd) | Winners promoted **2 levels** |
-| **1-4 win** (teammates finish 1st & 4th) | Winners promoted **1 level** |
-
-**For the RL reward signal** (not the level system), we use position-based rewards:
-```
-1st out: +3.0,  2nd out: +1.0,  3rd out: -1.0,  4th out: -3.0
-```
-This is zero-sum (3+1-1-3=0) and captures the incentive to go out early.
-
-### 1.9 Tribute (Skip for MVP)
-
-From the second hand onward, the loser(s) of the previous hand pay tribute (their highest non-wild card) to the winner(s), who return an unwanted card. This affects who leads first. **Skip for MVP** — just pick first leader randomly. Add in scale-up when implementing multi-hand sessions.
-
-### 1.10 First Hand
-
-- First hand is always at level 2
-- First player chosen randomly (or by designated start card in traditional rules)
-
-### 1.11 Rule Subtleties to Watch For
-
-1. **Wild as itself**: A wild IS a ♥[level_rank]. It can always be played "as itself" without using wild power. E.g., at level 2, ♥2 can be played as a normal 2 in a straight containing a 2.
-2. **Pair of wilds**: Two wilds together = pair of level cards. They can also be used as two different cards in a combo (e.g., two wilds in a straight each substituting for different missing ranks).
-3. **No joker pairs across colors**: BJ+BJ is a pair. RJ+RJ is a pair. BJ+RJ is NOT a pair.
-4. **Level cards in natural position for sequences**: This is the most common implementation error. At level 7: 5-6-7-8-9 is a valid straight. 5-6-8-9-10 is NOT (7 is missing, not promoted out).
-5. **Straight vs straight flush**: 5 consecutive cards NOT all same suit = ordinary straight. All same suit = straight flush BOMB. The movegen must check suit uniformity.
+Foundation is in place — agents, network, logging. But training against a single opponent plateaus quickly. → Need curriculum learning to progress beyond random.
 
 ---
 
-## 2. Schedule (10–12 Hours, Honest Estimate)
+### 3. Mar 13-16 — Curriculum Learning + Training Infrastructure
 
-### Block 1 (Hours 1–4): Game Engine
+#### Why
 
-This is the bulk of the work and the most important part. No shortcuts.
+Training only against random opponents hits a ceiling fast — the agent learns to beat random play but can't generalize. Need progressive difficulty to push the agent toward strategic play.
 
-**Hour 1: `cards.py` — Card model + constants**
+#### Architecture
 
-```python
-# cards.py
+```mermaid
+flowchart LR
+    subgraph Curriculum["Curriculum Schedule"]
+        R["Stage 1\nRandom"] -->|"65% WR gate"| G["Stage 2\nGreedy"]
+        G -->|"60% WR gate"| H["Stage 3\nHeuristic\n(terminal)"]
+    end
 
-from enum import IntEnum
-from typing import NamedTuple
+    subgraph Training["Training Loop"]
+        EP["Parallel Episode\nCollection"] --> BUF["Replay Buffer\n250K capacity"]
+        BUF --> TRAIN["Batch Training\n1024 samples"]
+        TRAIN --> EVAL["Periodic Eval\n200 games"]
+        EVAL -->|"gate met"| PROMOTE["Promote\nOpponent"]
+    end
 
-class Suit(IntEnum):
-    SPADE = 0; HEART = 1; DIAMOND = 2; CLUB = 3
-
-class Rank(IntEnum):
-    # Natural order values. 2 is lowest normal rank, A=14 is highest.
-    # In sequences, Ace can also be LOW (=1), handled in movegen.
-    TWO = 2; THREE = 3; FOUR = 4; FIVE = 5; SIX = 6; SEVEN = 7
-    EIGHT = 8; NINE = 9; TEN = 10; JACK = 11; QUEEN = 12
-    KING = 13; ACE = 14
-    BLACK_JOKER = 16; RED_JOKER = 17
-
-class Card(NamedTuple):
-    rank: int
-    suit: int   # 0-3 for normal, 0/1 for jokers
-    deck: int   # 0 or 1 (which copy from the double deck)
-
-class ComboType(IntEnum):
-    PASS = 0
-    # ── Ordinary (7 types) ──
-    SINGLE = 1
-    PAIR = 2
-    TRIPLE = 3
-    FULL_HOUSE = 4      # triple + pair (5 cards)
-    STRAIGHT = 5        # exactly 5 consecutive, natural order, NOT all same suit
-    TUBE = 6            # exactly 3 consecutive pairs (6 cards), natural order
-    PLATE = 7           # exactly 2 consecutive triples (6 cards), natural order
-    # ── Bombs (9 tiers, ordered low→high by enum value) ──
-    BOMB_4 = 8          # quadruple
-    BOMB_5 = 9          # quintuple
-    STRAIGHT_FLUSH = 10 # 5 consecutive same suit (BETWEEN 5 and 6-of-a-kind!)
-    BOMB_6 = 11         # sextuple
-    BOMB_7 = 12         # septuple
-    BOMB_8 = 13         # octuple
-    BOMB_9 = 14         # nonuple (requires wilds)
-    BOMB_10 = 15        # decuple (requires wilds)
-    BOMB_JOKER = 16     # 2BJ + 2RJ — highest bomb
-
-BOMB_TYPES = {ComboType.BOMB_4, ComboType.BOMB_5, ComboType.STRAIGHT_FLUSH,
-              ComboType.BOMB_6, ComboType.BOMB_7, ComboType.BOMB_8,
-              ComboType.BOMB_9, ComboType.BOMB_10, ComboType.BOMB_JOKER}
-
-# Bomb tier is just the ComboType int value (8..16). Higher = stronger.
-
-def level_order_key(rank, level_rank):
-    """
-    Comparison key for LEVEL ORDER (used for singles, pairs, triples,
-    full houses, N-of-a-kind bombs).
-    Level cards rank above A(14), below BJ(16).
-    """
-    if rank == level_rank:
-        return 15  # above A(14), below BJ(16)
-    return rank
-
-def make_deck():
-    """Create 108-card double deck."""
-    cards = []
-    for deck_id in range(2):
-        for rank in range(2, 15):  # 2 through A(=14)
-            for suit in range(4):
-                cards.append(Card(rank, suit, deck_id))
-        cards.append(Card(Rank.BLACK_JOKER, 0, deck_id))
-        cards.append(Card(Rank.RED_JOKER, 0, deck_id))
-    return cards
-
-def is_wild(card, level_rank):
-    """Is this card a wild (♥ of level rank)?"""
-    return card.rank == level_rank and card.suit == Suit.HEART
+    Curriculum --> Training
 ```
 
-**Hours 2–3: `combos.py` — Combo generation and comparison**
+#### Methods
 
-This is the hardest file. Every combo type, wild substitution, and the beats() function.
+Implemented curriculum opponent scheduling: agent trains against random until hitting 65% WR (200-game eval), then promotes to greedy (60% gate), then heuristic (terminal stage). Added parallel episode collection to speed up data generation. Tuned hyperparameters across runs 3-5: adjusted learning rate, buffer size, network width, epsilon decay schedule. Run 5 replaced hard curriculum with mixed opponent schedule (% allocation across difficulty levels). Added tqdm progress bars to training and eval loops.
 
-```python
-# combos.py — combo classification, generation, and comparison
+#### Results
 
-class Combo:
-    def __init__(self, combo_type, key_rank, cards, length=0, wild_count=0,
-                 key_is_level_order=False, level_rank=None):
-        self.type = combo_type
-        self.key = key_rank          # primary rank for comparison
-        self.cards = tuple(cards)    # actual cards played
-        self.length = length         # for straights only (always 5 for now)
-        self.wild_count = wild_count
-    
-    def beats(self, other, level_rank):
-        """Can this combo beat 'other'? (other = current trick on table)"""
-        if other is None:
-            return True  # free lead
-        
-        my_bomb = self.type in BOMB_TYPES
-        their_bomb = other.type in BOMB_TYPES
-        
-        # Any bomb beats any non-bomb
-        if my_bomb and not their_bomb:
-            return True
-        if not my_bomb and their_bomb:
-            return False
-        
-        # Both bombs: compare by tier (ComboType int value), then rank
-        if my_bomb and their_bomb:
-            if self.type != other.type:
-                # Different bomb tier → higher enum value wins
-                return self.type > other.type
-            # Same bomb tier
-            if self.type == ComboType.STRAIGHT_FLUSH:
-                # Ranked by top card in NATURAL order (no level promotion)
-                return self.key > other.key
-            if self.type == ComboType.BOMB_JOKER:
-                return False  # can't beat another four-joker (there's only one)
-            # N-of-a-kind: ranked in LEVEL ORDER
-            return level_order_key(self.key, level_rank) > level_order_key(other.key, level_rank)
-        
-        # Neither is bomb: must match type
-        if self.type != other.type:
-            return False
-        
-        # Ordinary combos: comparison depends on type
-        if self.type == ComboType.STRAIGHT:
-            # Ranked by top card in NATURAL order
-            return self.key > other.key
-        
-        if self.type in (ComboType.TUBE, ComboType.PLATE):
-            # Ranked by top pair/triple in NATURAL order
-            return self.key > other.key
-        
-        # Singles, pairs, triples, full houses: LEVEL ORDER
-        return level_order_key(self.key, level_rank) > level_order_key(other.key, level_rank)
+| Run | Config Change | Outcome |
+|-----|--------------|---------|
+| full_run_3 | Reverted lr/train-steps/buffer to stable values | Baseline established |
+| full_run_4 | Lower random gate, selective buffer clear, larger network | Faster promotion |
+| full_run_5 | Mixed opponent schedule (replaces hard curriculum) | Smoother progression |
+| Infra | Parallel episode collection, tqdm, structured logging | Quality of life |
 
-# ─── MOVEGEN ───────────────────────────────────────────
+#### Takeaway
 
-def generate_all_leads(hand, level_rank):
-    """Generate every legal combo from hand (free lead)."""
-    combos = []
-    wilds = [c for c in hand if is_wild(c, level_rank)]
-    naturals = [c for c in hand if not is_wild(c, level_rank)]
-    
-    by_rank = {}  # rank → list of Card
-    for c in naturals:
-        by_rank.setdefault(c.rank, []).append(c)
-    
-    # --- Singles ---
-    # Every distinct card can be a single
-    for rank, cards in by_rank.items():
-        for c in _unique_cards(cards):
-            combos.append(_make(ComboType.SINGLE, rank, [c]))
-    # Wilds as singles (rank as level card)
-    for w in wilds:
-        combos.append(_make(ComboType.SINGLE, level_rank, [w]))
-    
-    # --- Pairs ---
-    # Natural pairs (including BJ+BJ and RJ+RJ, but NOT BJ+RJ)
-    for rank, cards in by_rank.items():
-        if len(cards) >= 2:
-            combos.append(_make(ComboType.PAIR, rank, cards[:2]))
-    # Wild-augmented pairs (wild + any non-joker card)
-    _add_wild_pairs(combos, by_rank, wilds, level_rank)
-    # Pair of wilds (= pair of level cards)
-    if len(wilds) >= 2:
-        combos.append(_make(ComboType.PAIR, level_rank, wilds[:2], wild_count=2))
-    
-    # --- Triples ---
-    for rank, cards in by_rank.items():
-        if len(cards) >= 3:
-            combos.append(_make(ComboType.TRIPLE, rank, cards[:3]))
-    _add_wild_triples(combos, by_rank, wilds, level_rank)
-    
-    # --- Full houses (triple + pair) ---
-    _add_full_houses(combos, by_rank, wilds, level_rank)
-    
-    # --- Straights (exactly 5 consecutive, natural order, NOT all same suit) ---
-    _add_straights(combos, by_rank, wilds, level_rank)
-    
-    # --- Tubes (exactly 3 consecutive pairs, natural order) ---
-    _add_tubes(combos, by_rank, wilds, level_rank)
-    
-    # --- Plates (exactly 2 consecutive triples, natural order) ---
-    _add_plates(combos, by_rank, wilds, level_rank)
-    
-    # --- N-of-a-kind bombs (4 through 10) ---
-    _add_nofakind_bombs(combos, by_rank, wilds, level_rank)
-    
-    # --- Straight flushes (5 consecutive, same suit, natural order) ---
-    _add_straight_flushes(combos, hand, wilds, level_rank)
-    
-    # --- Four-joker bomb ---
-    jokers = [c for c in hand if c.rank in (Rank.BLACK_JOKER, Rank.RED_JOKER)]
-    if len(jokers) == 4:
-        combos.append(_make(ComboType.BOMB_JOKER, 99, jokers))
-    
-    return _deduplicate(combos)
-
-def generate_responses(hand, level_rank, trick):
-    """Generate all combos that beat the current trick, plus PASS."""
-    leads = generate_all_leads(hand, level_rank)
-    responses = [c for c in leads if c.beats(trick, level_rank)]
-    responses.append(Combo(ComboType.PASS, 0, []))
-    return responses
-
-# ─── HELPER GENERATORS ────────────────────────────────
-
-def _make(ctype, key, cards, length=0, wild_count=0):
-    return Combo(ctype, key, cards, length, wild_count)
-
-def _unique_cards(cards):
-    """Deduplicate identical cards (same rank+suit but different deck)."""
-    seen = set()
-    result = []
-    for c in cards:
-        k = (c.rank, c.suit)
-        if k not in seen:
-            seen.add(k)
-            result.append(c)
-    return result
-
-def _add_wild_pairs(combos, by_rank, wilds, level_rank):
-    """Wild + any non-joker natural = pair of that rank."""
-    if not wilds:
-        return
-    for rank, cards in by_rank.items():
-        if rank >= Rank.BLACK_JOKER:
-            continue  # wilds can't become jokers
-        if len(cards) >= 1:
-            combos.append(_make(ComboType.PAIR, rank, [cards[0], wilds[0]], wild_count=1))
-
-def _add_wild_triples(combos, by_rank, wilds, level_rank):
-    """Wild(s) + naturals to form triples."""
-    n_wild = len(wilds)
-    for rank, cards in by_rank.items():
-        if rank >= Rank.BLACK_JOKER:
-            continue
-        n = len(cards)
-        if n == 2 and n_wild >= 1:
-            combos.append(_make(ComboType.TRIPLE, rank, cards[:2] + wilds[:1], wild_count=1))
-        if n == 1 and n_wild >= 2:
-            combos.append(_make(ComboType.TRIPLE, rank, cards[:1] + wilds[:2], wild_count=2))
-
-def _add_full_houses(combos, by_rank, wilds, level_rank):
-    """Triple + Pair. Enumerate all triple/pair combos including wild-assisted."""
-    # TODO: implement — enumerate all (triple, pair) combos where
-    # triple and pair use different ranks and total wilds used ≤ len(wilds)
-    pass
-
-def _sequence_ranks():
-    """Valid ranks for sequences in natural order. Ace can be high or low.
-    Returns list of rank values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-    where 1 = Ace-low, 2-13 = normal, 14 = Ace-high.
-    """
-    return list(range(1, 15))  # 1(A-low), 2, 3, 4, ..., 13(K), 14(A-high)
-
-def _add_straights(combos, by_rank, wilds, level_rank):
-    """Exactly 5 consecutive cards, natural order. NOT all same suit.
-    Ace-low: A(=1)-2-3-4-5. Ace-high: 10-J-Q-K-A(=14).
-    No wrapping (K-A-2-3-4 invalid). Jokers never in straights.
-    Level cards in NATURAL position.
-    """
-    # TODO: implement
-    # For each starting rank in [1, 2, ..., 10] (5-card window):
-    #   Check if hand has cards for each of the 5 consecutive ranks
-    #   (using wilds to fill gaps, max wilds used ≤ available wilds)
-    #   Ensure NOT all same suit (check after selecting cards)
-    #   Rank 1 = Ace-low, Rank 14 = Ace-high
-    #   Key = top rank of straight (natural order)
-    pass
-
-def _add_tubes(combos, by_rank, wilds, level_rank):
-    """Exactly 3 consecutive pairs, natural order.
-    Ace-low: AA-22-33. Ace-high: QQ-KK-AA.
-    No joker pairs. Level cards in natural position.
-    """
-    # TODO: implement
-    # For each starting rank: need 2 cards of each of 3 consecutive ranks
-    # Wilds can fill gaps
-    pass
-
-def _add_plates(combos, by_rank, wilds, level_rank):
-    """Exactly 2 consecutive triples, natural order.
-    Ace-low: AAA-222. Ace-high: KKK-AAA.
-    Level cards in natural position.
-    """
-    # TODO: implement
-    pass
-
-def _add_nofakind_bombs(combos, by_rank, wilds, level_rank):
-    """N-of-a-kind bombs (4 through 10). Wilds extend natural groups."""
-    n_wild = len(wilds)
-    for rank, cards in by_rank.items():
-        if rank >= Rank.BLACK_JOKER:
-            continue  # no joker bombs via N-of-a-kind
-        n = len(cards)  # max 8 from double deck
-        # Generate all possible sizes from 4 to min(n + n_wild, 10)
-        for size in range(4, min(n + n_wild, 10) + 1):
-            needed_wilds = max(0, size - n)
-            if needed_wilds > n_wild:
-                continue
-            # Map size to bomb type
-            bomb_type = {4: ComboType.BOMB_4, 5: ComboType.BOMB_5,
-                         6: ComboType.BOMB_6, 7: ComboType.BOMB_7,
-                         8: ComboType.BOMB_8, 9: ComboType.BOMB_9,
-                         10: ComboType.BOMB_10}.get(size)
-            if bomb_type:
-                used_cards = cards[:min(n, size)] + wilds[:needed_wilds]
-                combos.append(_make(bomb_type, rank, used_cards, wild_count=needed_wilds))
-
-def _add_straight_flushes(combos, hand, wilds, level_rank):
-    """5 consecutive same-suit cards, natural order.
-    Ace high or low. Wilds can fill gaps (declared as needed suit).
-    Jokers cannot be used. Level cards in natural position.
-    """
-    # TODO: implement
-    # For each suit, for each starting rank:
-    #   Find natural cards of that suit at each of 5 consecutive ranks
-    #   Fill gaps with wilds (max wilds ≤ available)
-    #   Key = top rank (natural order)
-    pass
-
-def _deduplicate(combos):
-    """Remove duplicate combos (same type + key + card set)."""
-    seen = set()
-    result = []
-    for c in combos:
-        # Use frozenset of card identities for dedup
-        card_ids = frozenset((card.rank, card.suit, card.deck) for card in c.cards)
-        key = (c.type, c.key, c.length, card_ids)
-        if key not in seen:
-            seen.add(key)
-            result.append(c)
-    return result
-```
-
-**Implementation notes on movegen**:
-- Wild cards make movegen combinatorially harder. The key insight: you only have **0, 1, or 2 wilds**, so you can enumerate wild placements exhaustively.
-- For straights/tubes/plates with wilds: iterate over all possible start ranks and lengths, count how many gaps exist, check if wilds can fill them.
-- **Deduplication**: Multiple wild placements might produce the "same" combo (same type + key). Deduplicate by (combo_type, key_rank, length, frozenset of card IDs).
-- **Test heavily**: The movegen is the #1 source of bugs in every Guan Dan RL implementation.
-
-**Hour 3–4: `game.py` — Full game loop with 4 players**
-
-```python
-# game.py — 4-player Guan Dan game environment
-
-class GuanDanEnv:
-    def __init__(self, level_rank=Rank.TWO):
-        self.level_rank = level_rank
-        self.reset()
-    
-    def reset(self):
-        deck = make_deck()
-        random.shuffle(deck)
-        self.hands = [
-            set(deck[0:27]),  set(deck[27:54]),
-            set(deck[54:81]), set(deck[81:108])
-        ]
-        self.played = [set() for _ in range(4)]  # cards each player has played
-        self.current_player = 0         # who acts next
-        self.current_trick = None       # Combo or None (free lead)
-        self.trick_winner = None        # who played the current winning combo
-        self.consecutive_passes = 0     # consecutive passes since last play
-        self.finish_order = []          # [first_out, second_out, ...]
-        self.is_out = [False] * 4       # who has gone out
-        self.done = False
-    
-    def _next_player(self, from_player):
-        """Next player COUNTERCLOCKWISE (to the right). Skips players who are out."""
-        p = (from_player - 1) % 4  # counterclockwise = subtract 1
-        for _ in range(4):
-            if not self.is_out[p]:
-                return p
-            p = (p - 1) % 4
-        return None  # all out
-    
-    def _partner(self, player):
-        """Return partner seat. 0↔2, 1↔3."""
-        return (player + 2) % 4
-    
-    def _active_count(self):
-        """How many players are still in."""
-        return sum(1 for x in self.is_out if not x)
-    
-    def _winning_team_done(self):
-        """Check if both members of the winning team (team of 1st finisher) are out."""
-        if len(self.finish_order) < 1:
-            return False
-        first = self.finish_order[0]
-        partner = self._partner(first)
-        return self.is_out[first] and self.is_out[partner]
-    
-    def step(self, combo):
-        """
-        Execute a play. combo is a Combo object from legal_moves().
-        Returns (current_player, done).
-        """
-        player = self.current_player
-        
-        if combo.type == ComboType.PASS:
-            self.consecutive_passes += 1
-            
-            # Trick ends when 3 consecutive passes after the last play
-            if self.consecutive_passes >= 3:
-                self._end_trick()
-                self.current_player = self._resolve_leader()
-                return self.current_player, self.done
-            
-            self.current_player = self._next_player(player)
-            # Skip players who are out (they auto-pass and count toward consecutive_passes)
-            # Actually: "A player with no card left in hand passes every opportunity to play"
-            # The _next_player already skips out players, but we need to count their
-            # auto-passes. For simplicity, we skip them in _next_player and only
-            # count explicit passes. This means consecutive_passes counts only
-            # among active players. The rule "3 consecutive passes" means 3 passes
-            # from other players after the last play. Since out players are skipped,
-            # this works correctly when active_count adjusts:
-            # - 4 active: need 3 passes to end trick
-            # - 3 active: need 2 passes (only 2 others besides trick_winner)
-            # - 2 active: need 1 pass
-            # Wait — re-reading: "three consecutive players pass" and out players
-            # always pass. So if player A plays, then B passes, C is out (auto-pass),
-            # D passes → that's 3 consecutive passes → trick ends.
-            # For correct implementation: count out players' auto-passes too.
-            # Simplest approach: after each non-pass play, count how many players
-            # (including out players) have passed since then.
-            return self.current_player, self.done
-        
-        # --- Non-pass play ---
-        for card in combo.cards:
-            self.hands[player].discard(card)
-            self.played[player].add(card)
-        
-        self.current_trick = combo
-        self.trick_winner = player
-        self.consecutive_passes = 0
-        
-        # Check if player goes out
-        if len(self.hands[player]) == 0:
-            self.finish_order.append(player)
-            self.is_out[player] = True
-            
-            # Game ends when both members of the winning team are out
-            if self._winning_team_done():
-                # Add remaining players to finish order
-                for p in range(4):
-                    if p not in self.finish_order:
-                        self.finish_order.append(p)
-                self.done = True
-                return self.current_player, True
-        
-        # Advance to next active player (counterclockwise, skip out players)
-        next_p = self._next_player(player)
-        
-        # If we've come back to the trick winner, trick is over
-        if next_p == self.trick_winner:
-            self._end_trick()
-            self.current_player = self._resolve_leader()
-        else:
-            self.current_player = next_p
-        
-        return self.current_player, self.done
-    
-    def _end_trick(self):
-        """Reset trick state for new trick."""
-        self.current_trick = None
-        self.consecutive_passes = 0
-    
-    def _resolve_leader(self):
-        """
-        Who leads the next trick?
-        - Normally: the trick winner
-        - If trick winner has gone out: their PARTNER leads
-          (pagat: "If the player whose turn it is to lead has no cards left, 
-           the lead passes to that player's partner")
-        - If partner also out: next active player counterclockwise
-        """
-        leader = self.trick_winner
-        if not self.is_out[leader]:
-            return leader
-        partner = self._partner(leader)
-        if not self.is_out[partner]:
-            return partner
-        # Both out — shouldn't happen if game end is checked properly
-        return self._next_player(leader)
-    
-    def legal_moves(self, player=None):
-        if player is None:
-            player = self.current_player
-        if self.current_trick is None:
-            return generate_all_leads(self.hands[player], self.level_rank)
-        else:
-            return generate_responses(self.hands[player], self.level_rank,
-                                      self.current_trick)
-    
-    def get_rewards(self):
-        """Rank-based zero-sum rewards from finish order."""
-        position_rewards = [3.0, 1.0, -1.0, -3.0]
-        rewards = {}
-        for pos, player in enumerate(self.finish_order):
-            rewards[player] = position_rewards[pos]
-        return rewards
-    
-    def is_leading(self, player=None):
-        return self.current_trick is None
-```
-
-**Hour 4 checkpoint — TEST THE ENGINE**:
-
-```python
-# test_game.py — run this BEFORE writing any training code
-
-def test_random_games(n=10_000):
-    env = GuanDanEnv()
-    crashes = 0
-    for i in range(n):
-        env.reset()
-        steps = 0
-        while not env.done and steps < 500:
-            legal = env.legal_moves()
-            assert len(legal) > 0, f"No legal moves for player {env.current_player}"
-            move = random.choice(legal)
-            env.step(move)
-            steps += 1
-        
-        if not env.done:
-            crashes += 1
-            continue
-        
-        assert len(env.finish_order) == 4, f"Expected 4 finishers, got {len(env.finish_order)}"
-        assert set(env.finish_order) == {0, 1, 2, 3}
-        # Verify winning team: first finisher's team both done
-        first = env.finish_order[0]
-        partner = (first + 2) % 4
-        assert env.is_out[first] and env.is_out[partner], "Winning team not both out"
-    
-    print(f"Ran {n} random games: {crashes} crashes, "
-          f"{n - crashes} completed successfully")
-
-def test_team_balance(n=50_000):
-    """Random play should give ~50% winrate to each team."""
-    team_02_wins = 0
-    env = GuanDanEnv()
-    for _ in range(n):
-        env.reset()
-        while not env.done:
-            env.step(random.choice(env.legal_moves()))
-        r = env.get_rewards()
-        if r[0] + r[2] > 0:
-            team_02_wins += 1
-    print(f"Team {{0,2}} winrate: {team_02_wins/n:.1%} (expect ~50%)")
-
-def test_counterclockwise():
-    """Verify play direction is counterclockwise."""
-    env = GuanDanEnv()
-    env.reset()
-    env.current_player = 0
-    # After player 0 plays, next should be player 3 (counterclockwise)
-    legal = env.legal_moves()
-    env.step(legal[0])  # player 0 plays something
-    if not env.done:
-        # Next player should be 3 (0-1 = -1 mod 4 = 3)
-        assert env.current_player == 3 or env.is_out[3], \
-            f"Expected player 3 next (CCW), got {env.current_player}"
-    print("Counterclockwise play direction: OK")
-
-def test_all_combo_types_appear(n=50_000):
-    """Verify every combo type gets generated at least once across many games."""
-    seen_types = set()
-    env = GuanDanEnv()
-    for _ in range(n):
-        env.reset()
-        while not env.done:
-            legal = env.legal_moves()
-            for m in legal:
-                seen_types.add(m.type)
-            env.step(random.choice(legal))
-    
-    expected = {ComboType.SINGLE, ComboType.PAIR, ComboType.TRIPLE,
-                ComboType.FULL_HOUSE, ComboType.STRAIGHT, ComboType.TUBE,
-                ComboType.PLATE, ComboType.BOMB_4, ComboType.BOMB_5,
-                ComboType.STRAIGHT_FLUSH}
-    # Rare types (BOMB_6+, BOMB_JOKER) may not appear in 50K random games
-    missing_critical = expected - seen_types
-    print(f"Combo types seen: {sorted(seen_types)}")
-    if missing_critical:
-        print(f"WARNING — missing critical types: {missing_critical}")
-    else:
-        print("All common combo types generated")
-
-def test_bomb_hierarchy():
-    """Verify bomb ordering: 4 < 5 < SF < 6 < 7 < 8 < 9 < 10 < JokerBomb"""
-    level_rank = Rank.TWO
-    # Create mock combos
-    b4 = Combo(ComboType.BOMB_4, Rank.FIVE, [], wild_count=0)
-    b5 = Combo(ComboType.BOMB_5, Rank.THREE, [], wild_count=0)  # lowest quintuple
-    sf = Combo(ComboType.STRAIGHT_FLUSH, Rank.FIVE, [], wild_count=0)  # A-2-3-4-5
-    b6 = Combo(ComboType.BOMB_6, Rank.THREE, [], wild_count=0)
-    bj = Combo(ComboType.BOMB_JOKER, 99, [], wild_count=0)
-    
-    assert b5.beats(b4, level_rank), "Quintuple should beat quadruple"
-    assert sf.beats(b5, level_rank), "Straight flush should beat quintuple"
-    assert b6.beats(sf, level_rank), "Sextuple should beat straight flush"
-    assert bj.beats(b6, level_rank), "Joker bomb should beat sextuple"
-    assert not b4.beats(b5, level_rank), "Quadruple should NOT beat quintuple"
-    print("Bomb hierarchy: OK")
-
-def test_level_order_vs_natural():
-    """Verify level cards rank correctly in different contexts."""
-    level_rank = 7  # level 7
-    
-    # In LEVEL ORDER: 7 ranks above A
-    assert level_order_key(7, 7) > level_order_key(Rank.ACE, 7), \
-        "Level 7 should rank above Ace in level order"
-    
-    # In NATURAL ORDER (for straights): 7 sits between 6 and 8
-    # This means 5-6-7-8-9 is a valid straight, and 7 doesn't jump above A
-    assert Rank.SIX < Rank.SEVEN < Rank.EIGHT, \
-        "In natural order, 7 should be between 6 and 8"
-    print("Level order vs natural order: OK")
-
-def test_ace_low_straight():
-    """Verify A-2-3-4-5 is a valid straight (ace low)."""
-    # This should be generated by movegen when hand contains A, 2, 3, 4, 5
-    # The straight's key should be 5 (ranked by top card = 5 in natural order)
-    # 10-J-Q-K-A should also work with key = A(14)
-    # K-A-2-3-4 should NOT be valid
-    print("Ace-low straight test: implement after movegen is complete")
-
-def test_straight_vs_straight_flush():
-    """5 consecutive same-suit = straight flush BOMB, not ordinary straight."""
-    # Movegen must check suit uniformity when generating straights
-    # and route all-same-suit combos to STRAIGHT_FLUSH instead
-    print("Straight vs SF test: implement after movegen is complete")
-```
-
-**Do not proceed until all tests pass.** A broken engine wastes every subsequent hour.
+Curriculum works — agent progresses through stages. But training is painfully slow on CPU. Single-threaded episode collection is the bottleneck. → Need hardware acceleration.
 
 ---
 
-### Block 2 (Hours 5–7): Encoding + Q-Network + DMC Loop
+### 4. Mar 18-20 — Rust Acceleration + Distributed Training
 
-Once the engine is verified, this is the same DMC core from the previous plan — just wired to the real game.
+#### Why
 
-**Hour 5: `encoding.py`**
+Profiling showed movegen (legal move generation) as the CPU bottleneck. A single training episode requires thousands of movegen calls. Need to break through the CPU wall to make 50K+ episode runs feasible.
 
-```python
-# encoding.py — full Guan Dan state/action to tensors
+#### Architecture
 
-import numpy as np
+```mermaid
+flowchart LR
+    subgraph Acceleration["Acceleration Stack"]
+        PY["Python Game Loop"] --> RS["Rust Movegen\nPyO3 FFI"]
+        RS --> PC["Producer-Consumer\nCPU Workers"]
+        PC --> GPU["GPU Batch\nForward Pass"]
+    end
 
-# Card matrix: 15 ranks × 4 suits
-# 15 ranks: 2,3,4,5,6,7,8,9,10,J,Q,K,A,BJ,RJ
-# 4 columns: one per suit, values are counts (0/1/2 from double deck)
+    subgraph Modal["Modal Cloud"]
+        A10G["A10G GPU"] --> TRAIN["Training Loop"]
+        VOL["Volume Mount\ncheckpoints/"] --> TRAIN
+    end
 
-NUM_RANKS = 15   # 2..A(14), BJ, RJ
-NUM_COLS = 4     # suits, with count values
-
-def _rank_index(rank):
-    """Map rank to matrix row index (0-14)."""
-    if rank <= 14:
-        return rank - 2  # 2→0, 3→1, ..., A(14)→12
-    if rank == 16:       # BLACK_JOKER
-        return 13
-    if rank == 17:       # RED_JOKER
-        return 14
-    raise ValueError(f"Unknown rank {rank}")
-
-def cards_to_matrix(cards):
-    """Cards → [15, 4] count matrix (suit-level counts, 0/1/2)."""
-    mat = np.zeros((NUM_RANKS, NUM_COLS), dtype=np.float32)
-    for c in cards:
-        ri = _rank_index(c.rank)
-        si = c.suit if c.rank <= 14 else 0
-        mat[ri, si] = min(mat[ri, si] + 1, 2)
-    return mat
-
-NUM_COMBO_TYPES = 17  # ComboType enum has values 0..16
-
-def encode_state(env, player):
-    """
-    State features for player (relative perspective).
-    """
-    opp_L = (player - 1) % 4  # left = previous in CCW order
-    partner = (player + 2) % 4
-    opp_R = (player + 1) % 4  # right = next in CCW order
-
-    hand       = cards_to_matrix(env.hands[player]).flatten()        # 60
-    played_me  = cards_to_matrix(env.played[player]).flatten()       # 60
-    played_par = cards_to_matrix(env.played[partner]).flatten()      # 60
-    played_opL = cards_to_matrix(env.played[opp_L]).flatten()        # 60
-    played_opR = cards_to_matrix(env.played[opp_R]).flatten()        # 60
-    
-    # Cards unaccounted for
-    all_played = set()
-    for p in range(4):
-        all_played |= env.played[p]
-    known = env.hands[player] | all_played
-    unknown = set(make_deck()) - known
-    remaining = cards_to_matrix(unknown).flatten()                   # 60
-    
-    # Card counts (normalized, relative order: me, right, partner, left)
-    counts = np.array([len(env.hands[(player + i) % 4]) / 27.0
-                       for i in range(4)], dtype=np.float32)         # 4
-    
-    # Out flags (relative order)
-    out_flags = np.array([float(env.is_out[(player + i) % 4])
-                          for i in range(4)], dtype=np.float32)      # 4
-    
-    # Level rank (one-hot over 13 normal ranks: 2..A)
-    level_oh = np.zeros(13, dtype=np.float32)
-    level_oh[env.level_rank - 2] = 1.0                               # 13
-    
-    # Wild cards in hand
-    wilds_in_hand = sum(1 for c in env.hands[player]
-                        if is_wild(c, env.level_rank))
-    wild_flags = np.array([float(wilds_in_hand >= 1),
-                           float(wilds_in_hand >= 2)], dtype=np.float32)  # 2
-    
-    # Current trick info
-    is_leader = np.array([float(env.current_trick is None)], dtype=np.float32)  # 1
-    trick_type_oh = np.zeros(NUM_COMBO_TYPES, dtype=np.float32)      # 17
-    trick_key_oh = np.zeros(NUM_RANKS, dtype=np.float32)             # 15
-    trick_is_bomb = np.array([0.0], dtype=np.float32)                # 1
-    if env.current_trick is not None:
-        trick_type_oh[env.current_trick.type] = 1.0
-        if 2 <= env.current_trick.key <= 17:
-            trick_key_oh[_rank_index(env.current_trick.key)] = 1.0
-        trick_is_bomb[0] = float(env.current_trick.type in BOMB_TYPES)
-    
-    return np.concatenate([
-        hand, played_me, played_par, played_opL, played_opR,  # 300
-        remaining, counts, out_flags,                          # 68
-        level_oh, wild_flags, is_leader,                       # 16
-        trick_type_oh, trick_key_oh, trick_is_bomb             # 33
-    ])
-    # Total: ~417 dims
-
-def encode_action(combo, hand=None):
-    """Action features."""
-    cards_played = cards_to_matrix(combo.cards).flatten()              # 60
-    combo_type_oh = np.zeros(NUM_COMBO_TYPES, dtype=np.float32)       # 17
-    combo_type_oh[combo.type] = 1.0
-    combo_key_oh = np.zeros(NUM_RANKS, dtype=np.float32)              # 15
-    if 2 <= combo.key <= 17:
-        combo_key_oh[_rank_index(combo.key)] = 1.0
-    num_cards = np.array([len(combo.cards) / 10.0], dtype=np.float32) # 1
-    is_bomb = np.array([float(combo.type in BOMB_TYPES)], dtype=np.float32) # 1
-    wild_oh = np.zeros(3, dtype=np.float32)                           # 3
-    wild_oh[min(combo.wild_count, 2)] = 1.0
-    
-    return np.concatenate([
-        cards_played, combo_type_oh, combo_key_oh,
-        num_cards, is_bomb, wild_oh
-    ])
-    # Total: ~97 dims
+    Acceleration --> Modal
 ```
 
-**Hour 6: `q_network.py` + `replay.py`** — Same MLP and buffer as before, just adjust dims:
+#### Methods
 
-```python
-# q_network.py
-class QNetwork(nn.Module):
-    def __init__(self, d_state=417, d_action=97, hidden=256):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(d_state + d_action, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, 1)
-        )
-    
-    def forward(self, state, action):
-        x = torch.cat([state, action], dim=-1)
-        return self.net(x).squeeze(-1)
-```
+Ported movegen to Rust via PyO3 for native-speed legal move generation. Built a producer-consumer architecture: CPU worker processes generate episodes in parallel, feeding a shared queue consumed by the GPU training process. Created a Modal launcher script for A10G GPU training with proper PYTHONPATH, volume mounts, and HuggingFace token secrets. Added batched forward pass for parallel distillation — multiple environments share a single GPU inference call.
 
-**Hour 7: `train.py`** — Identical DMC loop, 4 players instead of 2:
+#### Results
 
-```python
-def play_episode(env, q_net, epsilon):
-    env.reset()
-    transitions = {p: [] for p in range(4)}
-    
-    while not env.done:
-        player = env.current_player
-        legal = env.legal_moves()
-        state_enc = encode_state(env, player)
-        action_encs = np.array([encode_action(m) for m in legal])
-        
-        if random.random() < epsilon:
-            idx = random.randint(0, len(legal) - 1)
-        else:
-            with torch.no_grad():
-                s = torch.tensor(state_enc).unsqueeze(0).expand(len(legal), -1)
-                a = torch.tensor(action_encs)
-                idx = q_net(s, a).argmax().item()
-        
-        transitions[player].append((state_enc, action_encs[idx]))
-        env.step(legal[idx])
-    
-    # Terminal rewards → same return for all of that player's transitions
-    rewards = env.get_rewards()
-    all_trans = []
-    for player, tlist in transitions.items():
-        G = rewards[player]
-        for (s, a) in tlist:
-            all_trans.append((s, a, G))
-    return all_trans
-```
+| Metric | Before | After | Speedup |
+|--------|--------|-------|---------|
+| Movegen | Python | Rust (PyO3) | 3.5x |
+| Episode collection | Single-threaded | Producer-consumer | ~9x overall |
+| GPU throughput | Sequential inference | Batched forward | ~10x |
+| 50K episodes | >24h (estimated) | ~6h | ~4x |
 
-### Block 3 (Hours 8–10): Train + Debug + Evaluate
+#### Takeaway
 
-- Run training: 20K–50K episodes on CPU
-- Expect ~1–3 episodes/second (Python movegen is slow with wilds — that's OK)
-- **Overnight run**: kick off 50K episodes before bed, check in morning
-- Evaluate: Q-agent (all 4 seats) vs random (all 4 seats), measure team winrate
-
-**What you should see**:
-```
-Ep  1000 | ε=0.28 | buf=35000 | WR vs random: 52%   ← noise
-Ep  5000 | ε=0.24 | buf=100K  | WR vs random: 58%   ← signal
-Ep 20000 | ε=0.14 | buf=100K  | WR vs random: 68%   ← learning
-Ep 50000 | ε=0.05 | buf=100K  | WR vs random: 75%+  ← target
-```
-
-**If winrate is stuck at 50%**: The most likely cause is a movegen bug, especially in wild card handling. Run `test_all_combo_types_appear()` and manually verify 20 random games by printing every move.
-
-### Hours 10–12: Stretch Goals (Pick One)
-
-1. **Add `remaining_after_play`** to action encoding (Section 3.2 of full plan)
-2. **Add heuristic agent** and eval against it
-3. **Profile movegen** and identify the hot path for future Cython port
-4. **Add lead/follow network split** (2 Q-networks)
+Training is now fast enough for serious experiments. 50K episodes in a few hours instead of days. → Unlocks distillation and self-play approaches that need high throughput.
 
 ---
 
-## 3. Project Structure
+### 5. Mar 20 — Supervised Distillation Pipeline
 
-```
-chucking-eggs/
-├── cards.py          # Card, Rank, Suit, ComboType, level_order_key, wild detection (~80 lines)
-├── combos.py         # Combo class, beats(), ALL movegen functions (~400-500 lines)
-│                     #   Hardest file: 9 bomb tiers, wild substitution, ace-low sequences,
-│                     #   straight vs straight-flush routing, deduplication
-├── game.py           # GuanDanEnv: 4-player CCW game loop (~200 lines)
-├── encoding.py       # state/action → tensors (~100 lines)
-├── q_network.py      # MLP Q(s,a) (~20 lines)
-├── replay.py         # Circular buffer (~30 lines)
-├── train.py          # DMC loop: play + learn + eval (~100 lines)
-├── heuristic.py      # Rule-based baseline (~40 lines)
-└── test_game.py      # Engine correctness tests (~120 lines)
+#### Why
+
+RL from scratch is sample-inefficient — the agent explores randomly for thousands of episodes before learning basic patterns that a heuristic bot already knows. Pre-training from a teacher bot should give the Q-network a warm start.
+
+#### Architecture
+
+```mermaid
+flowchart LR
+    subgraph Pipeline["3-Stage Distillation"]
+        S1["Stage 1\nGenerate games\nw/ teacher bot"] --> S2["Stage 2\nCross-entropy\non action rankings"]
+        S2 --> S3["Stage 3\nSelf-play\nfine-tuning"]
+    end
+
+    subgraph DataFlow["Data Flow"]
+        CPU["CPU Workers\nsimulate games"] --> Q["Shared Queue\nencoded decisions"]
+        Q --> GPU2["GPU Training\ngradient accumulation"]
+    end
+
+    Pipeline --> DataFlow
 ```
 
-**Total**: ~1090–1190 lines. The bulk (~500 lines) is in `combos.py` because movegen with wilds, ace-low sequences, 9 bomb tiers, and straight/straight-flush disambiguation is genuinely complex.
+#### Methods
+
+Three-stage pipeline: (1) Generate games with teacher bot (HeuristicBot or StrategicBot), encoding each decision as (state, action, Q-target). (2) Train Q-network via cross-entropy loss on softmax action rankings. (3) Fine-tune with self-play. Multi-process CPU generation feeds encoded decisions to a GPU consumer via shared queue. Gradient accumulation handles variable batch sizes.
+
+#### Results
+
+| Metric | Value |
+|--------|-------|
+| Teacher agents | HeuristicBot, StrategicBot |
+| Data generation | Multi-process CPU workers |
+| Training | Batched GPU with gradient accumulation |
+| WR after distillation | Warm start above random baseline |
+
+#### Takeaway
+
+Distillation gives a useful warm start, but the ceiling is the teacher's skill level. The agent can only learn what the heuristic already knows. → Can we coordinate teammates? Individual Q-values don't capture team synergy.
 
 ---
 
-## 4. Honest Time Estimate
+### 6. Mar 20-21 — QMIX Multi-Agent Coordination
 
-| Block | Hours | What | Risk |
-|-------|-------|------|------|
-| Game engine (cards + combos + game loop) | 5–6 | Correct Guan Dan with all combos, wilds, 9 bomb tiers, ace-low sequences, CCW play | **High**: wild card movegen + ace-low + straight/SF routing. Budget extra time. |
-| Engine tests | 1–1.5 | Random games, combo coverage, team balance, bomb hierarchy, direction | Gate: don't proceed until passing |
-| Encoding + Q-net + DMC loop | 2 | Wire DMC to real engine | Low: same algorithm, different dims |
-| Training + debug | 2–3 | Run, observe, fix | Medium: slow episodes on CPU |
-| **Total** | **10–12.5** | | |
+#### Why
 
-The game engine is 50%+ of the work. The corrected rules add complexity vs. the previous version: 9 bomb tiers (not 5), ace-low sequences, exact sizes for tubes/plates, straight vs. straight-flush disambiguation, and counterclockwise play. This is the right investment — this engine carries forward unchanged.
+Guan Dan is 2v2 — individual Q-values miss team dynamics. Player 0 might sacrifice a strong play to set up Player 2 for a win. QMIX learns a mixing function that maps individual Q-values to a team Q-value while preserving the ability to extract individual policies.
+
+#### Architecture
+
+```mermaid
+flowchart TB
+    subgraph Agents["Per-Agent Q-Networks"]
+        A0["Agent 0\nQNetworkLSTM"] --> Q0["Q₀"]
+        A2["Agent 2\nQNetworkLSTM"] --> Q2["Q₂"]
+    end
+
+    subgraph Mixer["QMIX Mixing Network"]
+        GS["Global State\n310 dims"] --> HN1["Hypernetwork 1\nabs() weights"]
+        GS --> HN2["Hypernetwork 2\nabs() weights"]
+        Q0 --> MIX["Mix Layer 1\n2→64"]
+        Q2 --> MIX
+        HN1 -->|"weights"| MIX
+        MIX --> MIX2["Mix Layer 2\n64→1"]
+        HN2 -->|"weights"| MIX2
+        MIX2 --> QT["Q_team"]
+    end
+
+    subgraph Training["Two-Phase Training"]
+        PA["Phase A\nFreeze Q-nets\ntrain mixer only"] --> PB["Phase B\nEnd-to-end\ngradient flow"]
+    end
+```
+
+#### Methods
+
+Built TeamMixer (monotonic QMIX with abs() weights ensuring ∂Q_team/∂Q_i ≥ 0) and UnrestrictedMixer (non-monotonic WQMIX Q* for training signal only). Two training phases: Phase A freezes Q-networks and trains only the mixer, Phase B enables end-to-end gradient flow from team Q-value through individual Q-networks. TrickCollector accumulates per-player transitions grouped by trick. Key bug fix: Phase B required storing raw Q-network inputs (state, action, history) in the buffer, not detached scalar Q-values, to enable true backpropagation.
+
+#### Results
+
+| Metric | Value |
+|--------|-------|
+| Mixer architecture | TeamMixer (64 embed, 128 hypernet hidden) |
+| Global state | 310 dims (full deck state, hands, trick info) |
+| Phase A→B training | Verified via custom gradient check |
+| Monotonicity | Enforced (∂Q_team/∂Q_i ≥ 0) |
+| Team reward | (1-ts)×player + ts×partner (team-spirit mixing) |
+
+#### Takeaway
+
+QMIX infrastructure is in place with verified gradient flow. Team-level rewards are properly computed. → But the Q-network needs better initial values to make mixing useful. Need stronger teacher signal.
 
 ---
 
-## 5. Scaling Path (After MVP Day)
+### 7. Mar 23 — Monte Carlo Teacher Distillation
 
-Once the MVP is working, add upgrades **one at a time**, measuring the impact of each:
+#### Why
 
-```
-Day 1 (today):  Full rules + MLP + single process + ε-greedy
-                 └→ WR vs random: ~70-75%
+Heuristic teachers have a skill ceiling — the agent can only learn what the teacher already knows. Monte Carlo rollouts provide empirical value estimates that can exceed any fixed heuristic by averaging over many possible game continuations.
 
-Day 2:           + remaining_after_play encoding
-                 + lead/follow network split  
-                 + heuristic eval opponent
-                 └→ WR vs heuristic: ~55-60%
+#### Architecture
 
-Day 3:           + LSTM history encoder (replace MLP portion)
-                 + larger buffer (500K) + larger batch (1024)
-                 └→ WR vs heuristic: ~65%
+```mermaid
+flowchart LR
+    subgraph MC["MC Data Generation"]
+        SB["StrategicBot\nplays game"] --> STATE["Each decision\nstate + action"]
+        STATE --> ROLL["N MC rollouts\nfrom this state"]
+        ROLL --> VAL["Avg return\n= Q-target"]
+    end
 
-Day 4:           + Cython movegen (10× speedup → 10× more episodes)
-                 + soft-start (heuristic mixing)
-                 └→ WR vs heuristic: ~75%
-
-Day 5-7:         + Modal deployment (32 actors + GPU)
-                 + ResNet blocks
-                 + 2M buffer
-                 → Full plan from original blueprint
-
-Week 2-3:        + Oracle guiding (PTIE)
-                 + Hand prediction
-                 → Human-competitive play
+    subgraph Train["Distillation Training"]
+        VAL --> MSE["MSE Regression\n(not cross-entropy)"]
+        MSE --> QNET["QNetworkLSTM"]
+        AUX["Auxiliary Head\nopponent card prediction"] --> QNET
+    end
 ```
 
-Each step is a single PR-sized change with a measurable before/after.
+#### Methods
+
+Generated MC training data: StrategicBot plays games, at each decision point we run N rollouts from the current state and average the returns as the Q-target. Key correction: switched from cross-entropy to MSE regression — Q-values are continuous, not categorical. Added ranking loss variant for better action ordering. Built auxiliary hand prediction head (60 dims, BCE loss) to predict opponent card distribution — gives the network a richer training signal. Introduced opponent pool for self-play diversity.
+
+#### Results
+
+| Metric | Value |
+|--------|-------|
+| WR progression | 55% → 68.7% → 75.5% vs Strategic |
+| Loss function | MSE regression (fixed from cross-entropy) |
+| Auxiliary head | 60-dim opponent card prediction |
+| Opponent pool | Ring buffer, 70% self-play + 30% pool |
+
+#### Takeaway
+
+MC distillation pushed the agent from 55% to 75.5% vs Strategic — a massive jump. The agent is now competitive. MSE over cross-entropy was a critical fix. → Agent is playable. Time to build the web app and let people play against it.
+
+---
+
+### 8. Mar 24 — Web App MVP (Phase 0)
+
+#### Why
+
+The RL agent beats strategic-level play at 75.5% WR. Need a playable interface to test it against humans, demo the project, and identify weaknesses that synthetic eval misses.
+
+#### Architecture
+
+```mermaid
+flowchart TB
+    subgraph Frontend["Next.js Frontend"]
+        BOARD["Game Board\ngeometric table layout"] --> HAND["Player Hand\ncard rendering + selection"]
+        HAND --> SIDEBAR["Sidebar\nlegal combos + groups"]
+        BOARD --> ANIM["Card Animations\n300ms ease-out"]
+    end
+
+    subgraph Backend["FastAPI Backend"]
+        WS["WebSocket\nreal-time game state"] --> GM["Game Manager\ngame lifecycle"]
+        GM --> AI["AI Service\nload checkpoint\ninference"]
+        GM --> SER["Serializer\ncard ↔ JSON"]
+    end
+
+    subgraph Agent["RL Agent"]
+        CP["selfplay_best.pt\ncheckpoint"] --> LSTM2["QNetworkLSTM\ninference"]
+    end
+
+    Frontend <-->|"WebSocket"| Backend
+    AI --> Agent
+```
+
+#### Methods
+
+Built full-stack web game: Next.js frontend with geometric table layout (4 players around a table), card rendering with suit colors and wild card highlighting, legal combo sidebar with straight flush grouping. FastAPI backend manages game lifecycle over WebSocket — AI moves are sent with pacing delays to feel natural. Wired the RL checkpoint into Expert difficulty tier. Added game result logging. Set up Docker Compose + Redis for local dev environment. Fixed numerous card display issues: joker rendering, bomb matching, wild card SF detection, ace-low straights.
+
+#### Results
+
+| Feature | Status |
+|---------|--------|
+| Solo play (1 human + 3 AI) | Working |
+| Expert RL difficulty | Wired to selfplay_best.pt |
+| Card groups + legal combos | Sidebar with SF detection |
+| Wild card display | Subtle background tint |
+| Game end condition | Team completion (3 players out) |
+| AI auto-pass | Skip inference when PASS is only move |
+| Docker + Redis | Local dev environment |
+
+#### Takeaway
+
+Fully playable solo game in the browser. Playing against the agent reveals patterns that eval metrics miss — the AI sometimes makes moves that are statistically sound but visually confusing. → Want multiplayer (play with friends) and GNN improvement in parallel.
+
+---
+
+### 9. Mar 25-26 — GNN Hand Structure Integration
+
+#### Why
+
+The flat 417-dim state encoding treats the hand as a bag of card counts. It misses structural patterns that humans see instantly: "I have a bomb," "I can form a straight flush," "these three pairs make a tube." A graph neural network over the hand can learn these structural relationships.
+
+#### Architecture
+
+```mermaid
+flowchart LR
+    subgraph GNN["HandGNN (GATv2)"]
+        CARDS["Hand Cards\n≤27 nodes"] --> GRAPH["Card Graph\n5 edge types\n~150 edges"]
+        GRAPH --> GAT1["GATv2 Layer 1\n4 heads, d=64"]
+        GAT1 --> GAT2["GATv2 Layer 2\n4 heads, d=128"]
+        GAT2 --> POOL["Attentive\nReadout"]
+        POOL --> EMB["3×128\nembeddings"]
+    end
+
+    subgraph Integration["QNetworkLSTM + GNN"]
+        EMB --> CAT["Concatenate\n+384 dims"]
+        STATE2["State 417"] --> CAT
+        ACTION2["Action 160"] --> CAT
+        HIST["LSTM history"] --> CAT
+        CAT --> MLP2["MLP\n512 hidden"]
+        MLP2 --> QV["Q-value"]
+    end
+```
+
+#### Methods
+
+Built a per-hand graph with 5 edge types: same_rank (bomb potential), consecutive (straight potential), same_suit_consecutive (SF potential), wild_bridge (substitution paths), same_suit (weaker signal). Each card is a node with 23-dim features (rank one-hot, suit one-hot, wild/joker/level flags). Two GATv2 layers with 4 attention heads learn which card relationships matter. Attentive readout produces 3 fixed-size 128-dim embeddings (hand, action, remaining) concatenated to the Q-network input. Amortized forward: encode the graph once per decision, pool separately for each candidate action. Critical speedup: pre-compute GNN embeddings during episode collection and store the 384-float vector in the replay buffer — avoids rebuilding 1024 graphs per training batch.
+
+#### Results
+
+| Metric | Before (no GNN) | After (GNN) | Delta |
+|--------|-----------------|-------------|-------|
+| Peak WR vs Strategic | 75.5% | 78.5% | +3pp |
+| Training time (50K) | 23h | 2.7h | 8.5x speedup |
+| Network params | 3.68M | 4.12M | +439K (GNN) |
+| GNN params | — | 46K | — |
+| Inference | — | 1.24ms/hand (CPU) | — |
+
+#### Takeaway
+
++3pp WR improvement confirms graph structure helps the Q-network reason about combos. The 8.5x speedup from amortized/pre-computed embeddings was the real unlock — made GNN training feasible. However, later analysis (Mar 28) found GNN MLP columns near-zero (std=0.0017 vs 0.0235 for non-GNN columns). The network learned to mostly ignore the GNN signal. → Stripped dead GNN params in Mar 28.
+
+---
+
+### 10. Mar 25-27 — Web App Multiplayer (Phase 1-2)
+
+#### Why
+
+Solo play works, but Guan Dan is a social game — people want to play with friends. Need lobby system, room codes, WebSocket reconnection, and support for 2-player (duo) and 4-player (quad) modes.
+
+#### Architecture
+
+```mermaid
+flowchart TB
+    subgraph Lobby["Lobby System"]
+        CREATE["Create Room\nduo / quad"] --> CODE["Room Code\n6-char alphanumeric"]
+        CODE --> JOIN["Join Room\nenter code"]
+    end
+
+    subgraph Room["GameRoom"]
+        SEATS["human_seats: set\n{0,2} duo\n{0,1,2,3} quad"] --> ROUTE["Turn Router"]
+        ROUTE -->|"human seat"| WS["WebSocket\nwait for input"]
+        ROUTE -->|"AI seat"| BOT["AI Service\ninference"]
+    end
+
+    subgraph Connections["Connection Management"]
+        CONN["WebSocket Pool"] --> RECON["Reconnection\nresume mid-game"]
+        CONN --> CLEANUP["Room Lifecycle\nexpiry + cleanup"]
+    end
+
+    Lobby --> Room
+    Room --> Connections
+```
+
+#### Methods
+
+Phase 1: Added CORS env var configuration, room lifecycle management (create/join/expire/cleanup), WebSocket reconnection (clients can rejoin mid-game). Phase 2: Refactored GameRoom from single-human assumption to multi-human via `human_seats: set[int]`. This design is mode-agnostic — duo uses `{0, 2}`, quad uses `{0, 1, 2, 3}`, and all game logic routes through `current_player in human_seats`. Adding quad mode required zero backend logic changes — only a new UI button and seat count. Built 14 Playwright e2e tests covering solo difficulty tiers, duo room creation, and quad multiplayer.
+
+#### Results
+
+| Feature | Status |
+|---------|--------|
+| Duo mode (2 humans + 2 AI) | Working |
+| Quad mode (4 humans) | Working (zero backend changes) |
+| Room codes | 6-char alphanumeric |
+| WebSocket reconnection | Resume mid-game |
+| Room lifecycle | Create → join → play → expire |
+| Playwright e2e tests | 14 tests passing in 8s |
+| Backend changes for quad | 0 lines (mode-agnostic design) |
+
+#### Takeaway
+
+The `human_seats` abstraction paid off hugely — quad mode was essentially free. 14 e2e tests give confidence for future changes. → Game is playable multiplayer, but need harder opponents to keep it interesting.
+
+---
+
+### 11. Mar 26 — Inference-Time Search (PIMC)
+
+#### Why
+
+Can we boost the RL agent at inference time without retraining? Perfect Information Monte Carlo (PIMC) determinizes the hidden cards, simulates futures, and picks the action with the best average outcome. Works well in bridge and poker — does it work for Guan Dan?
+
+#### Architecture
+
+```mermaid
+flowchart LR
+    subgraph PIMC["PIMC Search"]
+        HAND["Known hand\n27 cards"] --> DET["Determinize\nsample 81 unknown\ncards across 3 players"]
+        DET --> SIM["Simulate\nN rollouts per\ndeterminization"]
+        SIM --> QGUIDE["Q-guided\naction selection"]
+        QGUIDE --> AVG["Average return\nacross worlds"]
+        AVG --> BEST["Best action"]
+    end
+
+    subgraph Comparison["vs Baseline"]
+        BASE["RLAgentLSTM\ndirect Q-value\n0.17s/game"] ~~~ SEARCH["SearchAgent\nPIMC lookahead\n~6s/game"]
+    end
+```
+
+#### Methods
+
+Built three modules: determinize.py (sample consistent card assignments for hidden hands), simulate.py (fast-forward games to completion), search.py (Q-guided selection with seed control for reproducibility). Created eval_search.py for side-by-side comparison against baseline RL agent.
+
+#### Results
+
+| Metric | Baseline (RL) | PIMC Search |
+|--------|---------------|-------------|
+| WR vs Strategic | 77% | 42-65% |
+| Speed | 0.17s/game | ~6s/game |
+| Determinizations | — | Multiple samples |
+| Outcome | — | **FAILED** |
+
+#### Takeaway
+
+PIMC doesn't work for Guan Dan. Root cause: 81 unknown cards distributed across 3 players creates massive information asymmetry — random determinizations are almost never close to reality. Unlike bridge (13 cards hidden) or poker (2-5 cards hidden), Guan Dan has too many hidden cards for search to be useful. The 35x slowdown makes it impractical even if it worked. → Abandoned search. Need better opponents for training instead.
+
+---
+
+### 12. Mar 27 — Competition Bot Ecosystem + Glicko-2 Calibration
+
+#### Why
+
+The RL agent beats all our hand-written bots but has no one harder to train against. The 2020 NJUPT Guan Dan AI Competition produced strong bots from university teams. Porting them gives us (a) harder training opponents, (b) diverse play styles, and (c) empirically calibrated difficulty tiers for the website.
+
+#### Architecture
+
+```mermaid
+flowchart TB
+    subgraph Porting["Vendor+Wrap Architecture"]
+        SRC["Competition Source\noriginal Python code"] --> VENDOR["_vendor/{team}/\nverbatim copy"]
+        VENDOR --> ADAPTER["Thin Adapter\n{team}_bot.py"]
+        ADAPTER --> REGISTRY["AGENT_REGISTRY\nname → class"]
+    end
+
+    subgraph Calibration["Glicko-2 Rating Pipeline"]
+        MATRIX["13-bot Round Robin\n200 games/matchup\n31,200 total"] --> GLICKO["Glicko-2\n30 convergence passes"]
+        GLICKO --> RATINGS["Calibrated Elo\nper bot"]
+        RATINGS --> TIERS["12 Website\nDifficulty Tiers"]
+    end
+
+    Porting --> Calibration
+```
+
+#### Methods
+
+Ported 8 NJUPT competition bots using vendor+wrap pattern: original source sits verbatim in `_vendor/{team}/`, thin adapter handles Card/Combo ↔ competition format conversion. This isolates their assumptions from our engine. Fixed bugs: relative imports, de-singleton Strategy pattern, empty if-blocks, missing method forwarding. Discovered and fixed critical lalala bug: `_follow()` passed `pass_num=0` (always) instead of `self._pass_num` (cumulative) — the bot's conservative-play threshold (`pass_num >= 7`) never triggered. Ran full 13-bot round-robin (200 games per matchup = 31,200 games, ~3h) and derived Glicko-2 ratings with 30 convergence passes. Ordered all bots into 12 website difficulty tiers.
+
+#### Results
+
+| Bot | Team | Elo | Tier |
+|-----|------|-----|------|
+| RL | — | 1786 | Expert |
+| Jidan | NUAA 2nd | 1779 | Master |
+| Yaoji | NUAA 3rd | 1772 | Grandmaster |
+| NoAI | Fudan 2nd | 1726 | Pro |
+| Strategic | — | 1621 | Hard |
+| XingDream | External | 1523 | Casual |
+| Lalala | SEU 1st | 1464 | Competition |
+| Heuristic | — | 1461 | Medium |
+| Greedy | — | 1415 | Easy |
+| Hulalala | SEU 3rd | 1264 | — |
+| Liuzha | SEU 2nd | 1260 | — |
+| Random | — | 1223 | Beginner |
+| WJSD | SAU 3rd | 1212 | — |
+
+| Diagnostic | Before | After |
+|------------|--------|-------|
+| Lalala pass_num bug | WR 43% vs random | WR 79% vs random |
+| Lalala pass rate | 75% | 63% |
+| Total games for calibration | — | 31,200 |
+| Calibration runtime | — | ~3 hours |
+
+#### Takeaway
+
+RL is #1 (1786) but barely ahead of Jidan (1779) and Yaoji (1772). Some port issues remain — liuzha and hulalala lose to random (port compatibility bugs, not weak play in original). The lalala pass_num fix was invisible without WR analysis — the bot returned valid moves but with wrong behavior. Lesson: always validate ports against random as a sanity check. → RL is top but the margin is thin. Fine-tune against competition bots.
+
+---
+
+### 13. Mar 28 — Production Training + Diagnostic Bug Fixes
+
+#### Why
+
+The RL agent barely leads the competition bots. Fine-tuning against them (instead of just heuristic opponents) should close the gap. But first, discovered two infrastructure bugs that were silently degrading training quality.
+
+#### Architecture
+
+```mermaid
+flowchart LR
+    subgraph Bugs["Bug Fixes"]
+        BUG1["Eval Interval Bug\nepisodes % 5000\nnever fires with\nn_envs=64"] --> FIX1["Threshold Tracking\nnext_eval_at += interval"]
+        BUG2["Dead GNN Columns\nstd=0.0017 vs 0.0235\nnear-zero contribution"] --> FIX2["Auto-Strip\nload_strip_gnn()\n4.12M → 3.68M params"]
+    end
+
+    subgraph Selfplay["Competition Selfplay"]
+        ROTATE["Opponent Rotation\nyaoji / jidan / noai\nrandom per-move"] --> TRAIN2["50K Episodes\nGameRunner on MPS"]
+        TRAIN2 --> GATE["Composite Gate\n(heuristic_WR +\ncompetition_avg) / 2"]
+        GATE --> SAVE["Save Best\nprod_MM_DD_HH_MM.pt"]
+    end
+```
+
+#### Methods
+
+**Bug 1 — Eval interval**: `episodes_done % 5000 == 0` almost never fires when `n_envs=64` (5000 is not divisible by 64). Only 2 of 10 planned evals actually ran. Fixed by replacing modulo check with threshold tracking (`next_eval_at += interval`). **Bug 2 — Dead GNN**: Analysis showed GNN MLP columns had near-zero weights (std=0.0017 vs 0.0235 for non-GNN columns). The network learned to ignore GNN embeddings. Added `load_strip_gnn()` to auto-detect and discard dead columns — lossless shrinking from 4.12M to 3.68M params (baseline eval identical: 69.4% vs 70.0%). **Selfplay**: Launched 50K episode fine-tuning against competition bots. Training opponent rotates randomly per-move through yaoji, jidan, noai. New composite save gate: (heuristic_WR + competition_avg_WR) / 2 ensures best checkpoint beats both rule-based and competition bots. Each new best saves a timestamped `prod_MM_DD_HH_MM.pt` snapshot.
+
+#### Results
+
+| Metric | Before | After | Delta |
+|--------|--------|-------|-------|
+| Eval interval firing | 2/10 evals | 10/10 evals | Fixed |
+| Network params | 4.12M | 3.68M | -440K (lossless) |
+| GNN stripping loss | — | 0.0% (69.4% vs 70.0%) | Confirmed lossless |
+| Composite gate | 66.5% | 71.5% | +5pp |
+| Heuristic WR | 85.0% | 84.0-90.5% | Stable |
+| Competition WR | 48.0% | 48.5-51.0% | Flat |
+| Training episodes | — | 50K | — |
+| Best checkpoint | prod_03_28_11_36.pt | selfplay_best.pt | Updated |
+
+#### Takeaway
+
+Gate improved +5pp overall, but competition WR remains flat (~48-51%) despite training directly against them. High variance in 200-game evals makes it hard to detect small improvements. The eval interval bug means prior training runs had far fewer evaluation checkpoints than expected — some "best" checkpoints may not have been evaluated at the right time. → Competition WR plateau suggests either architectural limits (LSTM capacity), insufficient training duration, or the need for fundamentally different approaches (population-based training, larger networks, or opponent modeling).
+
+---
+
+### 14. Mar 26-27 — Competition Bot Ecosystem + Glicko-2 Calibration
+
+#### Why
+
+The RL agent needed properly rated opposition and a meaningful difficulty ladder. All 6 open-source NJUPT 2020 competition bots (SEU, NUAA, Fudan submissions) were ported verbatim, plus XingDreamBot (a strategic heuristic "Casual" tier). A 31,200-game round-robin (200 games × 78 matchup pairs) established a Win Rate matrix, from which Glicko-2 ratings were derived for all 13 agents. This gave the website 12 distinct, calibrated difficulty tiers — from XingDream (Elo 1415) to the RL Expert (Elo 1786).
+
+#### Architecture
+
+```mermaid
+flowchart LR
+    subgraph Bots["Competition Bots (NJUPT 2020)"]
+        B1["wjsd\nSAU 3rd · 1212"]
+        B2["liuzha\nSEU 2nd · 1260"]
+        B3["hulalala\nSEU 3rd · 1264"]
+        B4["competition\nSEU 1st · 1464"]
+        B5["noai\nFudan · 1726"]
+        B6["yaoji\nNUAA 3rd · 1772"]
+        B7["jidan\nNUAA 2nd · 1779"]
+    end
+
+    subgraph Calibration["Calibration Pipeline"]
+        WR["WR Matrix\n13×13 agents\n200 games each"] --> G2["Glicko-2\nRD converges\n>200 games/pair"]
+        G2 --> LADDER["Elo Ladder\n12 difficulty tiers"]
+    end
+
+    Bots --> WR
+    style B4 fill:#D97757,color:#fff
+    style B5 fill:#D97757,color:#fff
+    style B6 fill:#D97757,color:#fff
+    style B7 fill:#D97757,color:#fff
+```
+
+#### Methods
+
+**Port strategy:** each bot is vendored under `src/guandan/agents/` and wrapped in an `Agent.act(env, player)` interface. Minimal changes — only API bridging, no algorithmic alterations. **Lalala bug fix:** original SEU code used a `pass_num` counter that incremented on every game tick rather than per-trick, causing the bot to misread consecutive-pass sequences; fixing it raised WR from 43% to 79% vs the heuristic. **WR matrix:** `scripts/wr_matrix.py` runs symmetric head-to-head pairs (A vs A, A vs B, B vs A, B vs B seat rotations) to cancel positional bias. **Glicko-2:** each agent starts at Elo 1500, RD 200; after 200+ games per pair, RD converges to ~40 for most agents. The RL checkpoint (`selfplay_best.pt`) participates as a 13th player.
+
+#### Results
+
+| Bot | Source | Elo | WR vs RL |
+|-----|--------|-----|----------|
+| XingDream (Casual) | xingdream/guandan | 1415 | 47% |
+| Competition | SEU · Li Jing, 1st | 1464 | 43% |
+| Easy–Hard | Strategic heuristic | 1415–1621 | 42–45% |
+| Master (NoAI) | Fudan | 1726 | 49% |
+| Yaoji | NUAA, 3rd | 1772 | 50% |
+| Jidan | NUAA, 2nd | 1779 | 50% |
+| **RL Expert** | **This project** | **1786** | — |
+
+*31,200 total games · 3h 20min on M1 Pro · Glicko-2 RD < 45 for all agents*
+
+#### Takeaway
+
+RL is Elo #1 by 7 points over Jidan — a statistically tight margin in 200-game evals (95% CI ≈ ±5pp). The heuristic-only bots (Easy–Hard) rate lower than expected, reflecting that Glicko-2 captures positional consistency while heuristics are strong in some positions and fragile in others. The calibrated ladder gives players a meaningful progression curve and gives training a well-ordered set of curriculum targets.
+
+---
+
+### 15. Mar 27 - Mar 31 — Full-Stack Web App: Accounts, Elo, Multiplayer
+
+#### Why
+
+The game was playable solo against bots but had no persistence — every session was anonymous and disconnected. To make it worth sharing, the app needed real accounts, Elo tracking, a competitive leaderboard, and the ability to play with friends. Phase 1 (accounts + Elo) and Phase 2 (duo/quad multiplayer) shipped in a single sprint.
+
+#### Architecture
+
+```mermaid
+flowchart LR
+    subgraph Frontend["Next.js Frontend (Vercel)"]
+        FE1["Username claim\nce_player_id UUID\n(localStorage)"]
+        FE2["Game page\nWebSocket client\noptimistic groups"]
+        FE3["Profile / Leaderboard\n/profile/[username]\n/leaderboard"]
+    end
+
+    subgraph Backend["FastAPI Backend (Fly.io)"]
+        WS["GameRoom\nWS handler\nseat orchestration"]
+        API["REST API\n/api/auth/claim\n/api/profile/:user"]
+        ELO["Elo engine\nteam-avg rating\nK: 40→24→16"]
+    end
+
+    subgraph DB["MongoDB Atlas (Singapore)"]
+        PL["players\n{player_id, username,\nelo, games_played}"]
+        GM["games\n{mode, seats, finish_pos,\nelo_before/after}"]
+    end
+
+    FE2 <-->|WebSocket| WS
+    FE1 -->|POST claim| API
+    FE3 -->|GET profile| API
+    WS --> ELO --> GM
+    API --> PL
+```
+
+#### Methods
+
+**Accounts:** First-claim-wins username model. UUID stored in `localStorage`; sent as `X-Player-ID` header. No passwords — UUID is the auth token. **Elo:** Team Elo uses `(player_elo + partner_elo) / 2` as the team rating; K-factor scales by experience (40 for first 30 games, 24 for 30–100, 16 after). Margin multiplier: 双上 (both win) ×1.5, normal ×1.0, narrow ×0.7. **Multiplayer rooms:** `GameManager` holds a dict of `game_id → GameRoom`; room codes are 6-char `secrets.choice` strings. `asyncio.Lock` prevents duplicate codes under concurrent creation. **AFK rope timer:** `asyncio.wait_for(timeout=HUMAN_TURN_TIMEOUT_S)` on the WS receive loop; on timeout, auto-plays PASS or smallest legal card. Frontend shows a burndown progress bar under the Play button. **Group UX:** Cards can be grouped into named combos before playing; optimistic local state merges pending temps with server-confirmed groups to avoid flicker on AI moves.
+
+#### Results
+
+| Feature | Detail |
+|---------|--------|
+| Multiplayer modes | Solo, Duo (2-player), Quad (4-player) |
+| Accounts | UUID-based, first-claim username |
+| Elo system | Team-averaged, K-factor by experience |
+| Profile page | Elo history chart, recent games feed |
+| Leaderboard | Human players + bot anchors |
+| Playwright e2e | 25 tests pass, 1 skip (multiplayer + AFK + auth) |
+| AFK timeout | 90s (env-configurable) |
+| Disconnect recovery | 60s grace, then AI takeover |
+
+#### Takeaway
+
+In-memory `GameManager` is the right call for friends-only scale — Redis would add ops overhead for no benefit at <10 CCU. The optimistic group merge pattern (keep pending temps that the server hasn't confirmed yet, replace on match) is the right model for any optimistic UI over a slow feedback loop. Elo computation before the game-over broadcast (not in a background task) is essential — otherwise clients see Elo 0 in the modal.
+
+---
+
+### 16. Apr 1-2 — UI Polish + Production Deploy
+
+#### Why
+
+The app was functionally complete but rough around the edges. A focused polish pass (14 commits in one day) refined the UI — sidebar icons, backdrop blur, animated dropdowns, game-over Elo display, partner hand reveal. Then 15 pre-deploy hardening fixes addressed production failure modes before the first public deploy.
+
+#### Architecture
+
+```mermaid
+flowchart LR
+    GH["GitHub\nmaster branch"] -->|auto-deploy| VCL["Vercel\nNext.js\nchucking-eggs.vercel.app"]
+    VCL <-->|HTTPS + WSS\nCORS-gated| FLY["Fly.io\nFastAPI\nshared-cpu-1x 512MB\nmin 1 machine"]
+    FLY <-->|Motor async\n5s timeout| ATLAS["MongoDB Atlas\nM0 · Singapore\nap-southeast-1"]
+```
+
+#### Methods
+
+**UI polish highlights:** Lucide icons in sidebar, backdrop-blur modal overlay, Chinese subtitle (掼蛋) on home page, animated Play Solo dropdown (`max-h` CSS transition), partner hand revealed face-up when you finish first, game-over modal shows Elo before → after with color-coded delta.
+
+**Hardening (15 fixes):**
+- *Security:* `secrets.choice` for room codes (replace `random.choices`), `slowapi` rate limit on `/api/auth/claim` (5/minute), combo string truncation (64/32 chars)
+- *Reliability:* `json.loads` try/except in WS loop, `.get("elo", 1200)` guard, post-game takeover guard (`not self.env.done`), `asyncio.Lock` on room creation, 5s DB query timeout
+- *Frontend:* `JSON.parse` try/catch in WS `onmessage`, `gd_seat` cleared on `game_over`, `WebSocket.OPEN` guard on all sends, `createGame()` error UI, `localStorage` try/catch for Safari Private Mode, `STORAGE_KEYS` constants
+
+**Deploy stack:** Fly.io backend (`shared-cpu-1x`, 512MB, `min_machines_running=1`, `auto_stop_machines=false` — required to preserve WebSocket connections). Vercel frontend (Next.js App Router, auto-deploy on push). MongoDB Atlas M0 (Singapore, matches Fly region `sin`).
+
+#### Results
+
+| Item | Detail |
+|------|--------|
+| Backend | https://chucking-eggs.fly.dev |
+| Frontend | https://chucking-eggs-poohthewinnies-projects.vercel.app |
+| Hardening fixes | 15 (security A1–A4, frontend A5–A8, scale C1–C6) |
+| Tests at deploy | 25 pass, 1 skip — no regressions |
+| Fly machine size | shared-cpu-1x · 512MB |
+| DB | Atlas M0 · Singapore |
+
+#### Takeaway
+
+`fly launch` overwrites `fly.toml` with bad defaults (port 8080, `auto_stop_machines=true`). Always rewrite `fly.toml` after running it — the correct values are `internal_port=8000`, `auto_stop_machines=false`, `max_machines_running=1`. `uv add` writes to the root ML `pyproject.toml`, not `web/backend/requirements.txt` — never use it for backend dependencies. `slowapi` must be in `requirements.txt` and the Docker image rebuilt before Playwright tests can run against Docker backend.

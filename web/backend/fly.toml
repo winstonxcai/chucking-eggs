@@ -2,7 +2,7 @@ app = 'chucking-eggs'
 primary_region = 'sin'
 
 [build]
-  dockerfile = 'web/backend/Dockerfile'
+  dockerfile = "Dockerfile"
 
 [env]
   PORT = "8000"

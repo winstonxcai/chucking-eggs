@@ -2,17 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system deps for potential Rust/numpy builds
-RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Install Python deps
-COPY web/backend/requirements.txt /app/web/backend/requirements.txt
-RUN pip install --no-cache-dir -r /app/web/backend/requirements.txt
-
-# Copy source (volumes override in dev)
+# Build context is web/backend/ — src/ is the guandan package, app/ is the FastAPI app
 COPY src/ /app/src/
-COPY web/backend/ /app/web/backend/
+COPY app/ /app/app/
 
-ENV PYTHONPATH=/app/src:/app/web/backend
+ENV PYTHONPATH=/app/src:/app
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

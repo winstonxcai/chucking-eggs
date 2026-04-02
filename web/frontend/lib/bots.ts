@@ -1,5 +1,10 @@
 // ELOs are calibrated Glicko-2 ratings derived from a 13-bot round-robin
 // WR matrix (200 games/matchup, 31,200 total games). See runs/wr_matrix_v2/.
+
+// Two groups shown as separate sections in the UI.
+export const OUR_BOTS = ["easy", "medium", "competition", "casual", "hard", "master"] as const;
+export const COMPETITION_BOTS = ["wjsd", "liuzha", "hulalala", "yaoji", "jidan"] as const;
+
 export const DIFFICULTY_INFO: Record<
   string,
   { label: string; description: string; emoji: string; elo: number }

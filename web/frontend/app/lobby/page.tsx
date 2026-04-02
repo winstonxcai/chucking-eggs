@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { RoomStatus, RoomMode } from "@/lib/types";
-import { DIFFICULTY_INFO } from "@/lib/bots";
+import { DIFFICULTY_INFO, OUR_BOTS, COMPETITION_BOTS } from "@/lib/bots";
 import { STORAGE_KEYS } from "@/lib/storage-keys";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -16,7 +16,6 @@ const MODE_LABEL: Record<RoomMode, string> = {
   quad: "4-Player",
 };
 
-const difficulties = ["wjsd", "liuzha", "hulalala", "easy", "medium", "competition", "casual", "hard", "master", "yaoji", "jidan", "expert"] as const;
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -153,14 +152,26 @@ function LobbyContent() {
               onChange={(e) => changeDifficulty(e.target.value)}
               className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:border-accent transition-colors"
             >
-              {difficulties.map((diff) => {
-                const info = DIFFICULTY_INFO[diff];
-                return (
-                  <option key={diff} value={diff}>
-                    {info.emoji} {info.label} — {info.description}
-                  </option>
-                );
-              })}
+              <optgroup label="Our Bots">
+                {OUR_BOTS.map((diff) => {
+                  const info = DIFFICULTY_INFO[diff];
+                  return (
+                    <option key={diff} value={diff}>
+                      {info.emoji} {info.label} — {info.description}
+                    </option>
+                  );
+                })}
+              </optgroup>
+              <optgroup label="Competition Bots">
+                {COMPETITION_BOTS.map((diff) => {
+                  const info = DIFFICULTY_INFO[diff];
+                  return (
+                    <option key={diff} value={diff}>
+                      {info.emoji} {info.label} — {info.description}
+                    </option>
+                  );
+                })}
+              </optgroup>
             </select>
           </div>
         )}

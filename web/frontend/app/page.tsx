@@ -2,12 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { DIFFICULTY_INFO } from "@/lib/bots";
+import { DIFFICULTY_INFO, OUR_BOTS, COMPETITION_BOTS } from "@/lib/bots";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-// Ordered by calibrated Glicko-2 ELO (see runs/wr_matrix_v2/)
-const difficulties = ["wjsd", "liuzha", "hulalala", "easy", "medium", "competition", "casual", "hard", "master", "yaoji", "jidan", "expert"] as const;
 
 export default function Home() {
   const router = useRouter();
@@ -61,15 +58,42 @@ export default function Home() {
             </svg>
           </button>
 
-          <div className={`overflow-hidden transition-all duration-200 ease-out ${soloOpen ? "max-h-[700px] opacity-100" : "max-h-0 opacity-0"}`}>
+          <div className={`overflow-hidden transition-all duration-200 ease-out ${soloOpen ? "max-h-[900px] opacity-100" : "max-h-0 opacity-0"}`}>
             <div className="border border-border rounded-xl overflow-hidden mt-1">
-              {difficulties.map((diff, i) => {
+              {/* Our bots */}
+              <div className="px-4 py-1.5 bg-surface border-b border-border">
+                <span className="text-[10px] font-semibold text-text-secondary tracking-widest uppercase">Our Bots</span>
+              </div>
+              {OUR_BOTS.map((diff, i) => {
                 const info = DIFFICULTY_INFO[diff];
                 return (
                   <button
                     key={diff}
                     className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-background transition-colors duration-150 text-left group ${
-                      i < difficulties.length - 1 ? "border-b border-border" : ""
+                      i < OUR_BOTS.length - 1 ? "border-b border-border" : ""
+                    }`}
+                    onClick={() => router.push(`/game?difficulty=${diff}`)}
+                  >
+                    <span className="text-xl w-7 shrink-0">{info.emoji}</span>
+                    <span className="text-sm font-semibold text-foreground group-hover:text-accent transition-colors duration-150 w-24 shrink-0">
+                      {info.label}
+                    </span>
+                    <span className="text-xs text-text-secondary flex-1 truncate">{info.description}</span>
+                    <span className="text-xs font-mono text-text-secondary opacity-60 shrink-0">{info.elo}</span>
+                  </button>
+                );
+              })}
+              {/* Competition bots */}
+              <div className="px-4 py-1.5 bg-surface border-t border-b border-border">
+                <span className="text-[10px] font-semibold text-text-secondary tracking-widest uppercase">Competition Bots</span>
+              </div>
+              {COMPETITION_BOTS.map((diff, i) => {
+                const info = DIFFICULTY_INFO[diff];
+                return (
+                  <button
+                    key={diff}
+                    className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-background transition-colors duration-150 text-left group ${
+                      i < COMPETITION_BOTS.length - 1 ? "border-b border-border" : ""
                     }`}
                     onClick={() => router.push(`/game?difficulty=${diff}`)}
                   >

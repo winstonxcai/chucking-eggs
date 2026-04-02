@@ -43,5 +43,19 @@ runs/
 # Generated images
 *.png
 
+# Data (generated training data, game logs)
+data/
+
+# Playwright test results
+test-results/
+
+# Log files
+*.log
+
 # Claude Code
 .claude/
+
+# Environment variables
+.env
+.env.local
+.env.*.local

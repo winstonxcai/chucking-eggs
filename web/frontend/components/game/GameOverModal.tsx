@@ -1,5 +1,6 @@
 "use client";
 
+import { X } from "lucide-react";
 import type { GameOverMsg } from "@/lib/types";
 
 interface GameOverModalProps {
@@ -7,16 +8,30 @@ interface GameOverModalProps {
   humanSeat: number;
   onPlayAgain: () => void;
   onSaveState: () => void;
+  onDismiss: () => void;
 }
 
-export default function GameOverModal({ data, humanSeat, onPlayAgain, onSaveState }: GameOverModalProps) {
+export default function GameOverModal({ data, humanSeat, onPlayAgain, onSaveState, onDismiss }: GameOverModalProps) {
   const humanReward = data.rewards[humanSeat] ?? 0;
   const won = humanReward > 0;
   const eloChange = data.elo_changes?.[String(humanSeat)];
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-surface rounded-2xl shadow-xl p-8 max-w-sm w-full flex flex-col items-center gap-4">
+    <div
+      className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50"
+      onClick={onDismiss}
+    >
+      <div
+        className="relative bg-surface rounded-2xl shadow-xl p-5 lg:p-8 max-w-sm w-full flex flex-col items-center gap-4 max-h-[90dvh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onDismiss}
+          className="absolute top-3 right-3 text-text-secondary hover:text-foreground transition-colors"
+          aria-label="Close"
+        >
+          <X size={16} />
+        </button>
         <span className="text-2xl font-bold text-foreground">
           {won ? "🎉 Victory!" : "💀 Defeat"}
         </span>

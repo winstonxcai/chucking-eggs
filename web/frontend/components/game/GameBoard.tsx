@@ -69,6 +69,7 @@ export default function GameBoard({
     toRect: DOMRect;
   } | null>(null);
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
+  const [gameOverDismissed, setGameOverDismissed] = useState(false);
   const tableSeat0Ref = useRef<HTMLDivElement>(null);
   const flyingStartRef = useRef<number | null>(null);
 
@@ -80,6 +81,11 @@ export default function GameBoard({
   // Mobile state
   const [compactHand, setCompactHand] = useState(false);
   const [mobileComboOpen, setMobileComboOpen] = useState(false);
+
+  // Reset dismissed state when a new game starts
+  useEffect(() => {
+    if (!gameOver) setGameOverDismissed(false);
+  }, [gameOver]);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 1023px)");
@@ -533,12 +539,13 @@ export default function GameBoard({
       )}
 
       {/* Game over modal */}
-      {gameOver && (
+      {gameOver && !gameOverDismissed && (
         <GameOverModal
           data={gameOver}
           humanSeat={gameState.my_seat}
           onPlayAgain={onPlayAgain}
           onSaveState={handleSaveState}
+          onDismiss={() => setGameOverDismissed(true)}
         />
       )}
     </div>

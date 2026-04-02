@@ -175,7 +175,7 @@ class GameRoom:
 
     async def _takeover_after_delay(self, seat: int) -> None:
         await asyncio.sleep(DISCONNECT_TAKEOVER_S)
-        if seat not in self.connections:  # still disconnected
+        if seat not in self.connections and not self.env.done:  # still disconnected + game running
             await self._do_ai_takeover(seat)
 
     async def _do_ai_takeover(self, seat: int) -> None:
@@ -294,13 +294,13 @@ class GameRoom:
             for seat in self.human_seats:
                 pid = self.player_ids.get(seat)
                 if pid:
-                    doc = await _db.get_player_by_id(pid)
+                    doc = await asyncio.wait_for(_db.get_player_by_id(pid), timeout=5.0)
                     if doc:
                         human_docs[seat] = doc
 
             def _seat_elo(seat: int) -> int:
                 if seat in human_docs:
-                    return human_docs[seat]["elo"]
+                    return human_docs[seat].get("elo", 1200)
                 return self.player_infos[seat].get("elo") or BOT_ELOS.get(self.difficulty, 1500)
 
             elo_changes: dict[int, dict] = {}
@@ -310,7 +310,7 @@ class GameRoom:
                 partner = 2 if seat == 0 else (0 if seat == 2 else (3 if seat == 1 else 1))
                 opps = [s for s in range(4) if s != seat and s != partner]
                 delta = compute_elo_delta(
-                    player_elo=human_docs[seat]["elo"],
+                    player_elo=human_docs[seat].get("elo", 1200),
                     partner_elo=_seat_elo(partner),
                     opp1_elo=_seat_elo(opps[0]),
                     opp2_elo=_seat_elo(opps[1]),
@@ -318,7 +318,7 @@ class GameRoom:
                     won=rewards[seat] > 0,
                     reward=rewards[seat],
                 )
-                before = human_docs[seat]["elo"]
+                before = human_docs[seat].get("elo", 1200)
                 elo_changes[seat] = {
                     "delta": delta,
                     "before": before,
@@ -483,8 +483,8 @@ class GameRoom:
 
     async def _handle_create_group(self, data: dict, seat: int = 0) -> None:
         card_ids = data.get("card_ids", [])
-        combo_type = data.get("combo_type", "")
-        combo_name = data.get("combo_name", "")
+        combo_type = str(data.get("combo_type", ""))[:32]
+        combo_name = str(data.get("combo_name", ""))[:64]
         groups = self.groups_by_seat.setdefault(seat, [])
         group_id = f"grp-{len(groups)}-{int(time.time() * 1000)}"
         id_set = set(card_ids)

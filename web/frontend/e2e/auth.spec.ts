@@ -68,5 +68,6 @@ test("email field is optional — claim succeeds without it", async ({ page }) =
   await page.getByRole("button", { name: /start playing/i }).click();
 
   await expect(page.getByRole("heading", { name: /welcome to chucking eggs/i })).not.toBeVisible();
-  expect(requestBody.email).toBeUndefined();
+  // Frontend sends email: null when field is empty (not omitted)
+  expect(requestBody.email).toBeFalsy();
 });

@@ -13,6 +13,7 @@ primary_region = "sin"  # Singapore — closest to HK
   auto_stop_machines = false   # scale-to-zero kills active WebSocket connections
   auto_start_machines = true
   min_machines_running = 1     # always keep one instance alive
+  max_machines_running = 1     # single instance — GameManager is in-memory; upgrade to Redis before removing
 
   [http_service.concurrency]
     type = "requests"

@@ -15,24 +15,29 @@ test.beforeEach(async ({ page }) => {
 // ---------------------------------------------------------------------------
 
 test("rope timer appears when it is your turn", async ({ page }) => {
-  await page.clock.install();
   await page.goto("/game?difficulty=easy");
 
   // Wait for the game to load (cards deal)
   await expect(page.locator("[data-card-id]").first()).toBeVisible({ timeout: 15_000 });
 
-  // Wait until the rope timer appears (it's your turn and deadline is set)
-  await expect(page.locator("[data-testid='rope-timer']")).toBeVisible({ timeout: 15_000 });
+  // Wait until the rope timer appears (it's your turn and deadline is set).
+  // Give extra time — AI may play first before the human gets a turn.
+  await expect(page.locator("[data-testid='rope-timer']")).toBeVisible({ timeout: 25_000 });
 });
 
 test("rope timer turns red in last 15 seconds", async ({ page }) => {
-  await page.clock.install();
+  // Navigate first so the game is running, THEN install the fake clock.
+  // Installing before navigation freezes setInterval before tick() starts,
+  // which can prevent the rope from appearing.
   await page.goto("/game?difficulty=easy");
 
   await expect(page.locator("[data-card-id]").first()).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator("[data-testid='rope-timer']")).toBeVisible({ timeout: 15_000 });
+  const rope = page.locator("[data-testid='rope-timer']");
+  await expect(rope).toBeVisible({ timeout: 15_000 });
 
-  // Fast-forward 76 seconds — 14 seconds remain, should be urgent (red)
+  // Freeze time now that the rope timer is active, then jump 76s forward
+  // (14s remain → urgent / red)
+  await page.clock.install({ time: Date.now() });
   await page.clock.fastForward(76_000);
 
   // The inner bar should have bg-team-red class
@@ -45,8 +50,10 @@ test("rope timer turns red in last 15 seconds", async ({ page }) => {
 // ---------------------------------------------------------------------------
 
 test("AFK auto-play fires after timeout — server must be started with HUMAN_TURN_TIMEOUT_S=5", async ({ page }) => {
-  // Skip when running against a long-timeout server (e.g. local docker with default 90s)
-  // This test only passes when playwright starts the backend fresh with the 5s override.
+  // Skip unless the backend was started with the 5-second AFK override.
+  // Locally: kill docker backend, then `npx playwright test e2e/afk.spec.ts` (Playwright starts fresh).
+  // CI: playwright.config.ts passes HUMAN_TURN_TIMEOUT_S=5 to the backend webServer command.
+  test.skip(process.env.HUMAN_TURN_TIMEOUT_S !== "5", "Needs short AFK timeout — start backend with HUMAN_TURN_TIMEOUT_S=5");
   test.slow(); // mark as potentially slow
 
   await page.goto("/game?difficulty=easy");

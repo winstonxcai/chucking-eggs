@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useGameSocket } from "@/hooks/useGameSocket";
 import GameBoard from "@/components/game/GameBoard";
+import { STORAGE_KEYS } from "@/lib/storage-keys";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -12,6 +13,7 @@ function GameContent() {
   const [gameId, setGameId] = useState<string | null>(null);
   const [reconnectToken, setReconnectToken] = useState<string | null>(null);
   const [seat, setSeat] = useState<number>(0);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const difficulty = searchParams.get("difficulty") || "medium";
 
@@ -26,16 +28,16 @@ function GameContent() {
       setGameId(urlGameId);
       setReconnectToken(urlToken);
       setSeat(seatNum);
-      sessionStorage.setItem("gd_game_id", urlGameId);
-      sessionStorage.setItem("gd_reconnect_token", urlToken);
-      sessionStorage.setItem("gd_seat", String(seatNum));
+      sessionStorage.setItem(STORAGE_KEYS.GAME_ID, urlGameId);
+      sessionStorage.setItem(STORAGE_KEYS.RECONNECT_TOKEN, urlToken);
+      sessionStorage.setItem(STORAGE_KEYS.SEAT, String(seatNum));
       return;
     }
 
     // Try to restore from sessionStorage
-    const savedId = sessionStorage.getItem("gd_game_id");
-    const savedToken = sessionStorage.getItem("gd_reconnect_token");
-    const savedSeat = sessionStorage.getItem("gd_seat");
+    const savedId = sessionStorage.getItem(STORAGE_KEYS.GAME_ID);
+    const savedToken = sessionStorage.getItem(STORAGE_KEYS.RECONNECT_TOKEN);
+    const savedSeat = sessionStorage.getItem(STORAGE_KEYS.SEAT);
     if (savedId && savedToken) {
       setGameId(savedId);
       setReconnectToken(savedToken);
@@ -45,18 +47,24 @@ function GameContent() {
 
     // Create a new solo game
     async function createGame() {
-      const res = await fetch(`${API_BASE}/api/game/create`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ difficulty }),
-      });
-      const data = await res.json();
-      setGameId(data.game_id);
-      setReconnectToken(data.reconnect_token);
-      setSeat(0);
-      sessionStorage.setItem("gd_game_id", data.game_id);
-      sessionStorage.setItem("gd_reconnect_token", data.reconnect_token);
-      sessionStorage.setItem("gd_seat", "0");
+      try {
+        const res = await fetch(`${API_BASE}/api/game/create`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ difficulty }),
+        });
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        const data = await res.json();
+        setGameId(data.game_id);
+        setReconnectToken(data.reconnect_token);
+        setSeat(0);
+        sessionStorage.setItem(STORAGE_KEYS.GAME_ID, data.game_id);
+        sessionStorage.setItem(STORAGE_KEYS.RECONNECT_TOKEN, data.reconnect_token);
+        sessionStorage.setItem(STORAGE_KEYS.SEAT, "0");
+      } catch (err) {
+        console.error("Failed to create game:", err);
+        setCreateError("Failed to connect to server. Please try again.");
+      }
     }
     createGame();
   }, [difficulty, searchParams]);
@@ -65,9 +73,9 @@ function GameContent() {
     useGameSocket(gameId, reconnectToken, seat);
 
   const handlePlayAgain = useCallback(() => {
-    sessionStorage.removeItem("gd_game_id");
-    sessionStorage.removeItem("gd_reconnect_token");
-    sessionStorage.removeItem("gd_seat");
+    sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
+    sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
+    sessionStorage.removeItem(STORAGE_KEYS.SEAT);
     setGameId(null);
     setReconnectToken(null);
     setSeat(0);
@@ -81,11 +89,22 @@ function GameContent() {
         setGameId(data.game_id);
         setReconnectToken(data.reconnect_token);
         setSeat(0);
-        sessionStorage.setItem("gd_game_id", data.game_id);
-        sessionStorage.setItem("gd_reconnect_token", data.reconnect_token);
-        sessionStorage.setItem("gd_seat", "0");
+        sessionStorage.setItem(STORAGE_KEYS.GAME_ID, data.game_id);
+        sessionStorage.setItem(STORAGE_KEYS.RECONNECT_TOKEN, data.reconnect_token);
+        sessionStorage.setItem(STORAGE_KEYS.SEAT, "0");
       });
   }, [difficulty]);
+
+  if (createError) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4 text-center max-w-sm px-4">
+          <p className="text-text-secondary">{createError}</p>
+          <a href="/" className="text-sm text-accent underline">Back to home</a>
+        </div>
+      </div>
+    );
+  }
 
   if (!gameId || !gameState) {
     return (

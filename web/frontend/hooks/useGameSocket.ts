@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GameState, ServerMessage, GameOverMsg } from "@/lib/types";
+import { STORAGE_KEYS } from "@/lib/storage-keys";
 
 const WS_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/^http/, "ws");
 
@@ -37,7 +38,7 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
 
     const params = new URLSearchParams({ seat: String(seatNum) });
     if (token) params.set("token", token);
-    const playerId = localStorage.getItem("ce_player_id");
+    const playerId = (() => { try { return localStorage.getItem(STORAGE_KEYS.PLAYER_ID); } catch { return null; } })();
     if (playerId) params.set("player_id", playerId);
     const ws = new WebSocket(`${WS_BASE}/ws/game/${gid}?${params.toString()}`);
     wsRef.current = ws;
@@ -61,8 +62,8 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
       // Permanent failures — don't retry, clear stale session
       if (event.code >= 4000) {
         console.error(`WebSocket closed: ${event.code} ${event.reason}`);
-        sessionStorage.removeItem("gd_game_id");
-        sessionStorage.removeItem("gd_reconnect_token");
+        sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
+        sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
         setConnectionStatus("disconnected");
         return;
       }
@@ -85,7 +86,13 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
     };
 
     ws.onmessage = (event) => {
-      const msg: ServerMessage = JSON.parse(event.data);
+      let msg: ServerMessage;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        console.error("WS: unparseable message", event.data);
+        return;
+      }
 
       switch (msg.type) {
         case "game_state":
@@ -101,8 +108,9 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
           setGameOver(msg);
           setAiThinking(null);
           // Clear session — game is done, no need to reconnect
-          sessionStorage.removeItem("gd_game_id");
-          sessionStorage.removeItem("gd_reconnect_token");
+          sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
+          sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
+          sessionStorage.removeItem(STORAGE_KEYS.SEAT);
           break;
         case "error":
           console.error("Game error:", msg.message);
@@ -130,23 +138,27 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
     };
   }, [gameId, connect]);
 
-  const playCards = useCallback((cardIds: string[]) => {
-    wsRef.current?.send(JSON.stringify({ type: "play_cards", card_ids: cardIds }));
+  const wsSend = useCallback((data: object) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(data));
+    }
   }, []);
+
+  const playCards = useCallback((cardIds: string[]) => {
+    wsSend({ type: "play_cards", card_ids: cardIds });
+  }, [wsSend]);
 
   const pass = useCallback(() => {
-    wsRef.current?.send(JSON.stringify({ type: "pass" }));
-  }, []);
+    wsSend({ type: "pass" });
+  }, [wsSend]);
 
   const createGroup = useCallback((cardIds: string[], comboType: string, comboName: string) => {
-    wsRef.current?.send(JSON.stringify({
-      type: "create_group", card_ids: cardIds, combo_type: comboType, combo_name: comboName,
-    }));
-  }, []);
+    wsSend({ type: "create_group", card_ids: cardIds, combo_type: comboType, combo_name: comboName });
+  }, [wsSend]);
 
   const deleteGroup = useCallback((groupId: string) => {
-    wsRef.current?.send(JSON.stringify({ type: "delete_group", group_id: groupId }));
-  }, []);
+    wsSend({ type: "delete_group", group_id: groupId });
+  }, [wsSend]);
 
   return { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup };
 }

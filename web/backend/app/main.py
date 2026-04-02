@@ -8,9 +8,12 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from .ai_service import AIService
 from .game_manager import GameManager
@@ -38,6 +41,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Guan Dan", lifespan=lifespan)
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _cors_origins = os.getenv(
     "ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
@@ -110,7 +117,8 @@ class ClaimUsernameRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/auth/claim")
-async def claim_username(req: ClaimUsernameRequest):
+@limiter.limit("5/minute")
+async def claim_username(request: Request, req: ClaimUsernameRequest):
     from .auth import claim_username as _claim
     return await _claim(req.username, req.email, req.is_test)
 
@@ -162,7 +170,7 @@ async def create_game(req: CreateGameRequest):
     if req.difficulty not in ("easy", "wjsd", "casual", "medium", "competition", "hard",
          "yaoji", "jidan", "expert", "hulalala", "liuzha", "master"):
         req.difficulty = "medium"
-    room = game_manager.create_game(req.difficulty)
+    room = await game_manager.create_game(req.difficulty)
     return CreateGameResponse(
         game_id=room.game_id,
         reconnect_token=room.reconnect_token,
@@ -181,7 +189,7 @@ async def create_room(req: CreateRoomRequest):
     if req.difficulty not in ("easy", "wjsd", "casual", "medium", "competition", "hard",
          "yaoji", "jidan", "expert", "hulalala", "liuzha", "master"):
         req.difficulty = "medium"
-    room = game_manager.create_room(req.mode, req.difficulty)
+    room = await game_manager.create_room(req.mode, req.difficulty)
     seat = 0  # creator always gets seat 0
     return CreateRoomResponse(
         game_id=room.game_id,
@@ -305,7 +313,11 @@ async def game_websocket(
             else:
                 raw = await ws.receive_text()
 
-            data = json.loads(raw)
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                await room.send_to(seat, {"type": "error", "message": "Invalid message"})
+                continue
             await room.handle_message(data, seat)
 
     except WebSocketDisconnect:

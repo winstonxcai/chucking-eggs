@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import random
+import secrets
 import string
 import time
 import uuid
@@ -16,9 +16,12 @@ IDLE_TIMEOUT = 300     # seconds before cleaning up an idle room
 CLEANUP_INTERVAL = 30  # seconds between cleanup sweeps
 
 
+_ROOM_CODE_CHARS = string.ascii_uppercase + string.digits
+
+
 def _generate_room_code() -> str:
-    """6-char alphanumeric room code (uppercase)."""
-    return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    """6-char alphanumeric room code (uppercase), using cryptographically secure PRNG."""
+    return "".join(secrets.choice(_ROOM_CODE_CHARS) for _ in range(6))
 
 
 class GameManager:
@@ -27,6 +30,7 @@ class GameManager:
         self.rooms: dict[str, GameRoom] = {}
         self.room_codes: dict[str, str] = {}   # code → game_id
         self._cleanup_task: asyncio.Task | None = None
+        self._room_lock = asyncio.Lock()  # prevents duplicate codes under concurrent creates
 
     async def start_cleanup_loop(self) -> None:
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
@@ -58,24 +62,26 @@ class GameManager:
     # Room creation
     # ---------------------------------------------------------------------------
 
-    def create_game(self, difficulty: str) -> GameRoom:
+    async def create_game(self, difficulty: str) -> GameRoom:
         """Create a solo game room (backwards compat for /api/game/create)."""
-        return self.create_room("solo", difficulty)
+        return await self.create_room("solo", difficulty)
 
-    def create_room(self, mode: str, difficulty: str) -> GameRoom:
+    async def create_room(self, mode: str, difficulty: str) -> GameRoom:
         """Create a game room with the given mode (solo/duo/quad)."""
-        game_id = uuid.uuid4().hex[:12]
-        room = GameRoom(game_id, mode, difficulty, self.ai_service)
-        self.rooms[game_id] = room
+        async with self._room_lock:
+            game_id = uuid.uuid4().hex[:12]
+            room = GameRoom(game_id, mode, difficulty, self.ai_service)
+            self.rooms[game_id] = room
 
-        if mode != "solo":
-            code = self._unique_room_code()
-            room.room_code = code
-            self.room_codes[code] = game_id
+            if mode != "solo":
+                code = self._unique_room_code()
+                room.room_code = code
+                self.room_codes[code] = game_id
 
         return room
 
     def _unique_room_code(self) -> str:
+        """Must be called while holding self._room_lock."""
         for _ in range(100):
             code = _generate_room_code()
             if code not in self.room_codes:

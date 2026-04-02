@@ -3,7 +3,8 @@
 
 // Two groups shown as separate sections in the UI.
 export const OUR_BOTS = ["easy", "medium", "competition", "casual", "hard", "master"] as const;
-export const COMPETITION_BOTS = ["wjsd", "liuzha", "hulalala", "yaoji", "jidan"] as const;
+// liuzha and hulalala hidden — port bugs cause them to lose to random
+export const COMPETITION_BOTS = ["wjsd", "yaoji", "jidan"] as const;
 
 export const DIFFICULTY_INFO: Record<
   string,

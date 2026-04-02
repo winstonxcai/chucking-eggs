@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crown, Hand, LayoutList } from "lucide-react";
+import { Crown, Hand, HelpCircle, LayoutList } from "lucide-react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -264,7 +264,17 @@ export default function GameBoard({
   return (
     <div className="flex h-[100dvh] bg-background">
       {/* Main board area */}
-      <div className="flex-1 flex flex-col p-2 lg:p-6 gap-0">
+      <div className="flex-1 flex flex-col p-2 lg:p-6 gap-0 relative">
+        {/* Help button */}
+        <a
+          href="https://www.pagat.com/climbing/guandan.html"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="absolute top-2 right-2 lg:top-4 lg:right-4 z-20 text-text-secondary hover:text-foreground transition-colors"
+          title="Game rules"
+        >
+          <HelpCircle size={18} />
+        </a>
         {/* Reconnection banner */}
         {connectionStatus === "reconnecting" && (
           <div className="flex items-center justify-center gap-2 py-2 bg-amber-50 border border-amber-200 rounded-lg mb-2">

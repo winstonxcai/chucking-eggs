@@ -70,7 +70,7 @@ function GameContent() {
     createGame();
   }, [difficulty, searchParams]);
 
-  const { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup } =
+  const { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup, latestError } =
     useGameSocket(gameId, reconnectToken, seat);
 
   const { updateElo } = usePlayer();
@@ -138,6 +138,7 @@ function GameContent() {
       onPlayAgain={handlePlayAgain}
       onCreateGroup={createGroup}
       onDeleteGroup={deleteGroup}
+      latestError={latestError}
     />
   );
 }

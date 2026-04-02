@@ -18,6 +18,8 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
   const [gameOver, setGameOver] = useState<GameOverMsg | null>(null);
   const [connected, setConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
+  const [latestError, setLatestError] = useState<{ message: string; key: number } | null>(null);
+  const errorKeyRef = useRef(0);
 
   const retriesRef = useRef(0);
   const intentionalCloseRef = useRef(false);
@@ -112,6 +114,8 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
           break;
         case "error":
           console.error("Game error:", msg.message);
+          errorKeyRef.current += 1;
+          setLatestError({ message: msg.message, key: errorKeyRef.current });
           break;
       }
     };
@@ -158,5 +162,5 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
     wsSend({ type: "delete_group", group_id: groupId });
   }, [wsSend]);
 
-  return { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup };
+  return { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup, latestError };
 }

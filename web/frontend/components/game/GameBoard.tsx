@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crown, Hand } from "lucide-react";
+import { Crown, Hand, LayoutList } from "lucide-react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -24,6 +24,7 @@ interface GameBoardProps {
   onPlayAgain: () => void;
   onCreateGroup: (cardIds: string[], comboType: string, comboName: string) => void;
   onDeleteGroup: (groupId: string) => void;
+  latestError?: { message: string; key: number } | null;
 }
 
 /** Render a single trick action (cards or "Pass") */
@@ -59,6 +60,7 @@ export default function GameBoard({
   onPlayAgain,
   onCreateGroup,
   onDeleteGroup,
+  latestError,
 }: GameBoardProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [flyingCards, setFlyingCards] = useState<{
@@ -66,6 +68,7 @@ export default function GameBoard({
     fromRects: DOMRect[];
     toRect: DOMRect;
   } | null>(null);
+  const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const tableSeat0Ref = useRef<HTMLDivElement>(null);
   const flyingStartRef = useRef<number | null>(null);
 
@@ -73,6 +76,18 @@ export default function GameBoard({
   const [groupsOpen, setGroupsOpen] = useState(true);
   const [legalOpen, setLegalOpen] = useState(true);
   const [allOpen, setAllOpen] = useState(false);
+
+  // Mobile state
+  const [compactHand, setCompactHand] = useState(false);
+  const [mobileComboOpen, setMobileComboOpen] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const update = (e: MediaQueryListEvent | MediaQueryList) => setCompactHand(e.matches);
+    update(mq);
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
 
   // Optimistic local groups — updated immediately on Group/Ungroup, synced from server on game_state
   const [localGroups, setLocalGroups] = useState<CardGroup[]>(gameState.groups);
@@ -138,7 +153,20 @@ export default function GameBoard({
       flyingStartRef.current = null;
     }, remaining);
     return () => clearTimeout(t);
-  }, [gameState]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gameState, flyingCards]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On server error: immediately clear any stuck flying animation and show a toast
+  useEffect(() => {
+    if (!latestError) return;
+    const { key, message } = latestError;
+    setFlyingCards(null);
+    flyingStartRef.current = null;
+    setToasts((prev) => [...prev, { id: key, text: message }]);
+    const t = setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== key));
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [latestError?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePass = useCallback(() => {
     onPass();
@@ -224,9 +252,9 @@ export default function GameBoard({
   const ta = gameState.trick_actions;
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-[100dvh] bg-background">
       {/* Main board area */}
-      <div className="flex-1 flex flex-col p-6 gap-0">
+      <div className="flex-1 flex flex-col p-2 lg:p-6 gap-0">
         {/* Reconnection banner */}
         {connectionStatus === "reconnecting" && (
           <div className="flex items-center justify-center gap-2 py-2 bg-amber-50 border border-amber-200 rounded-lg mb-2">
@@ -240,9 +268,9 @@ export default function GameBoard({
           </div>
         )}
 
-        {/* Play area: all players + table in a centered grid with equal gaps */}
+        {/* Play area: all players + table in a centered grid */}
         <div className="flex-1 flex items-center justify-center">
-          <div className="grid grid-cols-[auto_640px_auto] grid-rows-[auto_320px] gap-32 items-center justify-items-center">
+          <div className="grid grid-cols-[auto_minmax(0,640px)_auto] gap-1 lg:gap-32 items-center justify-items-center">
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
               {partner && (
@@ -262,7 +290,7 @@ export default function GameBoard({
             </div>
 
             {/* Table surface — all trick actions inside */}
-            <div className="col-start-2 row-start-2 relative w-[640px] h-[320px] border border-border rounded-2xl">
+            <div className="col-start-2 row-start-2 relative w-full h-[150px] lg:w-[640px] lg:h-[320px] border border-border rounded-2xl">
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
                 <div className="relative inline-flex">
@@ -311,8 +339,8 @@ export default function GameBoard({
         </div>
 
         {/* Your turn indicator + Controls */}
-        <div className="py-2">
-          <div className={`flex items-center justify-center gap-1.5 pb-2 ${!gameState.is_my_turn ? "invisible" : ""}`}>
+        <div className="py-1 lg:py-2">
+          <div className={`flex items-center justify-center gap-1.5 pb-1 lg:pb-2 ${!gameState.is_my_turn ? "invisible" : ""}`}>
             <div className="w-1.5 h-1.5 rounded-full bg-accent" />
             <span className="text-[13px] font-medium text-accent">
               {gameState.is_leading ? "Your turn to lead" : "Your turn to play"}
@@ -340,11 +368,12 @@ export default function GameBoard({
             groupedCardIds={groupedCardIds}
             onGroupClick={handleGroupClick}
             hiddenIds={flyingCards ? new Set(flyingCards.cards.map((c) => c.id)) : undefined}
+            compact={compactHand}
           />
         </div>
 
-        {/* Hand toolbar */}
-        <div className="py-2">
+        {/* Hand toolbar + mobile combos button */}
+        <div className="py-0.5 lg:py-2 flex items-center justify-center gap-2">
           <HandToolbar
             onFlushSelect={handleFlushSelect}
             sfBySuit={sfBySuit}
@@ -355,11 +384,18 @@ export default function GameBoard({
               g.cardIds.some((cid) => selectedIds.has(cid))
             )}
           />
+          <button
+            className="lg:hidden flex items-center gap-1 px-2.5 py-1 bg-surface border border-border rounded-md text-xs font-medium text-foreground"
+            onClick={() => setMobileComboOpen(true)}
+          >
+            <LayoutList size={13} />
+            Combos
+          </button>
         </div>
       </div>
 
-      {/* Sidebar: always visible, three collapsible sections */}
-      <div className="w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex flex-col gap-4">
+      {/* Sidebar: always visible on desktop, hidden on mobile */}
+      <div className="w-[280px] bg-surface border-l border-border p-5 overflow-y-auto hidden lg:flex flex-col gap-4">
         {/* Groups section */}
         <div className="flex flex-col gap-2">
           <button
@@ -438,6 +474,54 @@ export default function GameBoard({
         </div>
 
       </div>
+
+      {/* Mobile combo bottom sheet */}
+      {mobileComboOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMobileComboOpen(false)}
+          />
+          <div className="relative bg-surface rounded-t-2xl p-5 max-h-[60dvh] overflow-y-auto flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-foreground">Legal Combos</span>
+              <button
+                onClick={() => setMobileComboOpen(false)}
+                className="text-xs text-text-secondary hover:text-foreground transition-colors"
+              >
+                Close
+              </button>
+            </div>
+            {gameState.is_my_turn ? (
+              <ComboBrowser
+                legalMoves={gameState.legal_moves.filter(
+                  (m) => !m.cards.every((c) => groupedCardIds.has(c.id))
+                )}
+                onSelectCombo={(combo) => {
+                  handleSelectCombo(combo);
+                  setMobileComboOpen(false);
+                }}
+              />
+            ) : (
+              <span className="text-sm text-text-secondary">Not your turn</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Toast notifications — server error feedback */}
+      {toasts.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] flex flex-col items-center gap-2 pointer-events-none">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className="bg-foreground text-background text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg"
+            >
+              {toast.text}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Card fly animation overlay */}
       {flyingCards && (

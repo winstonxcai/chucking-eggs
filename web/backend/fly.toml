@@ -1,8 +1,8 @@
-app = "chucking-eggs"
-primary_region = "sin"  # Singapore — closest to HK
+app = 'chucking-eggs'
+primary_region = 'sin'
 
 [build]
-  dockerfile = "web/backend/Dockerfile"
+  dockerfile = 'web/backend/Dockerfile'
 
 [env]
   PORT = "8000"

@@ -17,7 +17,9 @@ class GuanDanEnv:
         self.level_rank = level_rank
         self.reset()
 
-    def reset(self) -> None:
+    def reset(self, seed: int | None = None) -> None:
+        if seed is not None:
+            random.seed(seed)
         deck = make_deck()
         random.shuffle(deck)
         self.hands: list[set[Card]] = [
@@ -28,6 +30,8 @@ class GuanDanEnv:
         ]
         self.played: list[set[Card]] = [set() for _ in range(4)]
         self.current_player: int = random.randint(0, 3)
+        if seed is not None:
+            random.seed()  # restore global randomness
         self.current_trick: Combo | None = None
         self.trick_winner: int | None = None
         self.consecutive_passes: int = 0  # counts all passes since last play (incl. auto)

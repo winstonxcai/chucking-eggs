@@ -70,10 +70,4 @@ export const DIFFICULTY_INFO: Record<
     emoji: "🚀",
     elo: 1779,
   },
-  expert: {
-    label: "Expert",
-    description: "Neural network. Our strongest AI.",
-    emoji: "\ud83d\udc09",
-    elo: 1786,
-  },
 };

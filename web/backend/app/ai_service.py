@@ -57,9 +57,6 @@ BOT_POOLS = {
     "jidan": [
         {"name": "Jidan", "avatar": "dragon", "elo": 1779},
     ],
-    "expert": [
-        {"name": "Expert", "avatar": "dragon", "elo": 1786},
-    ],
 }
 
 DIFFICULTY_TO_AGENT = {
@@ -71,7 +68,6 @@ DIFFICULTY_TO_AGENT = {
     "competition": "lalala",  # SEU 1st Prize (Li Jing)
     "yaoji": "yaoji",         # NUAA 3rd Prize (2020 NJUPT)
     "jidan": "jidan",         # NUAA 2nd Prize (2020 NJUPT)
-    "expert": "rl",           # falls back to strategic if no checkpoint
     "hulalala": "hulalala",   # SEU 3rd Prize (2020 NJUPT)
     "liuzha": "liuzha",       # SEU 2nd Prize (2020 NJUPT)
     "master": "noai",         # Fudan 2nd Prize (Chen Yuguan)

@@ -63,6 +63,7 @@ export interface GameState {
   turn_deadline_ms?: number;
   partner_hand?: CardDTO[];
   all_moves: ComboDTO[];
+  trick_lead_seat: number | null;
 }
 
 export interface MovePlayedMsg {

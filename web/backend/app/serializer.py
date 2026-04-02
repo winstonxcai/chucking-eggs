@@ -152,6 +152,11 @@ def _compute_sf_options(
     return options
 
 
+def _rotate(seat: int, human_seat: int) -> int:
+    """Rotate absolute seat to viewer-relative seat (viewer is always 0)."""
+    return (seat - human_seat + 4) % 4
+
+
 def serialize_game_state(
     env: GuanDanEnv,
     game_id: str,
@@ -168,12 +173,12 @@ def serialize_game_state(
     for dto, card in zip(hand_dtos, sorted_hand):
         dto["is_wild"] = is_wild(card, env.level_rank)
 
-    # Player infos with card counts
+    # Player infos with card counts — seats rotated so viewer is always seat 0
     players = []
     for i, info in enumerate(player_infos):
         card_count = len(env.hands[i])
         players.append({
-            "seat": i,
+            "seat": _rotate(i, human_seat),
             "name": info["name"],
             "avatar": info.get("avatar"),
             "elo": info.get("elo", 1200),
@@ -183,14 +188,15 @@ def serialize_game_state(
             "is_human": i == human_seat,
         })
 
-    # Per-seat trick actions (geometric layout)
+    # Per-seat trick actions (geometric layout) — keys rotated to viewer-relative seats
     trick_actions: dict[str, dict | None] = {"0": None, "1": None, "2": None, "3": None}
     if trick_plays:
         for seat, combo in trick_plays.items():
+            rotated_key = str(_rotate(seat, human_seat))
             if combo.type == ComboType.PASS:
-                trick_actions[str(seat)] = {"type": "pass"}
+                trick_actions[rotated_key] = {"type": "pass"}
             else:
-                trick_actions[str(seat)] = {
+                trick_actions[rotated_key] = {
                     "type": "play",
                     "combo": combo_to_dto(combo, env.level_rank),
                 }
@@ -252,17 +258,19 @@ def serialize_game_state(
     else:
         partner_hand = None
 
+    trick_lead_seat = _rotate(env.trick_winner, human_seat) if env.trick_winner is not None else None
+
     return {
         "game_id": game_id,
-        "my_seat": human_seat,
-        "current_player": env.current_player,
+        "my_seat": 0,
+        "current_player": _rotate(env.current_player, human_seat),
         "is_my_turn": is_my_turn,
         "my_hand": hand_dtos,
         "players": players,
         "trick_actions": trick_actions,
         "is_leading": env.is_leading(),
         "legal_moves": legal_moves,
-        "finish_order": env.finish_order,
+        "finish_order": [_rotate(s, human_seat) for s in env.finish_order],
         "done": env.done,
         "level_rank": env.level_rank,
         "rewards": env.get_rewards() if env.done else None,
@@ -270,4 +278,5 @@ def serialize_game_state(
         "sf_options": sf_options,
         "partner_hand": partner_hand,
         "all_moves": all_moves,
+        "trick_lead_seat": trick_lead_seat,
     }

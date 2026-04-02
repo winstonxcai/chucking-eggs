@@ -42,13 +42,13 @@ def _human_seats_for_mode(mode: str) -> set[int]:
 
 
 class GameRoom:
-    def __init__(self, game_id: str, mode: str, difficulty: str, ai_service: AIService):
+    def __init__(self, game_id: str, mode: str, difficulty: str, ai_service: AIService, seed: int | None = None):
         self.game_id = game_id
         self.mode = mode
         self.difficulty = difficulty
         self.ai_service = ai_service
         self.env = GuanDanEnv(level_rank=Rank.TWO)
-        self.env.reset()
+        self.env.reset(seed=seed)
 
         # Multi-human support
         self.human_seats: set[int] = _human_seats_for_mode(mode)
@@ -425,8 +425,8 @@ class GameRoom:
                 legal = self.env.legal_moves(seat)
                 only_pass = len(legal) == 1 and legal[0].type == ComboType.PASS
 
-                if seat not in self.human_seats:
-                    # AI turn
+                if seat not in self.human_seats or seat in self.env.finish_order:
+                    # AI turn (or finished human — auto-pass)
                     if only_pass:
                         combo = legal[0]
                     else:

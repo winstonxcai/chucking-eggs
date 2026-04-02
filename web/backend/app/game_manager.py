@@ -66,11 +66,11 @@ class GameManager:
         """Create a solo game room (backwards compat for /api/game/create)."""
         return await self.create_room("solo", difficulty)
 
-    async def create_room(self, mode: str, difficulty: str) -> GameRoom:
+    async def create_room(self, mode: str, difficulty: str, seed: int | None = None) -> GameRoom:
         """Create a game room with the given mode (solo/duo/quad)."""
         async with self._room_lock:
             game_id = uuid.uuid4().hex[:12]
-            room = GameRoom(game_id, mode, difficulty, self.ai_service)
+            room = GameRoom(game_id, mode, difficulty, self.ai_service, seed=seed)
             self.rooms[game_id] = room
 
             if mode != "solo":

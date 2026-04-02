@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Hand } from "lucide-react";
+import { Crown, Hand } from "lucide-react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -246,14 +246,18 @@ export default function GameBoard({
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
               {partner && (
-                <OpponentPanel player={partner} thinking={aiThinking === 2} revealedHand={gameState.partner_hand} />
+                <div className={gameState.current_player === 2 ? "ring-2 ring-accent rounded-xl" : ""}>
+                  <OpponentPanel player={partner} thinking={aiThinking === 2} revealedHand={gameState.partner_hand} />
+                </div>
               )}
             </div>
 
             {/* Left opponent */}
             <div className="col-start-1 row-start-2">
               {leftOpp && (
-                <OpponentPanel player={leftOpp} thinking={aiThinking === 1} />
+                <div className={gameState.current_player === 1 ? "ring-2 ring-accent rounded-xl" : ""}>
+                  <OpponentPanel player={leftOpp} thinking={aiThinking === 1} />
+                </div>
               )}
             </div>
 
@@ -261,19 +265,31 @@ export default function GameBoard({
             <div className="col-start-2 row-start-2 relative w-[640px] h-[320px] border border-border rounded-2xl">
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
-                <TrickActionDisplay action={ta?.["2"] ?? null} />
+                <div className="relative inline-flex">
+                  <TrickActionDisplay action={ta?.["2"] ?? null} />
+                  {gameState.trick_lead_seat === 2 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                </div>
               </div>
               {/* Left opp (left edge) */}
               <div data-testid="trick-seat-1" className="absolute left-3 top-0 bottom-0 flex items-center">
-                <TrickActionDisplay action={ta?.["1"] ?? null} />
+                <div className="relative inline-flex">
+                  <TrickActionDisplay action={ta?.["1"] ?? null} />
+                  {gameState.trick_lead_seat === 1 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                </div>
               </div>
               {/* Right opp (right edge) */}
               <div data-testid="trick-seat-3" className="absolute right-3 top-0 bottom-0 flex items-center">
-                <TrickActionDisplay action={ta?.["3"] ?? null} />
+                <div className="relative inline-flex">
+                  <TrickActionDisplay action={ta?.["3"] ?? null} />
+                  {gameState.trick_lead_seat === 3 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                </div>
               </div>
               {/* You (bottom edge) */}
               <div ref={tableSeat0Ref} data-testid="trick-seat-0" className="absolute bottom-3 left-0 right-0 flex justify-center">
-                {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} />}
+                <div className="relative inline-flex">
+                  {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} />}
+                  {gameState.trick_lead_seat === 0 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                </div>
               </div>
               {/* New trick label */}
               {gameState.is_leading && !ta?.["0"] && !ta?.["1"] && !ta?.["2"] && !ta?.["3"] && (
@@ -286,7 +302,9 @@ export default function GameBoard({
             {/* Right opponent */}
             <div className="col-start-3 row-start-2">
               {rightOpp && (
-                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} />
+                <div className={gameState.current_player === 3 ? "ring-2 ring-accent rounded-xl" : ""}>
+                  <OpponentPanel player={rightOpp} thinking={aiThinking === 3} />
+                </div>
               )}
             </div>
           </div>

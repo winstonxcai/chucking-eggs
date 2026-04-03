@@ -22,7 +22,6 @@ const navItems = [
 export default function Sidebar({ player }: SidebarProps) {
   const pathname = usePathname();
   const { isInGame } = useActiveGame();
-  const isGamePage = pathname === "/game";
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
@@ -40,9 +39,9 @@ export default function Sidebar({ player }: SidebarProps) {
 
   return (
     <aside
-      className={`shrink-0 flex-col border-r border-border bg-background transition-[width] duration-200 ease-out ${
-        isGamePage ? "hidden lg:flex" : "flex"
-      } ${expanded ? "w-12 lg:w-[200px]" : "w-12"}`}
+      className={`shrink-0 flex flex-col border-r border-border bg-background transition-[width] duration-200 ease-out ${
+        expanded ? "w-12 lg:w-[200px]" : "w-12"
+      }`}
       style={{ height: "100%" }}
     >
       {/* Brand */}

@@ -129,7 +129,7 @@ function GameContent() {
 
   if (createError) {
     return (
-      <div className="h-screen flex items-center justify-center bg-background">
+      <div className="h-full flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4 text-center max-w-sm px-4">
           <p className="text-text-secondary">{createError}</p>
           <a href="/" className="text-sm text-accent underline">Back to home</a>
@@ -140,7 +140,7 @@ function GameContent() {
 
   if (!gameId || !gameState) {
     return (
-      <div className="h-screen flex items-center justify-center bg-background">
+      <div className="h-full flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
           <span className="text-sm text-text-secondary">
@@ -173,7 +173,7 @@ export default function GamePage() {
   return (
     <Suspense
       fallback={
-        <div className="h-screen flex items-center justify-center bg-background">
+        <div className="h-full flex items-center justify-center bg-background">
           <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         </div>
       }

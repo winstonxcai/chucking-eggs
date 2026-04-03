@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGameSocket } from "@/hooks/useGameSocket";
 import { usePlayer } from "@/hooks/usePlayer";
@@ -92,6 +92,19 @@ function GameContent() {
   }, [rematch, router]);
 
   const isMultiplayer = gameState ? gameState.players.filter((p) => p.is_human).length > 1 : false;
+
+  // Solo games: clear session on unmount so navigating away starts fresh
+  const isMultiplayerRef = useRef(false);
+  isMultiplayerRef.current = isMultiplayer;
+  useEffect(() => {
+    return () => {
+      if (!isMultiplayerRef.current) {
+        sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
+        sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
+        sessionStorage.removeItem(STORAGE_KEYS.SEAT);
+      }
+    };
+  }, []);
 
   const handleRematch = useCallback(async () => {
     if (!gameId) return;

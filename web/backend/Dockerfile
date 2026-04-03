@@ -2,12 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY web/backend/requirements.txt /app/requirements.txt
+COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Build context is repo root — fly.toml lives there for webhook deploys
-COPY web/backend/src/ /app/src/
-COPY web/backend/app/ /app/app/
+# Build context is web/backend/ (Fly.io working dir) — src/ and app/ are relative to it
+COPY src/ /app/src/
+COPY app/ /app/app/
 
 ENV PYTHONPATH=/app/src:/app
 

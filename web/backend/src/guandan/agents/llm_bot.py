@@ -144,7 +144,7 @@ class LLMBot(Agent):
         # ── Stage 3: Move selection ────────────────────────────────────────────
         move_prompt = state_prompt + format_candidates(candidates, self.level_rank)
         for _ in range(self.max_retries + 1):
-            raw = self._call_llm(move_prompt, max_tokens=10)
+            raw = self._call_llm(move_prompt, max_tokens=60)
             if raw:
                 idx = parse_move_index(raw, len(candidates))
                 if idx is not None:

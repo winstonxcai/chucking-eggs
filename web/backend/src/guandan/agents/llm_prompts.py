@@ -332,7 +332,8 @@ def format_candidates(candidates: list[Combo], level_rank: int) -> str:
     for i, combo in enumerate(candidates):
         lines.append(f"  [{i}] {_combo_desc(combo, level_rank)}")
     lines.append(
-        f"\nOutput ONLY the integer index of your chosen move (0–{len(candidates)-1}). No other text."
+        f"\nFirst line: ONLY the integer index (0–{len(candidates)-1}). "
+        "Second line (optional): one sentence explaining why."
     )
     return "\n".join(lines)
 
@@ -349,12 +350,18 @@ def parse_intent(text: str) -> str:
 
 
 def parse_move_index(text: str, n_candidates: int) -> int | None:
-    """Extract valid move index from LLM response. Returns None on failure."""
-    for line in reversed(text.strip().split("\n")):
-        line = line.strip()
-        m = re.search(r"\b(\d+)\b", line)
-        if m:
-            idx = int(m.group(1))
+    """Extract valid move index from LLM response. Returns None on failure.
+
+    Checks the first non-empty line first (expected format: number on first line),
+    then scans remaining lines from last to first as fallback.
+    """
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    if not lines:
+        return None
+    # First line is the intended output format — check it first
+    for line in [lines[0]] + list(reversed(lines[1:])):
+        for m in reversed(re.findall(r"\b(\d+)\b", line)):
+            idx = int(m)
             if 0 <= idx < n_candidates:
                 return idx
     return None
@@ -396,4 +403,4 @@ Heart {lr} substitutes for any rank. Wild combos beat non-wild of the same type/
 
 ## OUTPUT FORMAT
 Stage 1 — intent only: output exactly one word on a single line: cooperate | dwarf | assist | normal
-Stage 3 — move selection: output ONLY the integer index of your chosen move. No explanation. No other text."""
+Stage 3 — move selection: first line is ONLY the integer index of your chosen move. Second line (optional): one sentence of reasoning."""

@@ -24,6 +24,10 @@ except ImportError:
     RLAgentLSTM = None  # type: ignore[assignment,misc]
 from .strategic_bot import StrategicBot
 from .ez_bot import EzBot
+try:
+    from .llm_bot import LLMBot
+except ImportError:
+    LLMBot = None  # type: ignore[assignment,misc]
 from .hulalala_bot import HulalalaBot
 from .jidan_bot import JidanBot
 from .lalala_bot import LalalaBot
@@ -62,6 +66,9 @@ AGENT_REGISTRY: dict[str, type[Agent]] = {
     "wjsd": WjsdBot,
 }
 
+if LLMBot is not None:
+    AGENT_REGISTRY["llm"] = LLMBot
+
 
 def make_agent(name: str, level_rank: int = Rank.TWO, **kwargs) -> Agent:
     """Create an agent by name.
@@ -71,6 +78,6 @@ def make_agent(name: str, level_rank: int = Rank.TWO, **kwargs) -> Agent:
     cls = AGENT_REGISTRY[name]
     if name == "random":
         return cls()
-    if name == "monte_carlo":
+    if name in ("monte_carlo", "llm"):
         return cls(level_rank=level_rank, **kwargs)
     return cls(level_rank=level_rank)

@@ -12,6 +12,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
 modal = ["modal>=0.64"]
+llm = ["litellm>=1.0"]
 
 [build-system]
 requires = ["hatchling"]

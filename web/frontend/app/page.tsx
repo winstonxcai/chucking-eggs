@@ -30,7 +30,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4">
+    <div className="min-h-screen flex flex-col items-center pt-[12vh] sm:pt-0 sm:justify-center px-4">
       <div className="max-w-md w-full flex flex-col items-center gap-8">
         {/* Title — hidden on mobile to save space */}
         <div className="hidden sm:flex flex-col items-center gap-1">
@@ -44,14 +44,14 @@ export default function Home() {
         {/* Solo difficulty picker */}
         <div className="w-full flex flex-col gap-1">
           <button
-            className="w-full flex items-center justify-between px-4 py-3 bg-surface border border-border rounded-xl hover:border-accent transition-all duration-150 ease-out group"
+            className="w-full flex items-center justify-between px-4 py-3 bg-accent text-white rounded-xl hover:bg-accent-hover transition-all duration-150 ease-out group"
             onClick={() => setSoloOpen((o) => !o)}
           >
-            <span className="text-sm font-semibold text-foreground group-hover:text-accent transition-colors duration-150">
+            <span className="text-sm font-semibold text-white">
               Play Solo
             </span>
             <svg
-              className={`w-4 h-4 text-text-secondary transition-transform duration-200 ease-out ${soloOpen ? "rotate-180" : ""}`}
+              className={`w-4 h-4 text-white/70 transition-transform duration-200 ease-out ${soloOpen ? "rotate-180" : ""}`}
               viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
             >
               <polyline points="4 6 8 10 12 6" />

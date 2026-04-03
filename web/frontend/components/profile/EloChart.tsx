@@ -14,7 +14,7 @@ interface EloChartProps {
 export default function EloChart({ data }: EloChartProps) {
   if (data.length === 0) {
     return (
-      <div className="h-32 flex items-center justify-center text-sm text-text-secondary">
+      <div className="py-2 text-center text-sm text-text-secondary">
         No games yet
       </div>
     );

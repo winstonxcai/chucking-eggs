@@ -290,7 +290,7 @@ export default function GameBoard({
 
         {/* Play area: all players + table in a centered grid */}
         <div className="flex-1 flex items-start lg:items-center justify-center min-h-0">
-          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-1 lg:gap-32 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
+          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-1 lg:gap-6 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
               {partner && (
@@ -310,7 +310,7 @@ export default function GameBoard({
             </div>
 
             {/* Table surface — all trick actions inside */}
-            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[640px] lg:h-[320px] lg:rounded-2xl lg:border-2 lg:border-[#A8906E]/30 lg:bg-gradient-to-br lg:from-[#2C1F15] lg:to-[#1A120B] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
+            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[560px] lg:h-[300px] lg:rounded-2xl lg:border-2 lg:border-[#A8906E]/30 lg:bg-gradient-to-br lg:from-[#2C1F15] lg:to-[#1A120B] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
               {/* Desktop table center mark */}
               <div className="hidden lg:flex absolute inset-0 items-center justify-center pointer-events-none">
                 <div className="w-20 h-20 rounded-full border border-white/[0.07]" />

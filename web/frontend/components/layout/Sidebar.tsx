@@ -112,14 +112,16 @@ export default function Sidebar({ player }: SidebarProps) {
 
       {/* Player footer — avatar + username/ELO when expanded */}
       {player && (
-        <div className="px-2 py-3 border-t border-border">
+        <div className="px-2 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-border">
           <Link
             href={`/profile/${player.username}`}
-            className={`flex items-center gap-2 rounded-lg hover:opacity-70 transition-opacity ${
-              expanded ? "lg:px-1" : "justify-center"
-            }`}
+            className={`flex items-center gap-2 rounded-lg transition-opacity ${
+              pathname.startsWith("/profile") ? "opacity-100" : "hover:opacity-70"
+            } ${expanded ? "lg:px-1" : "justify-center"}`}
           >
-            <div className="w-7 h-7 rounded-full bg-accent/10 text-accent flex items-center justify-center text-xs font-bold shrink-0">
+            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+              pathname.startsWith("/profile") ? "bg-accent text-white" : "bg-accent/10 text-accent"
+            }`}>
               {player.username[0].toUpperCase()}
             </div>
             {expanded && (

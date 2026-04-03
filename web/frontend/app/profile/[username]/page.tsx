@@ -86,7 +86,7 @@ function ProfileContent() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">{player.username}</h1>
           <p className="text-sm text-text-secondary mt-0.5">
-            {total} games · {winPct}% win rate
+            {total} game{total === 1 ? "" : "s"} · {winPct}% win rate
           </p>
         </div>
         <div className="flex flex-col items-end">

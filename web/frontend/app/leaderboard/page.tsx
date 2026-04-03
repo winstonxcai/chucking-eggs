@@ -50,12 +50,11 @@ export default function LeaderboardPage() {
 
       <div className="bg-surface border border-border rounded-xl overflow-hidden">
         {/* Header */}
-        <div className="grid grid-cols-[2rem_1fr_5rem_5rem_5rem] px-4 py-3 border-b border-border">
-          {["#", "Player", "Elo", "Games", "Win%"].map((h) => (
-            <span key={h} className="text-xs font-semibold text-text-secondary uppercase tracking-wide" title={h === "Win%" ? "Coming soon" : undefined}>
-              {h}
-            </span>
-          ))}
+        <div className="grid grid-cols-[2rem_1fr_4rem] sm:grid-cols-[2rem_1fr_4rem_5rem] px-4 py-3 border-b border-border">
+          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">#</span>
+          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Player</span>
+          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Elo</span>
+          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide hidden sm:block">Games</span>
         </div>
 
         {/* Human rows */}
@@ -65,18 +64,17 @@ export default function LeaderboardPage() {
             <Link
               key={entry.username}
               href={`/profile/${entry.username}`}
-              className="grid grid-cols-[2rem_1fr_5rem_5rem_5rem] px-4 py-3 border-b border-border hover:bg-background transition-colors items-center"
+              className="grid grid-cols-[2rem_1fr_4rem] sm:grid-cols-[2rem_1fr_4rem_5rem] px-4 py-3 border-b border-border hover:bg-background transition-colors items-center"
             >
               <span className="text-sm text-text-secondary tabular-nums">{i + 1}</span>
-              <span className={`text-sm font-medium flex items-center gap-2 ${isMe ? "text-accent" : "text-foreground"}`}>
+              <span className={`text-sm font-medium flex items-center gap-2 truncate ${isMe ? "text-accent" : "text-foreground"}`}>
                 {entry.username}
                 {isMe && (
-                  <span className="text-xs bg-accent/10 text-accent px-1.5 py-0.5 rounded-md font-semibold">you</span>
+                  <span className="text-xs bg-accent/10 text-accent px-1.5 py-0.5 rounded-md font-semibold shrink-0">you</span>
                 )}
               </span>
               <span className="text-sm tabular-nums text-foreground">{entry.elo}</span>
-              <span className="text-sm tabular-nums text-text-secondary">{entry.games_played}</span>
-              <span className="text-sm tabular-nums text-text-secondary">—</span>
+              <span className="text-sm tabular-nums text-text-secondary hidden sm:block">{entry.games_played}</span>
             </Link>
           );
         })}
@@ -90,16 +88,15 @@ export default function LeaderboardPage() {
         {data.bots.map((bot) => (
           <div
             key={bot.username}
-            className="grid grid-cols-[2rem_1fr_5rem_5rem_5rem] px-4 py-3 border-b border-border last:border-0 items-center cursor-default"
+            className="grid grid-cols-[2rem_1fr_4rem] sm:grid-cols-[2rem_1fr_4rem_5rem] px-4 py-3 border-b border-border last:border-0 items-center cursor-default"
           >
             <span className="text-sm text-text-secondary">—</span>
-            <span className="text-sm text-text-secondary flex items-center gap-2">
+            <span className="text-sm text-text-secondary flex items-center gap-2 truncate">
               {bot.username}
-              <span className="text-xs border border-border text-foreground/50 bg-background px-1.5 py-0.5 rounded-md">bot</span>
+              <span className="text-xs border border-border text-foreground/50 bg-background px-1.5 py-0.5 rounded-md shrink-0">bot</span>
             </span>
             <span className="text-sm tabular-nums text-text-secondary">{bot.elo}</span>
-            <span className="text-sm text-text-secondary">—</span>
-            <span className="text-sm text-text-secondary">—</span>
+            <span className="text-sm text-text-secondary hidden sm:block">—</span>
           </div>
         ))}
       </div>

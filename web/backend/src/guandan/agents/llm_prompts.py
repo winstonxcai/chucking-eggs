@@ -382,7 +382,7 @@ def format_tom_beliefs(
 
 def format_candidates(candidates: list[Combo], level_rank: int) -> str:
     """Format candidate moves for stage-3 move selection."""
-    lines = ["\n\nCANDIDATE MOVES (ranked by JidanBot heuristic, you choose strategically):"]
+    lines = ["\n\nSELECT A MOVE — output the integer index on the first line, nothing else before it:"]
     for i, combo in enumerate(candidates):
         lines.append(f"  [{i}] {_combo_desc(combo, level_rank)}")
     lines.append(
@@ -456,6 +456,6 @@ Heart {lr} substitutes for any rank. Wild combos beat non-wild of the same type/
 - normal: play the strategically best move
 
 ## OUTPUT FORMAT
-Stage 1 — intent only: output exactly one word on a single line: cooperate | dwarf | assist | normal
-Stage 2.5 — belief inference: infer what each player likely holds from their actions. Be concise, ≤100 words. End with: DANGER: P<seat> or DANGER: NONE.
-Stage 3 — move selection: first line is ONLY the integer index of your chosen move. Second line (optional): one sentence of reasoning."""
+When asked for intent: output exactly one word: cooperate | dwarf | assist | normal
+When asked for beliefs: infer what each player likely holds. ≤100 words. End with DANGER: P<seat> or DANGER: NONE.
+When asked for a move: first line is ONLY the integer index. Second line (optional): one sentence of reasoning."""

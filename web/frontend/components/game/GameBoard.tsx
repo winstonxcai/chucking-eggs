@@ -30,7 +30,7 @@ interface GameBoardProps {
 }
 
 /** Render a single trick action (cards or "Pass") */
-function TrickActionDisplay({ action }: { action: TrickAction | null }) {
+function TrickActionDisplay({ action, size = "sm" }: { action: TrickAction | null; size?: "xs" | "sm" }) {
   if (!action) return null;
   if (action.type === "pass") {
     return (
@@ -44,7 +44,7 @@ function TrickActionDisplay({ action }: { action: TrickAction | null }) {
     return (
       <div className="flex gap-0.5">
         {action.combo.cards.map((card) => (
-          <CardComponent key={card.id} card={card} size="sm" />
+          <CardComponent key={card.id} card={card} size={size} />
         ))}
       </div>
     );
@@ -264,7 +264,7 @@ export default function GameBoard({
   return (
     <div className="flex h-[100dvh] bg-background">
       {/* Main board area */}
-      <div className="flex-1 flex flex-col p-2 lg:p-6 gap-0 relative">
+      <div className="flex-1 flex flex-col p-1 lg:p-6 gap-0 relative">
         {/* Help button */}
         <a
           href="https://www.pagat.com/climbing/guandan.html"
@@ -314,28 +314,28 @@ export default function GameBoard({
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
                 <div className="relative inline-flex">
-                  <TrickActionDisplay action={ta?.["2"] ?? null} />
+                  <TrickActionDisplay action={ta?.["2"] ?? null} size={compactHand ? "xs" : "sm"} />
                   {gameState.trick_lead_seat === 2 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
                 </div>
               </div>
-              {/* Left opp (left edge) */}
-              <div data-testid="trick-seat-1" className="absolute left-3 top-0 bottom-0 flex items-center">
+              {/* Left opp — mobile: centered under col 1 (1/6 from left); desktop: left edge */}
+              <div data-testid="trick-seat-1" className="absolute left-[16.67%] -translate-x-1/2 top-0 bottom-0 flex items-center lg:left-3 lg:translate-x-0">
                 <div className="relative inline-flex">
-                  <TrickActionDisplay action={ta?.["1"] ?? null} />
+                  <TrickActionDisplay action={ta?.["1"] ?? null} size={compactHand ? "xs" : "sm"} />
                   {gameState.trick_lead_seat === 1 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
                 </div>
               </div>
-              {/* Right opp (right edge) */}
-              <div data-testid="trick-seat-3" className="absolute right-3 top-0 bottom-0 flex items-center">
+              {/* Right opp — mobile: centered under col 3 (5/6 from left); desktop: right edge */}
+              <div data-testid="trick-seat-3" className="absolute left-[83.33%] -translate-x-1/2 top-0 bottom-0 flex items-center lg:left-auto lg:right-3 lg:translate-x-0">
                 <div className="relative inline-flex">
-                  <TrickActionDisplay action={ta?.["3"] ?? null} />
+                  <TrickActionDisplay action={ta?.["3"] ?? null} size={compactHand ? "xs" : "sm"} />
                   {gameState.trick_lead_seat === 3 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
                 </div>
               </div>
               {/* You (bottom edge) */}
               <div ref={tableSeat0Ref} data-testid="trick-seat-0" className="absolute bottom-3 left-0 right-0 flex justify-center">
                 <div className="relative inline-flex">
-                  {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} />}
+                  {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} size={compactHand ? "xs" : "sm"} />}
                   {gameState.trick_lead_seat === 0 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
                 </div>
               </div>
@@ -359,7 +359,7 @@ export default function GameBoard({
         </div>
 
         {/* Your turn indicator + Controls */}
-        <div className="py-1 lg:py-2">
+        <div className="py-0.5 lg:py-2">
           <div className={`flex items-center justify-center gap-1.5 pb-1 lg:pb-2 ${!gameState.is_my_turn ? "invisible" : ""}`}>
             <div className="w-1.5 h-1.5 rounded-full bg-accent" />
             <span className="text-[13px] font-medium text-accent">
@@ -379,7 +379,7 @@ export default function GameBoard({
         </div>
 
         {/* Player hand with groups */}
-        <div className="py-1">
+        <div className="py-0 lg:py-1">
           <PlayerHand
             cards={gameState.my_hand}
             selectedIds={selectedIds}

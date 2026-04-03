@@ -102,7 +102,7 @@ export default function PlayerHand({
                   onClick={() => onToggleCard(card.id)}
                 >
                   <span
-                    className="text-[13px] font-semibold"
+                    className={`${compact ? "text-[9px]" : "text-[13px]"} font-semibold`}
                     style={{
                       color: card.suit === 1 || card.suit === 2 ? "#C75D4A" : "#1A1612",
                     }}

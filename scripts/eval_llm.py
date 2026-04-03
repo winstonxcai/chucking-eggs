@@ -103,6 +103,7 @@ def print_results(results: list[dict], stats: dict) -> None:
     print(f"  Total tokens    : {stats['total_tokens']:,}")
     print(f"  Fallback rate   : {stats['fallback_rate']:.1%}")
     print(f"  Est. cost       : ${estimate_cost(stats['total_tokens']):.3f}")
+    print(f"  ToM calls       : {stats.get('tom_calls', 0):,}  ({stats.get('tom_call_rate', 0):.1%})")
     print(f"  Intent distribution:")
     for intent, count in stats["intent_counts"].items():
         pct = count / max(1, sum(stats["intent_counts"].values()))
@@ -119,6 +120,10 @@ def main() -> None:
     parser.add_argument("--model", type=str, default=LLMBot.DEFAULT_MODEL)
     parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--temperature", type=float, default=0.3)
+    parser.add_argument("--tom-level", type=int, default=1, choices=[0, 1, 2],
+                        help="ToM level: 0=off, 1=1st-order, 2=2nd-order (default: 1)")
+    parser.add_argument("--tom-threshold", type=int, default=15,
+                        help="Activate ToM when min opp cards ≤ N (default: 15)")
     parser.add_argument(
         "--run-name", type=str,
         default=datetime.now().strftime("llm_%m%d_%H%M"),
@@ -129,7 +134,7 @@ def main() -> None:
     opp_names = [o.strip() for o in args.opponents.split(",")]
 
     print(f"LLMBot eval — model={args.model} | games={args.games} | opponents={opp_names}")
-    print(f"Top-K={args.top_k} | temperature={args.temperature}")
+    print(f"Top-K={args.top_k} | temperature={args.temperature} | ToM level={args.tom_level} threshold={args.tom_threshold}")
     print()
 
     llm_agent = LLMBot(
@@ -137,6 +142,8 @@ def main() -> None:
         model=args.model,
         temperature=args.temperature,
         top_k=args.top_k,
+        tom_level=args.tom_level,
+        tom_min_opp=args.tom_threshold,
     )
 
     results = []

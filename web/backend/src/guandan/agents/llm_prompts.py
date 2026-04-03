@@ -226,6 +226,22 @@ def _format_played_cards(played: set, level_rank: int) -> str:
     return summary
 
 
+def _format_player_history(move_history: list, seat: int, n: int = 3) -> str:
+    """Last n moves for a specific player seat. Returns space-joined compact string."""
+    moves = [combo for p, combo in move_history if p == seat][-n:]
+    if not moves:
+        return "(none)"
+    parts = []
+    for combo in moves:
+        if combo.type == ComboType.PASS:
+            parts.append("PASS")
+        else:
+            t = _COMBO_TYPE_DISPLAY.get(combo.type, "?")
+            r = _RANK_DISPLAY.get(combo.key, "?")
+            parts.append(f"{t}{r}[{len(combo.cards)}c]")
+    return " ".join(parts)
+
+
 def _format_recent_moves(move_history: list, player: int, n: int = 8) -> str:
     recent = move_history[-n:]
     if not recent:
@@ -330,6 +346,40 @@ COOPERATIVE OPTIONS:
 {coop_section}"""
 
 
+def format_tom_beliefs(
+    env: GuanDanEnv,
+    player: int,
+    flags: dict,
+    level_rank: int,
+) -> str:
+    """Format observable player profiles for ToM belief inference.
+
+    Uses only public information: card counts, played cards, recent actions.
+    Never accesses env.hands[other] contents.
+    """
+    roles = [
+        (flags["partner"], "partner"),
+        (flags["left_opp"], "left-opp"),
+        (flags["right_opp"], "right-opp"),
+    ]
+    lines = ["PLAYER PROFILES (for belief reasoning):"]
+    for seat, role in roles:
+        if seat in env.finish_order:
+            lines.append(f"P{seat}({role}): OUT")
+            continue
+        rem = len(env.hands[seat])
+        played_cards = sorted(env.played[seat], key=lambda c: (c.rank, c.suit))[:16]
+        played_str = " ".join(_card_display(c, level_rank) for c in played_cards)
+        if len(env.played[seat]) > 16:
+            played_str += f" +{len(env.played[seat]) - 16}"
+        played_str = played_str or "(none)"
+        last3 = _format_player_history(env.move_history, seat, n=3)
+        lines.append(
+            f"P{seat}({role}, rem={rem}): played=[{played_str}] last3=[{last3}]"
+        )
+    return "\n".join(lines)
+
+
 def format_candidates(candidates: list[Combo], level_rank: int) -> str:
     """Format candidate moves for stage-3 move selection."""
     lines = ["\n\nCANDIDATE MOVES (ranked by JidanBot heuristic, you choose strategically):"]
@@ -407,4 +457,5 @@ Heart {lr} substitutes for any rank. Wild combos beat non-wild of the same type/
 
 ## OUTPUT FORMAT
 Stage 1 — intent only: output exactly one word on a single line: cooperate | dwarf | assist | normal
+Stage 2.5 — belief inference: infer what each player likely holds from their actions. Be concise, ≤100 words. End with: DANGER: P<seat> or DANGER: NONE.
 Stage 3 — move selection: first line is ONLY the integer index of your chosen move. Second line (optional): one sentence of reasoning."""

@@ -67,7 +67,14 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
       // Permanent failures — don't retry
       if (event.code >= 4000) {
         console.error(`WebSocket closed: ${event.code} ${event.reason}`);
-        setCloseReason(event.reason || `Error ${event.code}`);
+        const CLOSE_MESSAGES: Record<number, string> = {
+          4000: "This game session has expired.",
+          4001: "Invalid session token. Please start a new game.",
+          4003: "You are not authorized to join this game.",
+          4004: "Game not found. It may have already ended.",
+          4009: "Another session is already connected to this seat.",
+        };
+        setCloseReason(event.reason || CLOSE_MESSAGES[event.code] || "The connection was closed unexpectedly.");
         setConnectionStatus("disconnected");
         // Clear stale session so user doesn't get stuck on refresh
         sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);

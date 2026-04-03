@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import EloChart from "@/components/profile/EloChart";
 import GameFeed from "@/components/profile/GameFeed";
 import StatsGrid from "@/components/profile/StatsGrid";
+import StatusScreen from "@/components/layout/StatusScreen";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -57,15 +58,19 @@ function ProfileContent() {
 
   if (error) {
     return (
-      <div className="p-8 text-sm text-text-secondary">{error}</div>
+      <StatusScreen
+        variant="info"
+        title="Player not found"
+        message={`We couldn't find a player named "${username}". They may not have an account yet.`}
+        action={{ label: "Leaderboard", href: "/leaderboard" }}
+        secondaryAction={{ label: "Home", href: "/" }}
+      />
     );
   }
 
   if (!data) {
     return (
-      <div className="p-8 flex items-center gap-2">
-        <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-      </div>
+      <StatusScreen variant="loading" title="Loading profile..." />
     );
   }
 

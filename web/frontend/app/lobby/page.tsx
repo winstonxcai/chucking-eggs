@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { RoomStatus, RoomMode } from "@/lib/types";
 import { DIFFICULTY_INFO, OUR_BOTS, COMPETITION_BOTS } from "@/lib/bots";
 import { STORAGE_KEYS } from "@/lib/storage-keys";
+import StatusScreen from "@/components/layout/StatusScreen";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -64,7 +65,7 @@ function LobbyContent() {
       const res = await fetch(`${API_BASE}/api/room/${gameId}/status`);
       if (!res.ok) {
         if (pollRef.current) clearInterval(pollRef.current);
-        setError("Room was closed");
+        setError("This room has been closed or is no longer available.");
         return;
       }
       const data: RoomStatus = await res.json();
@@ -76,13 +77,13 @@ function LobbyContent() {
         router.push(`/game?game_id=${gameId}&seat=${seat}&token=${encodeURIComponent(token || "")}`);
       }
     } catch {
-      setError("Failed to reach server");
+      setError("Could not reach the server. Check your connection and try again.");
     }
   }, [gameId, seat, token, router]);
 
   useEffect(() => {
     if (!gameId || !token) {
-      setError("Missing game ID or token");
+      setError("Invalid lobby link. The game ID or session token is missing.");
       return;
     }
     fetchStatus();
@@ -105,17 +106,13 @@ function LobbyContent() {
 
   if (error) {
     return (
-      <div className="h-full flex items-center justify-center bg-background">
-        <div className="text-center flex flex-col items-center gap-4">
-          <span className="text-text-secondary">{error}</span>
-          <button
-            className="text-sm text-accent hover:underline"
-            onClick={() => router.push("/")}
-          >
-            Back to home
-          </button>
-        </div>
-      </div>
+      <StatusScreen
+        variant="error"
+        title="Room unavailable"
+        message={error}
+        action={{ label: "Back to home", href: "/" }}
+        secondaryAction={{ label: "Try again", onClick: () => window.location.reload() }}
+      />
     );
   }
 

@@ -6,6 +6,7 @@ import { useGameSocket } from "@/hooks/useGameSocket";
 import { usePlayer } from "@/hooks/usePlayer";
 import { useActiveGame } from "@/hooks/useActiveGame";
 import GameBoard from "@/components/game/GameBoard";
+import StatusScreen from "@/components/layout/StatusScreen";
 import { STORAGE_KEYS } from "@/lib/storage-keys";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -185,48 +186,44 @@ function GameContent() {
 
   if (createError) {
     return (
-      <div className="h-full flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-4 text-center max-w-sm px-4">
-          <p className="text-text-secondary">{createError}</p>
-          <a href="/" className="text-sm text-accent underline">Back to home</a>
-        </div>
-      </div>
+      <StatusScreen
+        variant="error"
+        title="Connection failed"
+        message="Could not reach the game server. Check your internet connection and try again."
+        action={{ label: "Try again", onClick: () => window.location.reload() }}
+        secondaryAction={{ label: "Home", href: "/" }}
+      />
     );
   }
 
   if (forfeit) {
     return (
-      <div className="h-full flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-4 text-center max-w-sm px-4">
-          <p className="text-foreground font-semibold">Game ended</p>
-          <p className="text-text-secondary text-sm">{forfeit.forfeiter_name} forfeited the game.</p>
-          <p className="text-xs text-text-secondary">Redirecting to home...</p>
-        </div>
-      </div>
+      <StatusScreen
+        variant="warning"
+        title="Game ended"
+        message={`${forfeit.forfeiter_name} forfeited the game. Redirecting you home...`}
+      />
     );
   }
 
   if (closeReason) {
     return (
-      <div className="h-full flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-4 text-center max-w-sm px-4">
-          <p className="text-text-secondary">{closeReason}</p>
-          <a href="/" className="text-sm text-accent underline">Back to home</a>
-        </div>
-      </div>
+      <StatusScreen
+        variant="error"
+        title="Game disconnected"
+        message={closeReason}
+        action={{ label: "Back to home", href: "/" }}
+      />
     );
   }
 
   if (!gameId || !gameState) {
     return (
-      <div className="h-full flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-text-secondary">
-            {!gameId ? "Creating game..." : "Connecting..."}
-          </span>
-        </div>
-      </div>
+      <StatusScreen
+        variant="loading"
+        title={!gameId ? "Creating game..." : "Connecting..."}
+        message="Setting up your table"
+      />
     );
   }
 

@@ -331,14 +331,20 @@ export default function GameBoard({
         </div>
         {/* Reconnection banner */}
         {connectionStatus === "reconnecting" && (
-          <div className="flex items-center justify-center gap-2 py-2 bg-amber-50 border border-amber-200 rounded-lg mb-2">
-            <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs font-medium text-amber-700">Reconnecting...</span>
+          <div className="flex items-center justify-center gap-2 py-2 px-4 bg-accent/5 border border-accent/20 rounded-lg mb-2">
+            <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs font-medium text-accent">Reconnecting to server...</span>
           </div>
         )}
         {connectionStatus === "disconnected" && (
-          <div className="flex items-center justify-center gap-2 py-2 bg-red-50 border border-red-200 rounded-lg mb-2">
-            <span className="text-xs font-medium text-red-700">Connection lost. Please refresh the page.</span>
+          <div className="flex items-center justify-center gap-2 py-2 px-4 bg-team-red/5 border border-team-red/20 rounded-lg mb-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--team-red)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="15" y1="9" x2="9" y2="15" />
+              <line x1="9" y1="9" x2="15" y2="15" />
+            </svg>
+            <span className="text-xs font-medium text-team-red">Connection lost</span>
+            <button onClick={() => window.location.reload()} className="text-xs font-semibold text-team-red underline underline-offset-2 hover:opacity-70 transition-opacity">Refresh</button>
           </div>
         )}
 

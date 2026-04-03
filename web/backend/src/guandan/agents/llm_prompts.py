@@ -332,8 +332,7 @@ def format_candidates(candidates: list[Combo], level_rank: int) -> str:
     for i, combo in enumerate(candidates):
         lines.append(f"  [{i}] {_combo_desc(combo, level_rank)}")
     lines.append(
-        "\nBriefly explain your reasoning (1-2 sentences), "
-        "then output ONLY the move number on the last line."
+        f"\nOutput ONLY the integer index of your chosen move (0–{len(candidates)-1}). No other text."
     )
     return "\n".join(lines)
 
@@ -397,4 +396,4 @@ Heart {lr} substitutes for any rank. Wild combos beat non-wild of the same type/
 
 ## OUTPUT FORMAT
 Stage 1 — intent only: output exactly one word on a single line: cooperate | dwarf | assist | normal
-Stage 3 — move selection: think briefly (1-2 sentences), then output ONLY the move number on the last line"""
+Stage 3 — move selection: output ONLY the integer index of your chosen move. No explanation. No other text."""

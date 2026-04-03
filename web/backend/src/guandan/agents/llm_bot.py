@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..cards import Rank
+from ..cards import ComboType
 from ..combos import Combo
 from .base import Agent
 from .llm_prompts import (
@@ -143,15 +144,19 @@ class LLMBot(Agent):
         # ── Stage 3: Move selection ────────────────────────────────────────────
         move_prompt = state_prompt + format_candidates(candidates, self.level_rank)
         for _ in range(self.max_retries + 1):
-            raw = self._call_llm(move_prompt, max_tokens=80)
+            raw = self._call_llm(move_prompt, max_tokens=10)
             if raw:
                 idx = parse_move_index(raw, len(candidates))
                 if idx is not None:
                     return candidates[idx]
 
-        # Fallback: JidanBot's top pick
+        # Fallback: JidanBot's best pick (highest score = last non-pass candidate)
         self._fallback_count += 1
-        return candidates[0]
+        best = next(
+            (c for c in reversed(candidates) if c.type != ComboType.PASS),
+            candidates[-1],
+        )
+        return best
 
     @property
     def stats(self) -> dict:

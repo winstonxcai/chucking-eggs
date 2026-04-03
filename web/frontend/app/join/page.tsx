@@ -8,12 +8,16 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 function JoinContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [code, setCode] = useState(searchParams.get("code")?.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const initialCode = searchParams.get("code")?.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "";
+  const autoJoin = initialCode.length === 6;
 
-  const handleJoin = useCallback(async () => {
-    const trimmed = code.trim().toUpperCase();
+  const [code, setCode] = useState(initialCode);
+  const [error, setError] = useState<string | null>(null);
+  // Start in loading state immediately if auto-joining — never show the form
+  const [loading, setLoading] = useState(autoJoin);
+
+  const handleJoin = useCallback(async (roomCode: string) => {
+    const trimmed = roomCode.trim().toUpperCase();
     if (trimmed.length !== 6) {
       setError("Room code must be 6 characters");
       return;
@@ -27,6 +31,7 @@ function JoinContent() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setError(data.detail || "Room not found or already full");
+        setLoading(false);
         return;
       }
       const data = await res.json();
@@ -35,21 +40,30 @@ function JoinContent() {
       );
     } catch {
       setError("Could not reach server");
-    } finally {
       setLoading(false);
     }
-  }, [code, router]);
+  }, [router]);
 
-  // Auto-join when code is provided via URL param (from invite link)
+  // Auto-join immediately when code is pre-filled from URL
   useEffect(() => {
-    if (searchParams.get("code") && code.length === 6) {
-      handleJoin();
+    if (autoJoin) {
+      handleJoin(initialCode);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Clean "Joining room..." screen — no form flash
+  if (loading) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3">
+        <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-sm text-text-secondary">Joining room…</span>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4">
+    <div className="h-full bg-background flex flex-col items-center justify-center px-4">
       <div className="max-w-sm w-full flex flex-col gap-6">
         <div className="flex flex-col items-center gap-1">
           <h1 className="text-2xl font-bold text-foreground">Join a game</h1>
@@ -63,7 +77,7 @@ function JoinContent() {
             placeholder="XXXXXX"
             value={code}
             onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-            onKeyDown={(e) => e.key === "Enter" && handleJoin()}
+            onKeyDown={(e) => e.key === "Enter" && handleJoin(code)}
             autoFocus
           />
           {error && (
@@ -71,10 +85,10 @@ function JoinContent() {
           )}
           <button
             className="w-full py-3 bg-accent text-white font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50"
-            onClick={handleJoin}
-            disabled={loading || code.length !== 6}
+            onClick={() => handleJoin(code)}
+            disabled={code.length !== 6}
           >
-            {loading ? "Joining…" : "Join Game"}
+            Join Game
           </button>
         </div>
 
@@ -93,7 +107,7 @@ export default function JoinPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="h-full flex items-center justify-center bg-background">
           <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         </div>
       }

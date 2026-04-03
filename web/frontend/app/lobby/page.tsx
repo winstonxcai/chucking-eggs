@@ -104,7 +104,7 @@ function LobbyContent() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="h-full flex items-center justify-center bg-background">
         <div className="text-center flex flex-col items-center gap-4">
           <span className="text-text-secondary">{error}</span>
           <button
@@ -118,28 +118,20 @@ function LobbyContent() {
     );
   }
 
-  if (!status) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  const humanSeats = status.seats.filter((s) => s.is_human);
+  const humanSeats = status?.seats.filter((s) => s.is_human) ?? [];
   const connectedCount = humanSeats.filter((s) => s.connected).length;
   const totalHumans = humanSeats.length;
   const isHost = seat === 0;
-  const isDuo = status.mode === "duo";
+  const isDuo = status?.mode === "duo";
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4">
+    <div className="h-full bg-background flex flex-col items-center justify-center px-4">
       <div className="max-w-sm w-full flex flex-col gap-6">
         {/* Header */}
         <div className="flex flex-col items-center gap-1">
           <h1 className="text-2xl font-bold text-foreground">Waiting for players</h1>
           <span className="text-sm text-text-secondary">
-            {MODE_LABEL[status.mode]} · {connectedCount}/{totalHumans} connected
+            {status ? `${MODE_LABEL[status.mode]} · ${connectedCount}/${totalHumans} connected` : "Connecting…"}
           </span>
         </div>
 
@@ -177,39 +169,43 @@ function LobbyContent() {
         )}
 
         {/* Room code */}
-        {status.room_code && (
-          <div className="bg-surface border border-border rounded-xl p-5 flex flex-col items-center gap-3">
-            <span className="text-xs font-semibold text-text-secondary tracking-widest uppercase">Room Code</span>
-            <span data-testid="room-code" className="text-4xl font-bold tracking-widest text-foreground font-mono">
-              {status.room_code}
-            </span>
-            <div className="flex items-center gap-3 text-xs text-text-secondary">
-              <CopyButton text={status.room_code} label="Copy Code" />
-              <span className="text-border">|</span>
-              <CopyButton text={`${window.location.origin}/join?code=${status.room_code}`} label="Copy Link" />
-              {typeof navigator !== "undefined" && navigator.share && (
-                <>
-                  <span className="text-border">|</span>
-                  <button
-                    onClick={() =>
-                      navigator.share({
-                        title: "Join my Guan Dan game",
-                        url: `${window.location.origin}/join?code=${status.room_code}`,
-                      }).catch(() => {})
-                    }
-                    className="text-accent hover:underline transition-colors"
-                  >
-                    Share
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
+        <div className="bg-surface border border-border rounded-xl p-5 flex flex-col items-center gap-3">
+          <span className="text-xs font-semibold text-text-secondary tracking-widest uppercase">Room Code</span>
+          {status?.room_code ? (
+            <>
+              <span data-testid="room-code" className="text-4xl font-bold tracking-widest text-foreground font-mono">
+                {status.room_code}
+              </span>
+              <div className="flex items-center gap-3 text-xs text-text-secondary">
+                <CopyButton text={status.room_code} label="Copy Code" />
+                <span className="text-border">|</span>
+                <CopyButton text={`${window.location.origin}/join?code=${status.room_code}`} label="Copy Link" />
+                {typeof navigator !== "undefined" && navigator.share && (
+                  <>
+                    <span className="text-border">|</span>
+                    <button
+                      onClick={() =>
+                        navigator.share({
+                          title: "Join my Guan Dan game",
+                          url: `${window.location.origin}/join?code=${status.room_code}`,
+                        }).catch(() => {})
+                      }
+                      className="text-accent hover:underline transition-colors"
+                    >
+                      Share
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="h-10 w-40 bg-border/40 rounded-lg animate-pulse" />
+          )}
+        </div>
 
         {/* Seat list */}
         <div className="bg-surface border border-border rounded-xl overflow-hidden">
-          {status.seats.map((s) => (
+          {status ? status.seats.map((s) => (
             <div
               key={s.seat}
               className="flex items-center justify-between px-4 py-3 border-b border-border last:border-0"
@@ -237,6 +233,17 @@ function LobbyContent() {
                   : "AI"}
               </span>
             </div>
+          )) : [0, 1, 2, 3].map((i) => (
+            <div key={i} className="flex items-center justify-between px-4 py-3 border-b border-border last:border-0">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-border animate-pulse" />
+                <div className="flex flex-col gap-1">
+                  <div className="h-3.5 w-20 bg-border/40 rounded animate-pulse" />
+                  <div className="h-3 w-14 bg-border/30 rounded animate-pulse" />
+                </div>
+              </div>
+              <div className="h-3 w-14 bg-border/30 rounded animate-pulse" />
+            </div>
           ))}
         </div>
 
@@ -263,7 +270,7 @@ export default function LobbyPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="h-full flex items-center justify-center bg-background">
           <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         </div>
       }

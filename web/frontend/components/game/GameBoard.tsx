@@ -34,7 +34,7 @@ function TrickActionDisplay({ action, size = "sm" }: { action: TrickAction | nul
   if (!action) return null;
   if (action.type === "pass") {
     return (
-      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-border text-xs text-text-secondary">
+      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-border lg:border-white/20 text-xs text-text-secondary lg:text-white/55">
         <Hand className="w-3 h-3 shrink-0" />
         Pass
       </span>
@@ -290,7 +290,7 @@ export default function GameBoard({
 
         {/* Play area: all players + table in a centered grid */}
         <div className="flex-1 flex items-start lg:items-center justify-center min-h-0">
-          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-1 lg:gap-32 items-start lg:items-center justify-items-center w-full h-full">
+          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-1 lg:gap-32 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
               {partner && (
@@ -310,7 +310,12 @@ export default function GameBoard({
             </div>
 
             {/* Table surface — all trick actions inside */}
-            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[640px] lg:h-[320px] lg:border lg:border-border lg:rounded-2xl">
+            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[640px] lg:h-[320px] lg:rounded-2xl lg:border-2 lg:border-[#c9a84c]/35 lg:bg-gradient-to-br lg:from-[#1a3d2e] lg:to-[#0d2619] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
+              {/* Desktop table center mark */}
+              <div className="hidden lg:flex absolute inset-0 items-center justify-center pointer-events-none">
+                <div className="w-20 h-20 rounded-full border border-white/[0.07]" />
+              </div>
+
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
                 <div className="relative inline-flex">
@@ -342,7 +347,7 @@ export default function GameBoard({
               {/* New trick label */}
               {gameState.is_leading && !ta?.["0"] && !ta?.["1"] && !ta?.["2"] && !ta?.["3"] && (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-sm text-text-secondary">New trick</span>
+                  <span className="text-sm text-text-secondary lg:text-white/40">New trick</span>
                 </div>
               )}
             </div>

@@ -239,6 +239,7 @@ class GameRoom:
             self.env, self.game_id, seat, self.player_infos,
             trick_plays=self.trick_plays,
             groups=self.groups_by_seat.get(seat, []),
+            mode=self.mode,
         )
         # Include AFK deadline when it's this seat's turn.
         # turn_deadlines stores monotonic time (for asyncio.wait_for); convert to

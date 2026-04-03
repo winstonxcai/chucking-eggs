@@ -164,6 +164,7 @@ def serialize_game_state(
     player_infos: list[dict],
     trick_plays: dict[int, Combo] | None = None,
     groups: list[dict] | None = None,
+    mode: str = "solo",
 ) -> dict:
     """Serialize full game state from the human player's perspective."""
     sorted_hand = sort_hand(env.hands[human_seat], env.level_rank)
@@ -279,4 +280,5 @@ def serialize_game_state(
         "partner_hand": partner_hand,
         "all_moves": all_moves,
         "trick_lead_seat": trick_lead_seat,
+        "mode": mode,
     }

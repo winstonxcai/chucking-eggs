@@ -64,6 +64,7 @@ export interface GameState {
   partner_hand?: CardDTO[];
   all_moves: ComboDTO[];
   trick_lead_seat: number | null;
+  mode?: string;
 }
 
 export interface MovePlayedMsg {

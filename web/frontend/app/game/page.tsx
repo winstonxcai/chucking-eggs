@@ -78,6 +78,8 @@ function GameContent() {
   const { updateElo } = usePlayer();
   const { saveGame, clearGame } = useActiveGame();
 
+  const isMultiplayer = gameState ? (gameState.mode ?? "solo") !== "solo" : false;
+
   // Save multiplayer game to localStorage for active-game banner
   useEffect(() => {
     if (gameId && reconnectToken && isMultiplayer) {
@@ -107,8 +109,6 @@ function GameContent() {
       router.push(`/join?code=${rematch.room_code}`);
     }
   }, [rematch, router]);
-
-  const isMultiplayer = gameState ? gameState.players.filter((p) => p.is_human).length > 1 : false;
 
   // Solo games: clear session on unmount so navigating away starts fresh
   const isMultiplayerRef = useRef(false);

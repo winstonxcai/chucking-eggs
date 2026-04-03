@@ -264,7 +264,7 @@ export default function GameBoard({
   return (
     <div className="flex h-[100dvh] bg-background overflow-x-hidden">
       {/* Main board area */}
-      <div className="flex-1 flex flex-col p-1 lg:p-6 gap-0 relative">
+      <div className="flex-1 flex flex-col p-[5px] lg:p-6 gap-0 relative">
         {/* Help button */}
         <a
           href="https://www.pagat.com/climbing/guan_dan.html"

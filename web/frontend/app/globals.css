@@ -27,6 +27,14 @@
   --font-sans: "Inter", system-ui, sans-serif;
 }
 
+@keyframes border-pulse {
+  0%, 100% { border-left-color: inherit; }
+  50% { border-left-color: transparent; }
+}
+.animate-border-pulse {
+  animation: border-pulse 1.5s ease-in-out infinite;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

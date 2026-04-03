@@ -11,7 +11,8 @@ interface OpponentPanelProps {
 }
 
 export default function OpponentPanel({ player, thinking, revealedHand, isActive }: OpponentPanelProps) {
-  const borderColor = player.is_teammate ? "border-l-team-green" : "border-l-team-red";
+  const teamColor = player.is_teammate ? "border-l-team-green" : "border-l-team-red";
+  const borderColor = `${teamColor}${isActive ? " animate-border-pulse" : ""}`;
   const roleLabel = player.is_out ? "Out" : player.is_teammate ? "Partner" : "Opp";
   const statusLabel = player.is_out
     ? "Out"
@@ -27,7 +28,6 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
     >
       {/* Mobile: single-line "Name · Role" */}
       <div className="lg:hidden flex items-center gap-1">
-        <div className={`w-1.5 h-1.5 rounded-full bg-accent shrink-0 ${isActive ? "animate-pulse" : "invisible"}`} />
         <span className="text-[10px] font-semibold text-foreground truncate max-w-[52px] relative">
           {thinking ? (
             <>
@@ -41,8 +41,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
 
       {/* Desktop: two-line name + status */}
       <div className="hidden lg:flex flex-col gap-0.5">
-        <div className="flex items-center gap-1.5 relative">
-          <div className={`w-1.5 h-1.5 rounded-full bg-accent shrink-0 ${isActive ? "animate-pulse" : "invisible"}`} />
+        <div className="flex items-center gap-1.5">
           <span className="text-sm font-semibold text-foreground relative">
             {thinking ? (
               <>

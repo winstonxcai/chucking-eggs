@@ -46,8 +46,11 @@ export default function Sidebar({ player }: SidebarProps) {
       style={{ minHeight: "100dvh" }}
     >
       {/* Brand */}
-      <div className="flex items-center gap-2 px-2 pt-5 pb-3 lg:px-3 lg:pt-8 lg:pb-5 overflow-hidden">
-        <span className="text-lg shrink-0">🥚</span>
+      <div className="flex items-center justify-center gap-2 px-2 pt-5 pb-3 lg:px-3 lg:pt-8 lg:pb-5 overflow-hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" className="w-6 h-6 shrink-0">
+          <path d="M16 3 C22 3 27 10 27 18 C27 24.6 22.1 29 16 29 C9.9 29 5 24.6 5 18 C5 10 10 3 16 3Z" fill="#D97757"/>
+          <ellipse cx="12" cy="11" rx="2.2" ry="1.3" fill="rgba(255,255,255,0.22)" transform="rotate(-30 12 11)"/>
+        </svg>
         {expanded && (
           <span className="hidden lg:inline text-sm font-bold text-foreground tracking-tight whitespace-nowrap">
             Chucking Eggs

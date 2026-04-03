@@ -13,7 +13,7 @@ from pathlib import Path
 
 from fastapi import WebSocket
 
-DATA_DIR = Path(__file__).resolve().parents[3] / "data"
+DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 
 from guandan.cards import ComboType, Rank
 from guandan.combos import Combo

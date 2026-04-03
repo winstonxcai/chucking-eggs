@@ -81,12 +81,11 @@ class AIService:
         self._load_agents()
 
     def _load_agents(self) -> None:
-        """Load rule-based agents, then try loading RL checkpoint."""
+        """Load rule-based agents."""
         for agent_name in ("greedy", "xingdream", "heuristic", "strategic",
                            "lalala", "noai", "wjsd", "yaoji", "jidan",
                            "hulalala", "liuzha"):
             self.agents[agent_name] = make_agent(agent_name, level_rank=Rank.TWO)
-        self._try_load_rl_agent()
 
     def _try_load_rl_agent(self) -> None:
         checkpoints_dir = Path(__file__).resolve().parents[3] / "checkpoints"

@@ -129,7 +129,7 @@ export default function GameControls({
   }
 
   return (
-    <div className={`flex flex-col items-center gap-2 ${!isMyTurn ? "invisible" : ""}`}>
+    <div className="flex flex-col items-center gap-2">
       {/* Rope timer — always rendered to reserve space, invisible when not your turn */}
       <div
         data-testid="rope-timer"
@@ -141,7 +141,7 @@ export default function GameControls({
         />
       </div>
 
-      <div className="flex items-center justify-center gap-3">
+      <div className={`flex items-center justify-center gap-3 ${!isMyTurn ? "invisible" : ""}`}>
         <button
           className={`px-7 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
             matchingCombo
@@ -161,14 +161,12 @@ export default function GameControls({
             Unselect
           </button>
         )}
-        {!isLeading && (
-          <button
-            className="px-7 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
-            onClick={onPass}
-          >
-            Pass
-          </button>
-        )}
+        <button
+          className={`px-7 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${isLeading ? "invisible" : ""}`}
+          onClick={onPass}
+        >
+          Pass
+        </button>
       </div>
     </div>
   );

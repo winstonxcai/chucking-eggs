@@ -54,6 +54,12 @@ export function groupByRank(cards: CardDTO[]): CardDTO[][] {
  *          substituted in, so the correct deck copies are played.
  *  Pass 3: N-of-a-kind bomb — all same rank, matching bomb type in legal moves.
  */
+function computeRankCounts(ranks: number[]): string {
+  const counts = new Map<number, number>();
+  for (const r of ranks) counts.set(r, (counts.get(r) ?? 0) + 1);
+  return [...counts.entries()].sort(([a], [b]) => a - b).map(([r, c]) => `${r}:${c}`).join(",");
+}
+
 export function findMatchingCombo(
   selectedIds: Set<string>,
   legalMoves: ComboDTO[],
@@ -109,6 +115,24 @@ export function findMatchingCombo(
       for (const combo of legalMoves) {
         if (!combo.is_pass && combo.type === bombType && combo.key === rank) {
           return combo;
+        }
+      }
+    }
+  }
+
+  // Pass 4: rank-count match — handles double-deck suit variation in pairs/triples.
+  // Backend generates one specific deck/suit combo per legal move; when grouped cards
+  // displace deck-0 copies, Pass 2 (rank+suit) fails. Match by type + rank counts only.
+  if (selectedCards.length > 0) {
+    const validated = validateCombo(selectedCards);
+    if (validated) {
+      const selRankCount = computeRankCounts(selectedCards.map((c) => c.rank));
+      for (const combo of legalMoves) {
+        if (combo.is_pass || combo.cards.length !== selectedIds.size) continue;
+        if (combo.type !== validated.type) continue;
+        const comboRankCount = computeRankCounts(combo.cards.map((c) => c.rank));
+        if (comboRankCount === selRankCount) {
+          return { ...combo, cards: selectedCards };
         }
       }
     }

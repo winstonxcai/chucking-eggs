@@ -38,14 +38,14 @@ export default function LeaderboardPage() {
 
   if (!data) {
     return (
-      <div className="p-8 flex items-center gap-2">
+      <div className="p-4 lg:p-8 flex items-center gap-2">
         <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-8 py-8">
+    <div className="max-w-2xl mx-auto px-4 py-6 lg:px-8 lg:py-8">
       <h1 className="text-2xl font-bold text-foreground mb-6">Leaderboard</h1>
 
       <div className="bg-surface border border-border rounded-xl overflow-hidden">

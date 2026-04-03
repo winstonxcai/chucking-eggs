@@ -48,7 +48,7 @@ export default function GameControls({
       {/* Rope timer — always rendered to reserve space, invisible when not your turn */}
       <div
         data-testid="rope-timer"
-        className={`w-48 h-1 bg-border rounded-full overflow-hidden ${!showRope ? "invisible" : ""}`}
+        className={`w-32 lg:w-48 h-1 bg-border rounded-full overflow-hidden ${!showRope ? "invisible" : ""}`}
       >
         <div
           className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
@@ -58,7 +58,7 @@ export default function GameControls({
 
       <div className="flex items-center justify-center gap-3">
         <button
-          className={`px-7 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+          className={`px-4 lg:px-7 py-1.5 lg:py-2.5 rounded-lg text-sm font-semibold transition-colors ${
             matchingCombo
               ? "bg-accent text-white hover:bg-accent-hover cursor-pointer"
               : "bg-border text-text-secondary cursor-not-allowed"
@@ -70,7 +70,7 @@ export default function GameControls({
         </button>
         {hasSelection && (
           <button
-            className="px-4 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
+            className="px-3 lg:px-4 py-1.5 lg:py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
             onClick={onUnselect}
           >
             Unselect
@@ -78,7 +78,7 @@ export default function GameControls({
         )}
         {!isLeading && (
           <button
-            className="px-7 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
+            className="px-4 lg:px-7 py-1.5 lg:py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
             onClick={onPass}
           >
             Pass

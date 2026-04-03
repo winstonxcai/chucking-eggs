@@ -43,11 +43,11 @@ export default function HandToolbar({
   }, [openSuit]);
 
   return (
-    <div className="flex items-center justify-center gap-4">
+    <div className="flex items-center justify-center gap-2 lg:gap-4">
       {/* Group / Ungroup */}
-      <div className="flex gap-2">
+      <div className="flex gap-1.5 lg:gap-2">
         <button
-          className={`px-3.5 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+          className={`px-2.5 py-1 lg:px-3.5 lg:py-1.5 rounded-md text-xs font-medium border transition-colors ${
             canGroup
               ? "bg-surface border-border text-foreground hover:border-accent cursor-pointer"
               : "bg-background border-border text-text-secondary cursor-not-allowed opacity-50"
@@ -58,7 +58,7 @@ export default function HandToolbar({
           Group
         </button>
         <button
-          className={`px-3.5 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+          className={`px-2.5 py-1 lg:px-3.5 lg:py-1.5 rounded-md text-xs font-medium border transition-colors ${
             canUngroup
               ? "bg-surface border-border text-foreground hover:border-accent cursor-pointer"
               : "bg-background border-border text-text-secondary cursor-not-allowed opacity-50"
@@ -73,8 +73,8 @@ export default function HandToolbar({
       <div className="w-px h-5 bg-border" />
 
       {/* Straight Flush Finder */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-medium text-text-secondary">Straight Flush</span>
+      <div className="flex items-center gap-1.5 lg:gap-2">
+        <span className="hidden lg:inline text-xs font-medium text-text-secondary">Straight Flush</span>
         {SUITS.map(({ suit, symbol, color }) => {
           const sfs = sfBySuit[suit] ?? [];
           const hasSF = sfs.length > 0;
@@ -83,7 +83,7 @@ export default function HandToolbar({
           return (
             <div key={suit} className="relative" ref={isOpen ? popoverRef : undefined}>
               <button
-                className={`px-2.5 py-1 bg-surface border border-border rounded-md transition-colors ${
+                className={`px-1.5 py-0.5 lg:px-2.5 lg:py-1 bg-surface border border-border rounded-md transition-colors ${
                   hasSF
                     ? "cursor-pointer hover:border-accent"
                     : "opacity-50 cursor-not-allowed"
@@ -98,7 +98,7 @@ export default function HandToolbar({
 
               {/* Popover */}
               {isOpen && sfs.length > 0 && (
-                <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 bg-surface border border-border rounded-lg shadow-md p-1.5 min-w-[100px] z-10">
+                <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 bg-surface border border-border rounded-lg shadow-md p-1.5 min-w-[100px] z-20">
                   {sfs.map((sf, i) => (
                     <button
                       key={i}

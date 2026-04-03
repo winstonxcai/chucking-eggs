@@ -43,7 +43,7 @@ export default function Sidebar({ player }: SidebarProps) {
       className={`shrink-0 flex-col border-r border-border bg-background transition-[width] duration-200 ease-out ${
         isGamePage ? "hidden lg:flex" : "flex"
       } ${expanded ? "w-12 lg:w-[200px]" : "w-12"}`}
-      style={{ minHeight: "100dvh" }}
+      style={{ height: "100%" }}
     >
       {/* Brand */}
       <div className="flex items-center justify-center gap-2 px-2 pt-5 pb-3 lg:px-3 lg:pt-8 lg:pb-5 overflow-hidden">

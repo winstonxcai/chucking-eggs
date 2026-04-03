@@ -19,9 +19,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <LandscapeGate>
-      <div className="flex min-h-screen">
+      <div className="flex h-dvh overflow-hidden">
         <Sidebar player={player} />
-        <main className="flex-1 min-w-0">{children}</main>
+        <main className="flex-1 min-w-0 overflow-y-auto">{children}</main>
         {!player && <UsernameModal onClaim={claim} />}
       </div>
     </LandscapeGate>

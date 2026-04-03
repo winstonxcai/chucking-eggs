@@ -13,6 +13,7 @@ interface PlayerHandProps {
   groupedCardIds: Set<string>;
   onGroupClick: (group: CardGroup) => void;
   hiddenIds?: Set<string>;
+  compact?: boolean;
 }
 
 export default function PlayerHand({

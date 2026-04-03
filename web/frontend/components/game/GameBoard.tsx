@@ -289,7 +289,7 @@ export default function GameBoard({
         )}
 
         {/* Play area: all players + table in a centered grid */}
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-start lg:items-center justify-center">
           <div className="grid grid-cols-3 lg:grid-cols-[auto_minmax(0,640px)_auto] gap-1 lg:gap-32 items-start lg:items-center justify-items-center w-full">
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">

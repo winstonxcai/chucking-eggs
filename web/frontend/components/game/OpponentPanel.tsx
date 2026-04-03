@@ -14,23 +14,28 @@ export default function OpponentPanel({ player, thinking, revealedHand }: Oppone
 
   return (
     <div
-      className={`flex flex-col items-center gap-1.5 px-1.5 py-1.5 lg:px-4 lg:py-3 bg-surface rounded-xl border-l-[3px] ${borderColor} shadow-[0_1px_3px_rgba(0,0,0,0.06)]`}
+      className={`flex flex-col items-center gap-1 px-1.5 py-1.5 lg:px-4 lg:py-3 bg-surface rounded-xl border-l-[3px] ${borderColor} shadow-[0_1px_3px_rgba(0,0,0,0.06)]`}
     >
-      <div className="w-7 h-7 lg:w-9 lg:h-9 rounded-full bg-[#F0EDE8] flex items-center justify-center">
+      {/* Avatar: desktop only */}
+      <div className="hidden lg:flex w-9 h-9 rounded-full bg-[#F0EDE8] items-center justify-center">
         {thinking ? (
           <span className="animate-pulse text-xs text-text-secondary">...</span>
         ) : (
-          <span className="text-xs lg:text-sm text-text-secondary">
+          <span className="text-sm text-text-secondary">
             {player.is_teammate ? "\u2660" : "\u2666"}
           </span>
         )}
       </div>
       <div className="flex flex-col items-center gap-0.5">
-        <div className="flex items-center gap-1">
-          <span className="text-xs lg:text-sm font-semibold text-foreground">{player.name}</span>
-          <span className="hidden lg:inline text-xs font-medium text-text-secondary">{player.elo}</span>
-        </div>
-        <span className="text-xs text-text-secondary">
+        <span className="text-[11px] lg:text-sm font-semibold text-foreground truncate max-w-[56px] lg:max-w-none">
+          {thinking ? <span className="animate-pulse">...</span> : player.name}
+        </span>
+        {/* Mobile: compact role only */}
+        <span className="lg:hidden text-[10px] text-text-secondary">
+          {player.is_out ? "Out" : player.is_teammate ? "Partner" : "Opp"}
+        </span>
+        {/* Desktop: card count + role */}
+        <span className="hidden lg:block text-xs text-text-secondary">
           {player.is_out
             ? "Out"
             : player.card_count <= 10

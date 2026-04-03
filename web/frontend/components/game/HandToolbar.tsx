@@ -70,10 +70,10 @@ export default function HandToolbar({
         </button>
       </div>
 
-      <div className="w-px h-5 bg-border" />
+      <div className="hidden lg:block w-px h-5 bg-border" />
 
       {/* Straight Flush Finder */}
-      <div className="flex items-center gap-1.5 lg:gap-2">
+      <div className="hidden lg:flex items-center gap-1.5 lg:gap-2">
         <span className="hidden lg:inline text-xs font-medium text-text-secondary">Straight Flush</span>
         {SUITS.map(({ suit, symbol, color }) => {
           const sfs = sfBySuit[suit] ?? [];

@@ -62,7 +62,7 @@ export default function PlayerHand({
               </span>
               <div className="flex gap-0.5">
                 {groupCards.map((card) => (
-                  <CardComponent key={card.id} card={card} size="sm" />
+                  <CardComponent key={card.id} card={card} size={compact ? "xs" : "sm"} />
                 ))}
               </div>
             </div>

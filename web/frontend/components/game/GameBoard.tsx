@@ -295,7 +295,7 @@ export default function GameBoard({
             <div className="col-start-2 row-start-1">
               {partner && (
                 <div className={gameState.current_player === 2 ? "ring-2 ring-accent rounded-xl" : ""}>
-                  <OpponentPanel player={partner} thinking={aiThinking === 2} revealedHand={gameState.partner_hand} />
+                  <OpponentPanel player={partner} thinking={aiThinking === 2} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.partner_hand} />
                 </div>
               )}
             </div>
@@ -358,8 +358,8 @@ export default function GameBoard({
           </div>
         </div>
 
-        {/* Your turn indicator + Controls — pushed to bottom on mobile */}
-        <div className="mt-auto lg:mt-0 py-0.5 lg:py-2">
+        {/* Your turn indicator + Controls — hidden on mobile once player is finished */}
+        <div className={`mt-auto lg:mt-0 py-0.5 lg:py-2 ${compactHand && gameState.my_hand.length === 0 ? "hidden lg:block" : ""}`}>
           {/* Desktop-only turn label */}
           <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-2 ${!gameState.is_my_turn ? "invisible" : ""}`}>
             <div className="w-1.5 h-1.5 rounded-full bg-accent" />
@@ -385,8 +385,8 @@ export default function GameBoard({
           />
         </div>
 
-        {/* Player hand with groups */}
-        <div className="py-0 lg:py-1">
+        {/* Player hand with groups — hidden on mobile once player is finished */}
+        <div className={`py-0 lg:py-1 ${compactHand && gameState.my_hand.length === 0 ? "hidden lg:block" : ""}`}>
           <PlayerHand
             cards={gameState.my_hand}
             selectedIds={selectedIds}

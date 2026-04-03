@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { DIFFICULTY_INFO, OUR_BOTS, COMPETITION_BOTS } from "@/lib/bots";
+import { useActiveGame } from "@/hooks/useActiveGame";
+import { usePlayer } from "@/hooks/usePlayer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -10,6 +12,10 @@ export default function Home() {
   const router = useRouter();
   const [creatingRoom, setCreatingRoom] = useState<"duo" | "quad" | null>(null);
   const [soloOpen, setSoloOpen] = useState(false);
+  const { isInGame, getResumeParams, clearGame } = useActiveGame();
+  const { player } = usePlayer();
+  const [forfeitConfirm, setForfeitConfirm] = useState(false);
+  const [forfeiting, setForfeiting] = useState(false);
 
   async function handleCreateRoom(mode: "duo" | "quad", difficulty: string) {
     setCreatingRoom(mode);
@@ -40,6 +46,70 @@ export default function Home() {
             Play the classic Chinese card game against AI opponents
           </p>
         </div>
+
+        {/* Active multiplayer game banner */}
+        {isInGame && (
+          <div className="w-full bg-surface border border-accent/30 rounded-xl p-4 flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+              <span className="text-sm font-semibold text-foreground">You have an active game</span>
+            </div>
+            <div className="flex gap-3">
+              <button
+                className="flex-1 py-2.5 bg-accent text-white font-semibold rounded-xl hover:bg-accent-hover transition-colors"
+                onClick={() => {
+                  const params = getResumeParams();
+                  if (params) {
+                    router.push(`/game?game_id=${params.gameId}&seat=${params.seat}&token=${encodeURIComponent(params.token)}`);
+                  }
+                }}
+              >
+                Rejoin
+              </button>
+              {!forfeitConfirm ? (
+                <button
+                  className="flex-1 py-2.5 bg-background border border-border rounded-xl text-sm font-semibold text-text-secondary hover:border-team-red hover:text-team-red transition-colors"
+                  onClick={() => setForfeitConfirm(true)}
+                >
+                  Forfeit
+                </button>
+              ) : (
+                <div className="flex-1 flex flex-col gap-1.5">
+                  <span className="text-xs text-team-red text-center font-medium">Forfeit? You will lose ELO.</span>
+                  <div className="flex gap-2">
+                    <button
+                      className="flex-1 py-1.5 bg-team-red text-white text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+                      disabled={forfeiting}
+                      onClick={async () => {
+                        const params = getResumeParams();
+                        if (!params || !player) return;
+                        setForfeiting(true);
+                        try {
+                          await fetch(`${API_BASE}/api/room/${params.gameId}/forfeit`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ player_id: player.id }),
+                          });
+                        } catch { /* best effort */ }
+                        clearGame();
+                        setForfeitConfirm(false);
+                        setForfeiting(false);
+                      }}
+                    >
+                      {forfeiting ? "..." : "Confirm"}
+                    </button>
+                    <button
+                      className="flex-1 py-1.5 bg-background border border-border text-xs font-medium rounded-lg hover:border-foreground transition-colors"
+                      onClick={() => setForfeitConfirm(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Solo difficulty picker */}
         <div className="w-full flex flex-col gap-1">
@@ -118,15 +188,15 @@ export default function Home() {
           <div className="flex gap-3">
             <button
               className="flex-1 py-3 bg-background border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent hover:bg-accent/5 transition-all duration-150 ease-out disabled:opacity-50"
-              onClick={() => handleCreateRoom("duo", "medium")}
-              disabled={creatingRoom !== null}
+              onClick={() => handleCreateRoom("duo", "easy")}
+              disabled={creatingRoom !== null || isInGame}
             >
               {creatingRoom === "duo" ? "Creating…" : "2-Player"}
             </button>
             <button
               className="flex-1 py-3 bg-background border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent hover:bg-accent/5 transition-all duration-150 ease-out disabled:opacity-50"
-              onClick={() => handleCreateRoom("quad", "medium")}
-              disabled={creatingRoom !== null}
+              onClick={() => handleCreateRoom("quad", "easy")}
+              disabled={creatingRoom !== null || isInGame}
             >
               {creatingRoom === "quad" ? "Creating…" : "4-Player"}
             </button>

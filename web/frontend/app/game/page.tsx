@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGameSocket } from "@/hooks/useGameSocket";
 import { usePlayer } from "@/hooks/usePlayer";
+import { useActiveGame } from "@/hooks/useActiveGame";
 import GameBoard from "@/components/game/GameBoard";
 import { STORAGE_KEYS } from "@/lib/storage-keys";
 
@@ -75,6 +76,22 @@ function GameContent() {
     useGameSocket(gameId, reconnectToken, seat);
 
   const { updateElo } = usePlayer();
+  const { saveGame, clearGame } = useActiveGame();
+
+  // Save multiplayer game to localStorage for active-game banner
+  useEffect(() => {
+    if (gameId && reconnectToken && isMultiplayer) {
+      saveGame(gameId, reconnectToken, seat);
+    }
+  }, [gameId, reconnectToken, seat, isMultiplayer, saveGame]);
+
+  // Clear active game on game over or close
+  useEffect(() => {
+    if (gameOver || closeReason) {
+      clearGame();
+    }
+  }, [gameOver, closeReason, clearGame]);
+
   useEffect(() => {
     if (!gameOver?.elo_changes) return;
     const change = gameOver.elo_changes[String(seat)];

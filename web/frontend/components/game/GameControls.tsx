@@ -86,7 +86,7 @@ export default function GameControls({
             {canUngroup ? "Ungroup" : "Group"}
           </button>
 
-          <div className={`flex items-center gap-1.5 ${!isMyTurn ? "hidden" : ""}`}>
+          <div className={`flex items-center gap-1.5 ${!isMyTurn ? "invisible" : ""}`}>
             <button
               className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
                 matchingCombo
@@ -98,22 +98,18 @@ export default function GameControls({
             >
               {matchingCombo ? "Play" : "Select"}
             </button>
-            {hasSelection && (
-              <button
-                className="px-2 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
-                onClick={onUnselect}
-              >
-                ×
-              </button>
-            )}
-            {!isLeading && (
-              <button
-                className="px-2.5 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
-                onClick={onPass}
-              >
-                Pass
-              </button>
-            )}
+            <button
+              className={`px-2 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${!hasSelection ? "invisible" : ""}`}
+              onClick={onUnselect}
+            >
+              ×
+            </button>
+            <button
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${isLeading ? "invisible" : ""}`}
+              onClick={onPass}
+            >
+              Pass
+            </button>
           </div>
 
           <button
@@ -153,14 +149,12 @@ export default function GameControls({
         >
           {matchingCombo ? `Play ${matchingCombo.type_name}` : "Select cards"}
         </button>
-        {hasSelection && (
-          <button
-            className="px-4 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
-            onClick={onUnselect}
-          >
-            Unselect
-          </button>
-        )}
+        <button
+          className={`px-4 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${!hasSelection ? "invisible" : ""}`}
+          onClick={onUnselect}
+        >
+          Unselect
+        </button>
         <button
           className={`px-7 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${isLeading ? "invisible" : ""}`}
           onClick={onPass}

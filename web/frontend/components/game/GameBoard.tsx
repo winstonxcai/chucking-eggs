@@ -289,8 +289,8 @@ export default function GameBoard({
         )}
 
         {/* Play area: all players + table in a centered grid */}
-        <div className="lg:flex-1 flex items-start lg:items-center justify-center">
-          <div className="grid grid-cols-3 lg:grid-cols-[auto_minmax(0,640px)_auto] gap-1 lg:gap-32 items-start lg:items-center justify-items-center w-full">
+        <div className="flex-1 flex items-start lg:items-center justify-center min-h-0">
+          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-1 lg:gap-32 items-start lg:items-center justify-items-center w-full h-full">
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
               {partner && (
@@ -310,7 +310,7 @@ export default function GameBoard({
             </div>
 
             {/* Table surface — all trick actions inside */}
-            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-[130px] lg:w-[640px] lg:h-[320px] lg:border lg:border-border lg:rounded-2xl">
+            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[640px] lg:h-[320px] lg:border lg:border-border lg:rounded-2xl">
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
                 <div className="relative inline-flex">

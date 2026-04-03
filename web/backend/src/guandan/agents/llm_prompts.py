@@ -147,7 +147,9 @@ def filter_by_intent(
     non_pass = [c for c in legal if c.type != ComboType.PASS]
 
     if intent == "cooperate":
-        return pass_moves  # stage 3 will be skipped
+        if pass_moves:
+            return pass_moves  # stage 3 will be skipped
+        intent = "normal"  # LLM said cooperate but PASS not legal — fall through
 
     if intent == "dwarf":
         min_opp = flags["min_opp_remaining"]

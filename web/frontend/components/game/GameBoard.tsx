@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crown, Hand, HelpCircle, LayoutList } from "lucide-react";
+import { Crown, Hand, HelpCircle } from "lucide-react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -267,7 +267,7 @@ export default function GameBoard({
       <div className="flex-1 flex flex-col p-1 lg:p-6 gap-0 relative">
         {/* Help button */}
         <a
-          href="https://www.pagat.com/climbing/guandan.html"
+          href="https://www.pagat.com/climbing/guan_dan.html"
           target="_blank"
           rel="noopener noreferrer"
           className="absolute top-2 right-2 lg:top-4 lg:right-4 z-20 text-text-secondary hover:text-foreground transition-colors"
@@ -360,7 +360,8 @@ export default function GameBoard({
 
         {/* Your turn indicator + Controls */}
         <div className="py-0.5 lg:py-2">
-          <div className={`flex items-center justify-center gap-1.5 pb-1 lg:pb-2 ${!gameState.is_my_turn ? "invisible" : ""}`}>
+          {/* Desktop-only turn label */}
+          <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-2 ${!gameState.is_my_turn ? "invisible" : ""}`}>
             <div className="w-1.5 h-1.5 rounded-full bg-accent" />
             <span className="text-[13px] font-medium text-accent">
               {gameState.is_leading ? "Your turn to lead" : "Your turn to play"}
@@ -375,6 +376,12 @@ export default function GameBoard({
             onPlay={handlePlay}
             onPass={handlePass}
             onUnselect={() => setSelectedIds(new Set())}
+            compact={compactHand}
+            canGroup={selectedIds.size > 0 && !Array.from(selectedIds).some((id) => groupedCardIds.has(id))}
+            canUngroup={localGroups.some((g) => g.cardIds.some((cid) => selectedIds.has(cid)))}
+            onGroup={handleGroup}
+            onUngroup={handleUngroup}
+            onCombos={() => setMobileComboOpen(true)}
           />
         </div>
 
@@ -392,8 +399,8 @@ export default function GameBoard({
           />
         </div>
 
-        {/* Hand toolbar + mobile combos button */}
-        <div className="py-0.5 lg:py-2 flex items-center justify-center gap-2">
+        {/* Hand toolbar: desktop only */}
+        <div className="hidden lg:flex py-2 items-center justify-center gap-2">
           <HandToolbar
             onFlushSelect={handleFlushSelect}
             sfBySuit={sfBySuit}
@@ -404,13 +411,6 @@ export default function GameBoard({
               g.cardIds.some((cid) => selectedIds.has(cid))
             )}
           />
-          <button
-            className="lg:hidden flex items-center gap-1 px-2.5 py-1 bg-surface border border-border rounded-md text-xs font-medium text-foreground"
-            onClick={() => setMobileComboOpen(true)}
-          >
-            <LayoutList size={13} />
-            Combos
-          </button>
         </div>
       </div>
 
@@ -549,6 +549,7 @@ export default function GameBoard({
           cards={flyingCards.cards}
           fromRects={flyingCards.fromRects}
           toRect={flyingCards.toRect}
+          compact={compactHand}
         />
       )}
 

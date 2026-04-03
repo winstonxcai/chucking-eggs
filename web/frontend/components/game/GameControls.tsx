@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LayoutList } from "lucide-react";
 import type { ComboDTO } from "@/lib/types";
 
 const TIMEOUT_S = 90;
@@ -14,6 +15,13 @@ interface GameControlsProps {
   onPlay: () => void;
   onPass: () => void;
   onUnselect: () => void;
+  // Mobile compact controls
+  compact?: boolean;
+  canGroup?: boolean;
+  canUngroup?: boolean;
+  onGroup?: () => void;
+  onUngroup?: () => void;
+  onCombos?: () => void;
 }
 
 export default function GameControls({
@@ -25,6 +33,12 @@ export default function GameControls({
   onPlay,
   onPass,
   onUnselect,
+  compact,
+  canGroup,
+  canUngroup,
+  onGroup,
+  onUngroup,
+  onCombos,
 }: GameControlsProps) {
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
 
@@ -43,12 +57,81 @@ export default function GameControls({
   const progress = remainingMs !== null ? remainingMs / (TIMEOUT_S * 1000) : 1;
   const urgent = remainingMs !== null && remainingMs < 15000;
 
+  if (compact) {
+    return (
+      <div className="flex flex-col gap-1">
+        {/* Thin rope timer */}
+        <div
+          data-testid="rope-timer"
+          className={`h-0.5 rounded-full overflow-hidden bg-border ${!showRope ? "invisible" : ""}`}
+        >
+          <div
+            className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
+            style={{ width: `${progress * 100}%` }}
+          />
+        </div>
+        {/* Single row: Group/Ungroup | Play | × | Pass | Combos */}
+        <div className="flex items-center justify-center gap-1.5">
+          <button
+            className={`px-2 py-1 rounded-md text-xs font-medium border transition-colors ${
+              canGroup || canUngroup
+                ? "bg-surface border-border text-foreground hover:border-accent cursor-pointer"
+                : "bg-background border-border text-text-secondary cursor-not-allowed opacity-50"
+            }`}
+            onClick={canUngroup ? onUngroup : onGroup}
+            disabled={!canGroup && !canUngroup}
+          >
+            {canUngroup ? "Ungroup" : "Group"}
+          </button>
+
+          <div className={`flex items-center gap-1.5 ${!isMyTurn ? "invisible" : ""}`}>
+            <button
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                matchingCombo
+                  ? "bg-accent text-white hover:bg-accent-hover cursor-pointer"
+                  : "bg-border text-text-secondary cursor-not-allowed"
+              }`}
+              disabled={!matchingCombo}
+              onClick={onPlay}
+            >
+              {matchingCombo ? "Play" : "Select"}
+            </button>
+            {hasSelection && (
+              <button
+                className="px-2 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
+                onClick={onUnselect}
+              >
+                ×
+              </button>
+            )}
+            {!isLeading && (
+              <button
+                className="px-2.5 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
+                onClick={onPass}
+              >
+                Pass
+              </button>
+            )}
+          </div>
+
+          <button
+            className="flex items-center gap-1 px-2 py-1 bg-surface border border-border rounded-md text-xs font-medium text-foreground cursor-pointer"
+            onClick={onCombos}
+          >
+            <LayoutList size={12} />
+            Combos
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`flex flex-col items-center gap-2 ${!isMyTurn ? "invisible" : ""}`}>
       {/* Rope timer — always rendered to reserve space, invisible when not your turn */}
       <div
         data-testid="rope-timer"
-        className={`w-32 lg:w-48 h-1 bg-border rounded-full overflow-hidden ${!showRope ? "invisible" : ""}`}
+        className={`w-48 h-1 bg-border rounded-full overflow-hidden ${!showRope ? "invisible" : ""}`}
       >
         <div
           className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
@@ -58,7 +141,7 @@ export default function GameControls({
 
       <div className="flex items-center justify-center gap-3">
         <button
-          className={`px-2.5 py-1 lg:px-7 lg:py-2.5 rounded-lg text-xs lg:text-sm font-semibold transition-colors ${
+          className={`px-7 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
             matchingCombo
               ? "bg-accent text-white hover:bg-accent-hover cursor-pointer"
               : "bg-border text-text-secondary cursor-not-allowed"
@@ -70,7 +153,7 @@ export default function GameControls({
         </button>
         {hasSelection && (
           <button
-            className="px-2.5 py-1 lg:px-4 lg:py-2.5 rounded-lg text-xs lg:text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
+            className="px-4 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
             onClick={onUnselect}
           >
             Unselect
@@ -78,7 +161,7 @@ export default function GameControls({
         )}
         {!isLeading && (
           <button
-            className="px-2.5 py-1 lg:px-7 lg:py-2.5 rounded-lg text-xs lg:text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
+            className="px-7 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
             onClick={onPass}
           >
             Pass

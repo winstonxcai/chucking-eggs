@@ -71,7 +71,7 @@ export default function PlayerHand({
 
         {/* Separator if there are groups */}
         {groups.length > 0 && ungroupedCards.length > 0 && (
-          <div className="w-px h-16 bg-border mx-1" />
+          <div className={`w-px ${compact ? "h-8" : "h-16"} bg-border mx-1`} />
         )}
 
         {/* Ungrouped cards with rank stacking */}

@@ -8,9 +8,10 @@ interface FlyingCardsProps {
   cards: CardDTO[];
   fromRects: DOMRect[];
   toRect: DOMRect;
+  compact?: boolean;
 }
 
-export default function FlyingCards({ cards, fromRects, toRect }: FlyingCardsProps) {
+export default function FlyingCards({ cards, fromRects, toRect, compact }: FlyingCardsProps) {
   const [arrived, setArrived] = useState(false);
 
   useEffect(() => {
@@ -20,23 +21,25 @@ export default function FlyingCards({ cards, fromRects, toRect }: FlyingCardsPro
     });
   }, []);
 
-  // Target: center of toRect, cards side by side (sm = 36px wide, 2px gap)
-  const totalWidth = cards.length * 36 + (cards.length - 1) * 2;
+  // Target dimensions based on compact mode
+  const cardW = compact ? 28 : 36;
+  const cardH = compact ? 40 : 52;
+  const totalWidth = cards.length * cardW + (cards.length - 1) * 2;
   const targetBaseX = toRect.left + toRect.width / 2 - totalWidth / 2;
-  const targetY = toRect.top + toRect.height / 2 - 26;
+  const targetY = toRect.top + toRect.height / 2 - cardH / 2;
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none">
       {cards.map((card, i) => {
         const from = fromRects[i];
-        const targetX = targetBaseX + i * 38;
+        const targetX = targetBaseX + i * (cardW + 2);
 
         const style: React.CSSProperties = arrived
           ? {
               left: targetX,
               top: targetY,
-              width: 36,
-              height: 52,
+              width: cardW,
+              height: cardH,
               transition: "all 300ms cubic-bezier(0.4, 0, 0.2, 1)",
             }
           : {
@@ -48,7 +51,7 @@ export default function FlyingCards({ cards, fromRects, toRect }: FlyingCardsPro
 
         return (
           <div key={card.id} className="absolute" style={style}>
-            <CardComponent card={card} size={arrived ? "sm" : "md"} />
+            <CardComponent card={card} size={arrived ? (compact ? "xs" : "sm") : "md"} />
           </div>
         );
       })}

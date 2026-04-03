@@ -30,11 +30,6 @@ BOT_POOLS = {
         {"name": "Turtle", "avatar": "turtle", "elo": 1415},
         {"name": "Lamb", "avatar": "lamb", "elo": 1415},
     ],
-    "medium": [
-        {"name": "Fox", "avatar": "fox", "elo": 1461},
-        {"name": "Raccoon", "avatar": "raccoon", "elo": 1461},
-        {"name": "Wolf", "avatar": "wolf", "elo": 1461},
-    ],
     "competition": [
         {"name": "Lalala", "avatar": "dragon", "elo": 1464},
     ],
@@ -63,7 +58,6 @@ DIFFICULTY_TO_AGENT = {
     "easy": "greedy",
     "wjsd": "wjsd",           # SAU 3rd Prize (2020 NJUPT)
     "casual": "xingdream",
-    "medium": "heuristic",
     "hard": "strategic",
     "competition": "lalala",  # SEU 1st Prize (Li Jing)
     "yaoji": "yaoji",         # NUAA 3rd Prize (2020 NJUPT)

@@ -64,7 +64,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 class CreateGameRequest(BaseModel):
-    difficulty: str = "medium"
+    difficulty: str = "easy"
 
 
 class CreateGameResponse(BaseModel):
@@ -74,7 +74,7 @@ class CreateGameResponse(BaseModel):
 
 class CreateRoomRequest(BaseModel):
     mode: str = "solo"       # "solo" | "duo" | "quad"
-    difficulty: str = "medium"
+    difficulty: str = "easy"
     seed: int | None = None
 
 
@@ -172,7 +172,7 @@ async def get_leaderboard():
 @app.post("/api/game/create", response_model=CreateGameResponse)
 async def create_game(req: CreateGameRequest):
     assert game_manager is not None
-    if req.difficulty not in ("easy", "wjsd", "casual", "medium", "competition", "hard",
+    if req.difficulty not in ("easy", "wjsd", "casual", "competition", "hard",
          "yaoji", "jidan", "hulalala", "liuzha", "master"):
         req.difficulty = "medium"
     room = await game_manager.create_game(req.difficulty)
@@ -191,7 +191,7 @@ async def create_room(req: CreateRoomRequest):
     assert game_manager is not None
     if req.mode not in ("solo", "duo", "quad"):
         req.mode = "solo"
-    if req.difficulty not in ("easy", "wjsd", "casual", "medium", "competition", "hard",
+    if req.difficulty not in ("easy", "wjsd", "casual", "competition", "hard",
          "yaoji", "jidan", "hulalala", "liuzha", "master"):
         req.difficulty = "medium"
     room = await game_manager.create_room(req.mode, req.difficulty, seed=req.seed)
@@ -212,7 +212,7 @@ async def set_room_difficulty(game_id: str, req: SetDifficultyRequest):
         raise HTTPException(status_code=404, detail="Room not found")
     if room.started:
         raise HTTPException(status_code=400, detail="Game already started")
-    valid = ("easy", "wjsd", "casual", "medium", "competition", "hard",
+    valid = ("easy", "wjsd", "casual", "competition", "hard",
              "yaoji", "jidan", "hulalala", "liuzha", "master")
     if req.difficulty not in valid:
         raise HTTPException(status_code=400, detail="Invalid difficulty")

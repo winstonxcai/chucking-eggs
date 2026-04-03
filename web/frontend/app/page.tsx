@@ -32,8 +32,8 @@ export default function Home() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4">
       <div className="max-w-md w-full flex flex-col items-center gap-8">
-        {/* Title */}
-        <div className="flex flex-col items-center gap-1">
+        {/* Title — hidden on mobile to save space */}
+        <div className="hidden sm:flex flex-col items-center gap-1">
           <h1 className="text-4xl font-bold text-foreground tracking-tight">Guan Dan</h1>
           <span className="text-sm text-text-secondary font-normal tracking-widest">掼蛋</span>
           <p className="text-sm text-text-secondary text-center mt-2">

@@ -44,8 +44,18 @@ export default function Sidebar({ player }: SidebarProps) {
       }`}
       style={{ height: "100%" }}
     >
-      {/* Brand header — collapse button right-aligned when expanded */}
-      <div className="flex items-center gap-2 px-2 pt-5 pb-3 lg:px-3 lg:pt-8 lg:pb-5 overflow-hidden">
+      {/* Brand header */}
+      <div className={`flex overflow-hidden ${expanded ? "items-center gap-2 px-2 pt-5 pb-3 lg:px-3 lg:pt-8 lg:pb-5" : "flex-col items-center pt-3 pb-2 gap-1"}`}>
+        {/* Expand button: above egg when collapsed, desktop only */}
+        {!expanded && (
+          <button
+            onClick={toggleCollapsed}
+            className="hidden lg:flex items-center justify-center p-0.5 rounded-md text-text-secondary hover:bg-accent/8 hover:text-accent transition-all"
+            title="Expand sidebar"
+          >
+            <ChevronRight size={14} strokeWidth={2} />
+          </button>
+        )}
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" className="w-6 h-6 shrink-0">
           <path d="M16 3 C22 3 27 10 27 18 C27 24.6 22.1 29 16 29 C9.9 29 5 24.6 5 18 C5 10 10 3 16 3Z" fill="#D97757"/>
           <ellipse cx="12" cy="11" rx="2.2" ry="1.3" fill="rgba(255,255,255,0.22)" transform="rotate(-30 12 11)"/>
@@ -55,7 +65,7 @@ export default function Sidebar({ player }: SidebarProps) {
             Chucking Eggs
           </span>
         )}
-        {/* Collapse button: in header when expanded, desktop only */}
+        {/* Collapse button: right-aligned in header when expanded, desktop only */}
         {expanded && (
           <button
             onClick={toggleCollapsed}
@@ -98,16 +108,6 @@ export default function Sidebar({ player }: SidebarProps) {
           );
         })}
 
-        {/* Expand button at bottom of nav — desktop only, shown only when collapsed */}
-        {!expanded && (
-          <button
-            onClick={toggleCollapsed}
-            className="hidden lg:flex items-center justify-center px-2 py-2 mt-auto rounded-lg text-sm font-medium transition-all duration-150 ease-out border-l-2 border-transparent text-text-secondary hover:bg-accent/8 hover:text-accent"
-            title="Expand sidebar"
-          >
-            <ChevronRight size={15} strokeWidth={2} />
-          </button>
-        )}
       </nav>
 
       {/* Player footer — avatar + username/ELO when expanded */}

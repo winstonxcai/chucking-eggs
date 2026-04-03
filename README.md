@@ -822,34 +822,49 @@ Stage 1: intent LLM call      — cooperate | dwarf | assist | normal
     ↓
 filter_by_intent()            — JidanBot scoring → top-K=8 candidates
     ↓ (if >1 candidate)
-Stage 3: move selection LLM   — picks from numbered list
+Stage 2.5: ToM beliefs LLM    — infer what opponents likely hold (conditional)
+    ↓
+Stage 3: move selection LLM   — picks from numbered list (with ToM context)
     ↓
 Fallback: JidanBot best pick  — if parse fails
 ```
 
 **Production-fair**: agent sees only own hand + card counts + public history (not opponent hand contents). Implemented in `llm_prompts.format_game_state()`.
 
+**Theory of Mind (Stage 2.5)**: Before move selection, the LLM infers what each opponent/partner likely holds based on their played cards and action history. This belief text (~100 words) is injected into the stage 3 prompt. Conditional: only fires when `min_opp_remaining ≤ 15 OR len(move_history) ≥ 12` (skips early game). Controllable via `--tom-level 0|1|2` (off / 1st-order / 2nd-order).
+
 #### Methods
 
-- `src/guandan/agents/llm_prompts.py` — state serialization, cooperative flags (GuanZero-inspired), JidanBot scoring, intent filter, parsers, system prompt
-- `src/guandan/agents/llm_bot.py` — LLMBot agent with 3-stage pipeline, diagnostic stats
-- `scripts/eval_llm.py` — eval runner with cost estimation and intent distribution logging
+- `src/guandan/agents/llm_prompts.py` — state serialization, cooperative flags (GuanZero-inspired), JidanBot scoring, intent filter, ToM belief formatting, parsers, system prompt
+- `src/guandan/agents/llm_bot.py` — LLMBot agent with 3-stage + ToM pipeline, diagnostic stats
+- `scripts/eval_llm.py` — eval runner with cost estimation, intent distribution, ToM stats
 - Model: `gpt-5.4-nano` via LiteLLM (trivially swappable)
 - Fallback: if LLM parse fails → JidanBot's highest-scored candidate
 
 #### Results
 
-| Metric | Value |
-|--------|-------|
-| Model | GPT-5.4 Nano |
-| WR vs Jidan (smoke, 20 games) | 5% |
-| Fallback rate (after fix) | 0.1% |
-| Est. cost per game | ~$0.01 |
-| LLM calls per game | ~59 |
-| Intent distribution | cooperate 30% / assist 58% / dwarf 9% / normal 3% |
+| Metric | Baseline (ToM=0) | ToM v1 |
+|--------|-----------------|--------|
+| Model | GPT-5.4 Nano | GPT-5.4 Nano |
+| WR vs Jidan (10 games) | 0% | 0% |
+| Fallback rate | 0% | 0% |
+| ToM calls | — | 152 (27.7%) |
+| Calls/game | 41.5 | 54.8 |
+| Est. cost/game | ~$0.007 | ~$0.010 |
+| Intent distribution | coop 21% / assist 14% / dwarf 12% / normal 53% | coop 18% / assist 14% / dwarf 11% / normal 57% |
 
-Context: random=0.5%, greedy=1%, heuristic=11.5%, strategic=24% vs Jidan. LLMBot at 5% is 10× random. Full 200-game eval pending.
+Context: random=0.5%, greedy=1%, heuristic=11.5%, strategic=24% vs Jidan over 200 games. 10-game samples too noisy for WR conclusions.
+
+#### Why WR is low compared to the HKUST paper
+
+The HKUST paper (arXiv:2408.02559) achieved GPT-4 + 2nd-order ToM nearly tying DanZero+ (-0.88 score gap). Our LLMBot gets 0–10% WR vs Jidan. Three structural differences explain the gap:
+
+1. **Action recommender quality**. Their pre-filter uses **DanZero's trained embeddings** — an RL model that understands which moves are strategically strong *in the current game state*. Our pre-filter uses JidanBot's static point-value formula, which ranks cards by inherent value (bombs=high, singles=low) with zero game-state awareness. DanZero's top-5 are the 5 best *contextual* moves; our top-8 are the 8 cheapest/most expensive by card weight. This is the single biggest gap — the paper's ablation showed the RL recommender was worth +2.8 average score points.
+
+2. **Per-candidate evaluation vs single pick**. The paper evaluates each candidate individually (estimate expected team gain per move, then pick the best). We ask the LLM to pick from a numbered list in one shot. Their approach gives the model focused reasoning time per option; ours requires simultaneous comparison of 8 candidates in a single response.
+
+3. **Chinese prompts**. The paper found Chinese prompts significantly outperformed English for Guan Dan strategy. We use English prompts exclusively.
 
 #### Takeaway
 
-The action pre-filter (JidanBot scoring → top-K) is essential — without it the LLM would face 80+ move indices and hallucinate. The output format matters: asking for a number on the first line (before reasoning) eliminates parse failures. Reasoning after the index keeps strategic quality without risking truncation before the answer.
+The action pre-filter quality is the bottleneck. JidanBot scoring is a static card-value formula — it serves as a passable proxy but cannot substitute for a game-state-aware recommender. The HKUST paper's key insight holds: LLMs cannot play Guan Dan well without a strong action recommender, regardless of how much ToM reasoning is added on top. The output format matters: asking for a number on the first line (before reasoning) eliminates parse failures. ToM adds ~30% cost for belief context that the move-selection call can use.

@@ -296,16 +296,16 @@ export default function GameBoard({
 
         {/* Play area: all players + table in a centered grid */}
         <div className="flex-1 flex items-start lg:items-center justify-center min-h-0">
-          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-1 lg:gap-6 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
+          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[1fr_auto] gap-1 lg:gap-6 items-start lg:items-center justify-items-center w-full h-full lg:h-full">
             {/* Partner (top center, spans column 2) */}
-            <div className="col-start-2 row-start-1">
+            <div className="col-start-2 row-start-1 lg:self-center">
               {partner && (
                 <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.partner_hand} />
               )}
             </div>
 
             {/* Left opponent */}
-            <div className="col-start-1 row-start-1 lg:row-start-2">
+            <div className="col-start-1 row-start-1 lg:row-start-2 lg:self-center">
               {leftOpp && (
                 <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} />
               )}
@@ -379,7 +379,7 @@ export default function GameBoard({
             </div>
 
             {/* Right opponent */}
-            <div className="col-start-3 row-start-1 lg:row-start-2">
+            <div className="col-start-3 row-start-1 lg:row-start-2 lg:self-center">
               {rightOpp && (
                 <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} />
               )}

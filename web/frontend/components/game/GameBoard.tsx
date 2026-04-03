@@ -262,7 +262,7 @@ export default function GameBoard({
   const ta = gameState.trick_actions;
 
   return (
-    <div className="flex h-[100dvh] bg-background">
+    <div className="flex h-[100dvh] bg-background overflow-x-hidden">
       {/* Main board area */}
       <div className="flex-1 flex flex-col p-1 lg:p-6 gap-0 relative">
         {/* Help button */}

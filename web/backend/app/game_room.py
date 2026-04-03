@@ -195,7 +195,10 @@ class GameRoom:
     async def _takeover_after_delay(self, seat: int) -> None:
         await asyncio.sleep(DISCONNECT_TAKEOVER_S)
         if seat not in self.connections and not self.env.done:  # still disconnected + game running
-            await self._do_ai_takeover(seat)
+            if self.mode in ("duo", "quad"):
+                await self.handle_forfeit(seat)
+            else:
+                await self._do_ai_takeover(seat)
 
     async def _do_ai_takeover(self, seat: int) -> None:
         """Remove seat from human control; AI takes over silently."""

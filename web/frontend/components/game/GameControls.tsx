@@ -86,7 +86,7 @@ export default function GameControls({
             {canUngroup ? "Ungroup" : "Group"}
           </button>
 
-          <div className={`flex items-center gap-1.5 ${!isMyTurn ? "invisible" : ""}`}>
+          <div className={`flex items-center gap-1.5 ${!isMyTurn ? "hidden" : ""}`}>
             <button
               className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
                 matchingCombo

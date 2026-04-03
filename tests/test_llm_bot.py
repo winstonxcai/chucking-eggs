@@ -90,14 +90,14 @@ class TestCooperativeFlags:
 
     def test_can_assist_when_combo_lt_partner_remaining(self, env):
         from guandan.cards import Card
-        env.hands[2] = set(list(env.hands[2])[:12])  # partner has 12 cards
+        env.hands[2] = set(list(env.hands[2])[:8])  # partner has 8 cards (≤10 threshold)
 
-        single = _make_combo(ComboType.SINGLE, 3, (3, 0, 0))  # 1 card < 12
+        single = _make_combo(ComboType.SINGLE, 3, (3, 0, 0))  # 1 card < 8
         legal = [_pass_combo(), single]
 
         flags = compute_cooperative_flags(env, player=0, legal=legal)
         assert flags["can_assist"] is True
-        assert flags["partner_remaining"] == 12
+        assert flags["partner_remaining"] == 8
 
     def test_no_flags_when_free_lead(self, env):
         """On free lead (current_trick=None), can_cooperate must be False."""

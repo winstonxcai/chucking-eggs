@@ -114,9 +114,13 @@ def compute_cooperative_flags(env: GuanDanEnv, player: int, legal: list[Combo]) 
         len(c.cards) >= min_opp_remaining
         for c in legal if c.type != ComboType.PASS
     )
-    can_assist = any(
-        len(c.cards) < partner_remaining
-        for c in legal if c.type != ComboType.PASS
+    # Only meaningful when partner is near finishing — avoid firing on every turn
+    can_assist = (
+        partner_remaining <= 10
+        and any(
+            len(c.cards) < partner_remaining
+            for c in legal if c.type != ComboType.PASS
+        )
     )
 
     return {

@@ -18,6 +18,7 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
   const [gameOver, setGameOver] = useState<GameOverMsg | null>(null);
   const [connected, setConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
+  const [closeReason, setCloseReason] = useState<string | null>(null);
   const [latestError, setLatestError] = useState<{ message: string; key: number } | null>(null);
   const [rematch, setRematch] = useState<RematchMsg | null>(null);
   const errorKeyRef = useRef(0);
@@ -62,10 +63,15 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
         return;
       }
 
-      // Permanent failures — don't retry, but keep session so a page refresh can reconnect
+      // Permanent failures — don't retry
       if (event.code >= 4000) {
         console.error(`WebSocket closed: ${event.code} ${event.reason}`);
+        setCloseReason(event.reason || `Error ${event.code}`);
         setConnectionStatus("disconnected");
+        // Clear stale session so user doesn't get stuck on refresh
+        sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
+        sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
+        sessionStorage.removeItem(STORAGE_KEYS.SEAT);
         return;
       }
 
@@ -167,5 +173,5 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
     wsSend({ type: "delete_group", group_id: groupId });
   }, [wsSend]);
 
-  return { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup, latestError, rematch };
+  return { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, rematch };
 }

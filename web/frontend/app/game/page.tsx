@@ -71,7 +71,7 @@ function GameContent() {
     createGame();
   }, [difficulty, searchParams]);
 
-  const { gameState, aiThinking, gameOver, connected, connectionStatus, playCards, pass, createGroup, deleteGroup, latestError, rematch } =
+  const { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, rematch } =
     useGameSocket(gameId, reconnectToken, seat);
 
   const { updateElo } = usePlayer();
@@ -132,6 +132,17 @@ function GameContent() {
       <div className="h-full flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4 text-center max-w-sm px-4">
           <p className="text-text-secondary">{createError}</p>
+          <a href="/" className="text-sm text-accent underline">Back to home</a>
+        </div>
+      </div>
+    );
+  }
+
+  if (closeReason) {
+    return (
+      <div className="h-full flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4 text-center max-w-sm px-4">
+          <p className="text-text-secondary">{closeReason}</p>
           <a href="/" className="text-sm text-accent underline">Back to home</a>
         </div>
       </div>

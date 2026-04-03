@@ -800,3 +800,56 @@ flowchart LR
 #### Takeaway
 
 `fly launch` overwrites `fly.toml` with bad defaults (port 8080, `auto_stop_machines=true`). Always rewrite `fly.toml` after running it — the correct values are `internal_port=8000`, `auto_stop_machines=false`, `max_machines_running=1`. `uv add` writes to the root ML `pyproject.toml`, not `web/backend/requirements.txt` — never use it for backend dependencies. `slowapi` must be in `requirements.txt` and the Docker image rebuilt before Playwright tests can run against Docker backend.
+
+### 17. Apr 3 — LLM Agent (GPT-5.4 Nano) via LiteLLM
+
+#### Why
+
+Curriculum RL training hit a compute wall: 25.8% comp avg after 54k episodes (6.4h on M1 Pro). DanZero-style agents need ~160 CPUs × 30 days — we have one M1 Pro. Instead of scaling compute, pivot to a fundamentally different approach: **LLM-based strategic agent** using GPT-5.4 Nano (~$0.01/game).
+
+Prior art: HKUST paper (arXiv:2408.02559, Aug 2024) showed GPT-4-class LLMs nearly tied DanZero+ (-0.88 score gap) when given an RL action recommender to pre-filter 80+ legal moves to top-5. The RL pre-filter was essential — LLMs choke on large action spaces. We replace their trained RL recommender with JidanBot's explicit point-value scoring formula (cheap and no training required).
+
+#### Architecture
+
+3-stage pipeline per move:
+
+```
+legal_moves (27+ options)
+    ↓
+compute_cooperative_flags()   — GuanZero-style: can_cooperate / can_dwarf / can_assist
+    ↓ (if any flag)
+Stage 1: intent LLM call      — cooperate | dwarf | assist | normal
+    ↓
+filter_by_intent()            — JidanBot scoring → top-K=8 candidates
+    ↓ (if >1 candidate)
+Stage 3: move selection LLM   — picks from numbered list
+    ↓
+Fallback: JidanBot best pick  — if parse fails
+```
+
+**Production-fair**: agent sees only own hand + card counts + public history (not opponent hand contents). Implemented in `llm_prompts.format_game_state()`.
+
+#### Methods
+
+- `src/guandan/agents/llm_prompts.py` — state serialization, cooperative flags (GuanZero-inspired), JidanBot scoring, intent filter, parsers, system prompt
+- `src/guandan/agents/llm_bot.py` — LLMBot agent with 3-stage pipeline, diagnostic stats
+- `scripts/eval_llm.py` — eval runner with cost estimation and intent distribution logging
+- Model: `gpt-5.4-nano` via LiteLLM (trivially swappable)
+- Fallback: if LLM parse fails → JidanBot's highest-scored candidate
+
+#### Results
+
+| Metric | Value |
+|--------|-------|
+| Model | GPT-5.4 Nano |
+| WR vs Jidan (smoke, 20 games) | 5% |
+| Fallback rate (after fix) | 0.1% |
+| Est. cost per game | ~$0.01 |
+| LLM calls per game | ~59 |
+| Intent distribution | cooperate 30% / assist 58% / dwarf 9% / normal 3% |
+
+Context: random=0.5%, greedy=1%, heuristic=11.5%, strategic=24% vs Jidan. LLMBot at 5% is 10× random. Full 200-game eval pending.
+
+#### Takeaway
+
+The action pre-filter (JidanBot scoring → top-K) is essential — without it the LLM would face 80+ move indices and hallucinate. The output format matters: asking for a number on the first line (before reasoning) eliminates parse failures. Reasoning after the index keeps strategic quality without risking truncation before the answer.

@@ -259,6 +259,32 @@ async def room_status(game_id: str):
     )
 
 
+class ForfeitRequest(BaseModel):
+    player_id: str
+
+
+@app.post("/api/room/{game_id}/forfeit")
+async def forfeit_game(game_id: str, req: ForfeitRequest):
+    assert game_manager is not None
+    room = game_manager.get_room(game_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if not room.started:
+        raise HTTPException(status_code=400, detail="Game has not started")
+    if room.env.done:
+        raise HTTPException(status_code=400, detail="Game is already over")
+    # Find forfeiter's seat
+    seat = None
+    for s, pid in room.player_ids.items():
+        if pid == req.player_id:
+            seat = s
+            break
+    if seat is None:
+        raise HTTPException(status_code=400, detail="Player not in this game")
+    await room.handle_forfeit(seat)
+    return {"ok": True}
+
+
 @app.post("/api/room/{game_id}/rematch")
 async def rematch(game_id: str):
     assert game_manager is not None

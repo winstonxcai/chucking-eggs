@@ -86,3 +86,18 @@ def compute_elo_delta(
     actual = _POSITION_ACTUAL[finish_pos]
     k = _k_factor(player_games) * _margin_multiplier(reward)
     return round(k * (actual - expected))
+
+
+def compute_forfeit_elo(
+    player_elo: int,
+    partner_elo: int,
+    opp1_elo: int,
+    opp2_elo: int,
+    player_games: int,
+) -> int:
+    """Return the Elo delta for a player who forfeits (max loss, as if 4th place)."""
+    team_rating = (player_elo + partner_elo) / 2.0
+    opp_rating = (opp1_elo + opp2_elo) / 2.0
+    expected = _expected(team_rating, opp_rating)
+    k = _k_factor(player_games) * 1.5  # max margin multiplier
+    return round(k * (0.0 - expected))  # actual=0 (worst possible)

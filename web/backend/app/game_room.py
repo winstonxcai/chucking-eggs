@@ -415,6 +415,94 @@ class GameRoom:
         })
 
     # ---------------------------------------------------------------------------
+    # Forfeit
+    # ---------------------------------------------------------------------------
+
+    async def handle_forfeit(self, forfeiter_seat: int) -> None:
+        """Handle a player forfeiting. Game ends immediately for all players.
+
+        Only the forfeiter loses ELO; partner and opponents get no change (voided).
+        """
+        if self.env.done:
+            return
+        self.env.done = True
+        forfeiter_name = self.player_infos[forfeiter_seat]["name"]
+
+        # Compute ELO for forfeiter only
+        elo_changes: dict[int, dict] = {}
+        try:
+            from . import db as _db
+            from .elo import compute_forfeit_elo, BOT_ELOS
+
+            pid = self.player_ids.get(forfeiter_seat)
+            if pid:
+                doc = await asyncio.wait_for(_db.get_player_by_id(pid), timeout=5.0)
+                if doc:
+                    partner = 2 if forfeiter_seat == 0 else (0 if forfeiter_seat == 2 else (3 if forfeiter_seat == 1 else 1))
+                    opps = [s for s in range(4) if s != forfeiter_seat and s != partner]
+
+                    def _seat_elo(seat: int) -> int:
+                        return self.player_infos[seat].get("elo") or BOT_ELOS.get(self.difficulty, 1500)
+
+                    delta = compute_forfeit_elo(
+                        player_elo=doc.get("elo", 1200),
+                        partner_elo=_seat_elo(partner),
+                        opp1_elo=_seat_elo(opps[0]),
+                        opp2_elo=_seat_elo(opps[1]),
+                        player_games=doc.get("games_played", 0),
+                    )
+                    before = doc.get("elo", 1200)
+                    elo_changes[forfeiter_seat] = {
+                        "delta": delta,
+                        "before": before,
+                        "after": before + delta,
+                        "username": doc.get("username"),
+                    }
+                    await _db.update_player_elo(pid, before + delta)
+
+            # Save game record
+            game_doc = {
+                "_id": self.game_id,
+                "mode": self.mode,
+                "difficulty": self.difficulty,
+                "duration_seconds": int(time.time() - self._start_time),
+                "played_at": datetime.now(timezone.utc),
+                "result_type": "forfeit",
+                "forfeiter_seat": forfeiter_seat,
+                "players": [
+                    {
+                        "player_id": self.player_ids.get(seat) if seat in self.human_seats else None,
+                        "display_name": (
+                            elo_changes[seat]["username"]
+                            if seat in elo_changes and elo_changes[seat].get("username")
+                            else self.player_infos[seat]["name"]
+                        ),
+                        "is_bot": seat not in self.human_seats,
+                        "seat": seat,
+                        "finish_pos": -1,
+                        "team_result": "forfeit" if seat == forfeiter_seat else "voided",
+                        "elo_before": elo_changes.get(seat, {}).get("before"),
+                        "elo_after": elo_changes.get(seat, {}).get("after"),
+                    }
+                    for seat in range(4)
+                ],
+            }
+            await _db.save_game(game_doc)
+        except Exception:
+            logger.exception("Forfeit ELO/DB failed for game %s", self.game_id)
+
+        # Broadcast to all connected players
+        await self.broadcast({
+            "type": "game_forfeited",
+            "forfeiter_seat": forfeiter_seat,
+            "forfeiter_name": forfeiter_name,
+            "elo_changes": {
+                str(seat): {"delta": v["delta"], "before": v["before"], "after": v["after"]}
+                for seat, v in elo_changes.items()
+            },
+        })
+
+    # ---------------------------------------------------------------------------
     # AI turns
     # ---------------------------------------------------------------------------
 

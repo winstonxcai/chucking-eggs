@@ -289,6 +289,7 @@ export default function GameBoard({
           {isMultiplayer && onForfeit && (
             <div className="relative">
               <button
+                data-testid="game-menu-button"
                 className="text-text-secondary hover:text-foreground transition-colors"
                 title="Game menu"
                 onClick={() => { setMenuOpen((o) => !o); setForfeitConfirm(false); }}
@@ -342,7 +343,7 @@ export default function GameBoard({
         )}
 
         {/* Play area: all players + table in a centered grid */}
-        <div className="flex-1 lg:flex-none flex items-start lg:items-center justify-center min-h-0">
+        <div className="flex-1 flex items-start lg:items-center justify-center min-h-0">
           <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-1 lg:gap-4 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
@@ -359,7 +360,7 @@ export default function GameBoard({
             </div>
 
             {/* Table surface — all trick actions inside */}
-            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[560px] lg:h-[300px] lg:rounded-2xl lg:border-2 lg:border-[#A8906E]/30 lg:bg-gradient-to-br lg:from-[#2C1F15] lg:to-[#1A120B] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
+            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[560px] lg:h-[300px] lg:rounded-2xl lg:border-2 lg:border-[#D9CFC2]/25 lg:bg-gradient-to-br lg:from-[#3D3329] lg:to-[#2A221A] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
                 <div className="relative inline-flex">

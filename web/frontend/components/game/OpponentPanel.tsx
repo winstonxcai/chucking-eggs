@@ -28,18 +28,28 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       {/* Mobile: single-line "Name · Role" */}
       <div className="lg:hidden flex items-center gap-1">
         {isActive && <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />}
-        <span className="text-[10px] font-semibold text-foreground truncate max-w-[52px]">
-          {thinking ? <span className="animate-pulse">···</span> : player.name}
+        <span className="text-[10px] font-semibold text-foreground truncate max-w-[52px] relative">
+          {thinking ? (
+            <>
+              <span className="invisible">{player.name}</span>
+              <span className="absolute inset-0 flex items-center animate-pulse">···</span>
+            </>
+          ) : player.name}
         </span>
         <span className="text-[10px] text-text-secondary">· {roleLabel}</span>
       </div>
 
       {/* Desktop: two-line name + status */}
       <div className="hidden lg:flex flex-col gap-0.5">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 relative">
           {isActive && <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />}
-          <span className="text-sm font-semibold text-foreground">
-            {thinking ? <span className="animate-pulse text-text-secondary">···</span> : player.name}
+          <span className="text-sm font-semibold text-foreground relative">
+            {thinking ? (
+              <>
+                <span className="invisible">{player.name}</span>
+                <span className="absolute inset-0 flex items-center animate-pulse text-text-secondary">···</span>
+              </>
+            ) : player.name}
           </span>
         </div>
         <span className="text-xs text-text-secondary">{statusLabel}</span>

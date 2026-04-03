@@ -27,7 +27,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
     >
       {/* Mobile: single-line "Name · Role" */}
       <div className="lg:hidden flex items-center gap-1">
-        {isActive && <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />}
+        <div className={`w-1.5 h-1.5 rounded-full bg-accent shrink-0 ${isActive ? "animate-pulse" : "invisible"}`} />
         <span className="text-[10px] font-semibold text-foreground truncate max-w-[52px] relative">
           {thinking ? (
             <>
@@ -42,7 +42,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       {/* Desktop: two-line name + status */}
       <div className="hidden lg:flex flex-col gap-0.5">
         <div className="flex items-center gap-1.5 relative">
-          {isActive && <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />}
+          <div className={`w-1.5 h-1.5 rounded-full bg-accent shrink-0 ${isActive ? "animate-pulse" : "invisible"}`} />
           <span className="text-sm font-semibold text-foreground relative">
             {thinking ? (
               <>

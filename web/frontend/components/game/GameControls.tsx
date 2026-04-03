@@ -98,12 +98,14 @@ export default function GameControls({
             >
               {matchingCombo ? "Play" : "Select"}
             </button>
-            <button
-              className={`px-2 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${!hasSelection ? "invisible" : ""}`}
-              onClick={onUnselect}
-            >
-              ×
-            </button>
+            {hasSelection && (
+              <button
+                className="px-2 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
+                onClick={onUnselect}
+              >
+                ×
+              </button>
+            )}
             <button
               className={`px-2.5 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${isLeading ? "invisible" : ""}`}
               onClick={onPass}
@@ -149,12 +151,14 @@ export default function GameControls({
         >
           {matchingCombo ? `Play ${matchingCombo.type_name}` : "Select cards"}
         </button>
-        <button
-          className={`px-4 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${!hasSelection ? "invisible" : ""}`}
-          onClick={onUnselect}
-        >
-          Unselect
-        </button>
+        {hasSelection && (
+          <button
+            className="px-4 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer"
+            onClick={onUnselect}
+          >
+            Unselect
+          </button>
+        )}
         <button
           className={`px-7 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${isLeading ? "invisible" : ""}`}
           onClick={onPass}

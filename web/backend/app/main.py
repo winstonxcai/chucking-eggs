@@ -174,7 +174,7 @@ async def create_game(req: CreateGameRequest):
     assert game_manager is not None
     if req.difficulty not in ("easy", "wjsd", "casual", "competition", "hard",
          "yaoji", "jidan", "hulalala", "liuzha", "master"):
-        req.difficulty = "medium"
+        req.difficulty = "easy"
     room = await game_manager.create_game(req.difficulty)
     return CreateGameResponse(
         game_id=room.game_id,
@@ -193,7 +193,7 @@ async def create_room(req: CreateRoomRequest):
         req.mode = "solo"
     if req.difficulty not in ("easy", "wjsd", "casual", "competition", "hard",
          "yaoji", "jidan", "hulalala", "liuzha", "master"):
-        req.difficulty = "medium"
+        req.difficulty = "easy"
     room = await game_manager.create_room(req.mode, req.difficulty, seed=req.seed)
     seat = 0  # creator always gets seat 0
     return CreateRoomResponse(

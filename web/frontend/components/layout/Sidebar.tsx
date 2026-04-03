@@ -45,7 +45,7 @@ export default function Sidebar({ player }: SidebarProps) {
       style={{ height: "100%" }}
     >
       {/* Brand header */}
-      <div className={`flex overflow-hidden ${expanded ? "items-center gap-2 px-2 pt-5 pb-3 lg:px-3 lg:pt-8 lg:pb-5" : "flex-col items-center pt-3 pb-2 gap-1"}`}>
+      <div className={`flex overflow-hidden ${expanded ? "items-center justify-center lg:justify-start gap-2 px-2 pt-5 pb-3 lg:px-3 lg:pt-8 lg:pb-5" : "flex-col items-center pt-3 pb-2 gap-1"}`}>
         {/* Expand button: above egg when collapsed, desktop only */}
         {!expanded && (
           <button

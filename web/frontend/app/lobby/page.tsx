@@ -63,7 +63,8 @@ function LobbyContent() {
     try {
       const res = await fetch(`${API_BASE}/api/room/${gameId}/status`);
       if (!res.ok) {
-        setError("Room not found");
+        if (pollRef.current) clearInterval(pollRef.current);
+        setError("Room was closed");
         return;
       }
       const data: RoomStatus = await res.json();
@@ -257,7 +258,15 @@ function LobbyContent() {
 
         <button
           className="text-xs text-text-secondary hover:text-foreground transition-colors"
-          onClick={() => router.push("/")}
+          onClick={async () => {
+            if (gameId) {
+              try { await fetch(`${API_BASE}/api/room/${gameId}/leave`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seat }) }); } catch {}
+            }
+            sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
+            sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
+            sessionStorage.removeItem(STORAGE_KEYS.SEAT);
+            router.push("/");
+          }}
         >
           Cancel and go home
         </button>

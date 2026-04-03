@@ -163,6 +163,26 @@ class GameManager:
         })
         return new_room
 
+    async def leave_room(self, game_id: str, seat: int) -> bool:
+        """Remove a player from a room that hasn't started yet. Dissolves room if empty.
+        Returns True if the room was dissolved, False otherwise."""
+        room = self.rooms.get(game_id)
+        if not room or room.started:
+            return False
+        room.assigned_seats.discard(seat)
+        room.connections.pop(seat, None)
+        # If no human seats are assigned, dissolve
+        if not room.assigned_seats:
+            await room.broadcast({"type": "room_closed", "reason": "Host left the room"})
+            self.remove_room(game_id)
+            return True
+        # If host (seat 0) leaves, dissolve for everyone
+        if seat == 0:
+            await room.broadcast({"type": "room_closed", "reason": "Host left the room"})
+            self.remove_room(game_id)
+            return True
+        return False
+
     def remove_room(self, game_id: str) -> None:
         """Immediately remove a room (e.g. for completed / cancelled games)."""
         room = self.rooms.pop(game_id, None)

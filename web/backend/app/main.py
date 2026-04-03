@@ -259,8 +259,24 @@ async def room_status(game_id: str):
     )
 
 
+class LeaveRoomRequest(BaseModel):
+    seat: int
+
+
 class ForfeitRequest(BaseModel):
     player_id: str
+
+
+@app.post("/api/room/{game_id}/leave")
+async def leave_room(game_id: str, req: LeaveRoomRequest):
+    assert game_manager is not None
+    room = game_manager.get_room(game_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.started:
+        raise HTTPException(status_code=400, detail="Game already started — use forfeit instead")
+    dissolved = await game_manager.leave_room(game_id, req.seat)
+    return {"ok": True, "dissolved": dissolved}
 
 
 @app.post("/api/room/{game_id}/forfeit")

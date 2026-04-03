@@ -385,11 +385,11 @@ test("disconnected multiplayer player is auto-forfeited after timeout — requir
 }) => {
   test.skip(
     process.env.HUMAN_TURN_TIMEOUT_S !== "5",
-    "Needs short AFK timeout — start backend with HUMAN_TURN_TIMEOUT_S=5"
+    "Needs short timeouts — start backend with HUMAN_TURN_TIMEOUT_S=5 DISCONNECT_TAKEOVER_S=10"
   );
   test.slow();
-  // Auto-forfeit grace period is 60s server-side. This test takes ~65s.
-  test.setTimeout(120_000);
+  // DISCONNECT_TAKEOVER_S=10 → auto-forfeit fires after ~10s.
+  test.setTimeout(60_000);
 
   const ctx1 = await browser.newContext();
   const ctx2 = await browser.newContext();
@@ -417,8 +417,8 @@ test("disconnected multiplayer player is auto-forfeited after timeout — requir
     // Simulate player 1 disconnect by closing their context (closes WebSocket)
     await ctx1.close();
 
-    // Player 2 should receive the auto-forfeit broadcast within 65s
-    await expect(page2.getByText(/forfeited/i)).toBeVisible({ timeout: 65_000 });
+    // Player 2 should receive the auto-forfeit broadcast within 20s (DISCONNECT_TAKEOVER_S=10 + buffer)
+    await expect(page2.getByText(/forfeited/i)).toBeVisible({ timeout: 20_000 });
     // Auto-redirect to home
     await expect(page2).toHaveURL(/localhost:3000\/$/, { timeout: 8_000 });
   } finally {

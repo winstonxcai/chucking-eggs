@@ -17,7 +17,7 @@ export default defineConfig({
     },
     {
       // HUMAN_TURN_TIMEOUT_S=5 only takes effect when starting fresh (reuseExistingServer skips this in local dev)
-      command: "PYTHONPATH=../../src HUMAN_TURN_TIMEOUT_S=5 uv run uvicorn app.main:app --port 8000",
+      command: "PYTHONPATH=../../src HUMAN_TURN_TIMEOUT_S=5 DISCONNECT_TAKEOVER_S=10 uv run uvicorn app.main:app --port 8000",
       cwd: "../backend",
       url: "http://localhost:8000/api/health",
       reuseExistingServer: true,

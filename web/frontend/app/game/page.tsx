@@ -72,7 +72,7 @@ function GameContent() {
     createGame();
   }, [difficulty, searchParams]);
 
-  const { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, rematch } =
+  const { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, rematch, forfeit } =
     useGameSocket(gameId, reconnectToken, seat);
 
   const { updateElo } = usePlayer();
@@ -157,6 +157,14 @@ function GameContent() {
       });
   }, [difficulty]);
 
+  // Handle forfeit broadcast from another player
+  useEffect(() => {
+    if (!forfeit) return;
+    clearGame();
+    const t = setTimeout(() => router.push("/"), 3000);
+    return () => clearTimeout(t);
+  }, [forfeit, clearGame, router]);
+
   const handleForfeit = useCallback(async () => {
     if (!gameId) return;
     const playerId = (() => { try { return localStorage.getItem("ce_player_id"); } catch { return null; } })();
@@ -181,6 +189,18 @@ function GameContent() {
         <div className="flex flex-col items-center gap-4 text-center max-w-sm px-4">
           <p className="text-text-secondary">{createError}</p>
           <a href="/" className="text-sm text-accent underline">Back to home</a>
+        </div>
+      </div>
+    );
+  }
+
+  if (forfeit) {
+    return (
+      <div className="h-full flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4 text-center max-w-sm px-4">
+          <p className="text-foreground font-semibold">Game ended</p>
+          <p className="text-text-secondary text-sm">{forfeit.forfeiter_name} forfeited the game.</p>
+          <p className="text-xs text-text-secondary">Redirecting to home...</p>
         </div>
       </div>
     );

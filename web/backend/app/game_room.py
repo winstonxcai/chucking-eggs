@@ -320,6 +320,7 @@ class GameRoom:
                     return human_docs[seat].get("elo", 1200)
                 return self.player_infos[seat].get("elo") or BOT_ELOS.get(self.difficulty, 1500)
 
+            finish_order = self.env.finish_order
             elo_changes: dict[int, dict] = {}
             for seat in self.human_seats:
                 if seat not in human_docs:
@@ -332,7 +333,7 @@ class GameRoom:
                     opp1_elo=_seat_elo(opps[0]),
                     opp2_elo=_seat_elo(opps[1]),
                     player_games=human_docs[seat].get("games_played", 0),
-                    won=rewards[seat] > 0,
+                    finish_pos=finish_order.index(seat),
                     reward=rewards[seat],
                 )
                 before = human_docs[seat].get("elo", 1200)

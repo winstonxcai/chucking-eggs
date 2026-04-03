@@ -48,6 +48,12 @@ def _k_factor(games_played: int) -> float:
     return 16.0
 
 
+# Per-position actual values: 1st=1.0, 2nd=0.75, 3rd=0.25, 4th=0.0.
+# Sum is 2.0, matching the sum of expected probabilities across all 4 players,
+# so the system remains zero-sum at even matchups.
+_POSITION_ACTUAL = [1.0, 0.75, 0.25, 0.0]
+
+
 def _margin_multiplier(reward: float) -> float:
     """Map reward from get_rewards() to a K multiplier.
 
@@ -69,13 +75,16 @@ def compute_elo_delta(
     opp1_elo: int,
     opp2_elo: int,
     player_games: int,
-    won: bool,
+    finish_pos: int,
     reward: float,
 ) -> int:
-    """Return the integer Elo delta for one player after a completed game."""
+    """Return the integer Elo delta for one player after a completed game.
+
+    finish_pos: 0-indexed finish position (0=1st, 1=2nd, 2=3rd, 3=4th).
+    """
     team_rating = (player_elo + partner_elo) / 2.0
     opp_rating = (opp1_elo + opp2_elo) / 2.0
     expected = _expected(team_rating, opp_rating)
-    actual = 1.0 if won else 0.0
+    actual = _POSITION_ACTUAL[finish_pos]
     k = _k_factor(player_games) * _margin_multiplier(reward)
     return round(k * (actual - expected))

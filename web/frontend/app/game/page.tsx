@@ -157,6 +157,24 @@ function GameContent() {
       });
   }, [difficulty]);
 
+  const handleForfeit = useCallback(async () => {
+    if (!gameId) return;
+    const playerId = (() => { try { return localStorage.getItem("ce_player_id"); } catch { return null; } })();
+    if (!playerId) return;
+    try {
+      await fetch(`${API_BASE}/api/room/${gameId}/forfeit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ player_id: playerId }),
+      });
+    } catch { /* best effort */ }
+    clearGame();
+    sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
+    sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
+    sessionStorage.removeItem(STORAGE_KEYS.SEAT);
+    router.push("/");
+  }, [gameId, clearGame, router]);
+
   if (createError) {
     return (
       <div className="h-full flex items-center justify-center bg-background">
@@ -206,6 +224,7 @@ function GameContent() {
       onCreateGroup={createGroup}
       onDeleteGroup={deleteGroup}
       latestError={latestError}
+      onForfeit={isMultiplayer ? handleForfeit : undefined}
     />
   );
 }

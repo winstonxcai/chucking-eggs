@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crown, Hand, HelpCircle } from "lucide-react";
+import { Crown, Hand, HelpCircle, Settings } from "lucide-react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -27,6 +27,7 @@ interface GameBoardProps {
   onCreateGroup: (cardIds: string[], comboType: string, comboName: string) => void;
   onDeleteGroup: (groupId: string) => void;
   latestError?: { message: string; key: number } | null;
+  onForfeit?: () => void;
 }
 
 /** Render a single trick action (cards or "Pass") */
@@ -65,8 +66,11 @@ export default function GameBoard({
   onCreateGroup,
   onDeleteGroup,
   latestError,
+  onForfeit,
 }: GameBoardProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [forfeitConfirm, setForfeitConfirm] = useState(false);
   const [flyingCards, setFlyingCards] = useState<{
     cards: CardDTO[];
     fromRects: DOMRect[];
@@ -271,16 +275,59 @@ export default function GameBoard({
     <div className="flex h-[100dvh] bg-background overflow-x-hidden">
       {/* Main board area */}
       <div className="flex-1 flex flex-col p-[5px] lg:px-6 lg:pt-2 lg:pb-1 gap-0 relative lg:justify-center">
-        {/* Help button */}
-        <a
-          href="https://www.pagat.com/climbing/guan_dan.html"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="absolute top-2 right-2 lg:top-4 lg:right-4 z-20 text-text-secondary hover:text-foreground transition-colors"
-          title="Game rules"
-        >
-          <HelpCircle size={18} />
-        </a>
+        {/* Top-right buttons */}
+        <div className="absolute top-2 right-2 lg:top-4 lg:right-4 z-20 flex items-center gap-2">
+          <a
+            href="https://www.pagat.com/climbing/guan_dan.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-text-secondary hover:text-foreground transition-colors"
+            title="Game rules"
+          >
+            <HelpCircle size={18} />
+          </a>
+          {isMultiplayer && onForfeit && (
+            <div className="relative">
+              <button
+                className="text-text-secondary hover:text-foreground transition-colors"
+                title="Game menu"
+                onClick={() => { setMenuOpen((o) => !o); setForfeitConfirm(false); }}
+              >
+                <Settings size={18} />
+              </button>
+              {menuOpen && (
+                <div className="absolute top-full right-0 mt-1 bg-surface border border-border rounded-lg shadow-md p-1 min-w-[140px] z-30">
+                  {!forfeitConfirm ? (
+                    <button
+                      className="w-full text-left px-3 py-2 text-xs font-medium text-team-red rounded hover:bg-red-50 transition-colors cursor-pointer"
+                      onClick={() => setForfeitConfirm(true)}
+                    >
+                      Forfeit Game
+                    </button>
+                  ) : (
+                    <div className="flex flex-col gap-1.5 p-2">
+                      <span className="text-[11px] text-team-red font-medium">You will lose ELO.</span>
+                      <div className="flex gap-1.5">
+                        <button
+                          className="flex-1 py-1 bg-team-red text-white text-xs font-semibold rounded hover:opacity-90 transition-opacity cursor-pointer"
+                          onClick={() => { onForfeit(); setMenuOpen(false); }}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          className="flex-1 py-1 bg-background border border-border text-xs rounded hover:border-foreground transition-colors cursor-pointer"
+                          onClick={() => setForfeitConfirm(false)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         {/* Reconnection banner */}
         {connectionStatus === "reconnecting" && (
           <div className="flex items-center justify-center gap-2 py-2 bg-amber-50 border border-amber-200 rounded-lg mb-2">

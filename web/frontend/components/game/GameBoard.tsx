@@ -260,6 +260,12 @@ export default function GameBoard({
   const rightOpp = gameState.players.find((p) => p.seat === 3);
 
   const ta = gameState.trick_actions;
+  const fo = gameState.finish_order;
+  const finishPos = (seat: number) => {
+    const idx = fo.indexOf(seat);
+    return idx >= 0 ? idx + 1 : null;
+  };
+  const ORDINAL = ["", "1st", "2nd", "3rd", "4th"];
 
   return (
     <div className="flex h-[100dvh] bg-background overflow-x-hidden">
@@ -319,29 +325,53 @@ export default function GameBoard({
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
                 <div className="relative inline-flex">
-                  <TrickActionDisplay action={ta?.["2"] ?? null} size={compactHand ? "xs" : "sm"} />
-                  {gameState.trick_lead_seat === 2 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                  {finishPos(2) ? (
+                    <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(2)!]}</span>
+                  ) : (
+                    <>
+                      <TrickActionDisplay action={ta?.["2"] ?? null} size={compactHand ? "xs" : "sm"} />
+                      {gameState.trick_lead_seat === 2 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                    </>
+                  )}
                 </div>
               </div>
               {/* Left opp — mobile: centered under col 1 (1/6 from left); desktop: left edge */}
               <div data-testid="trick-seat-1" className="absolute left-[16.67%] -translate-x-1/2 top-0 bottom-0 flex items-center lg:left-3 lg:translate-x-0">
                 <div className="relative inline-flex">
-                  <TrickActionDisplay action={ta?.["1"] ?? null} size={compactHand ? "xs" : "sm"} />
-                  {gameState.trick_lead_seat === 1 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                  {finishPos(1) ? (
+                    <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(1)!]}</span>
+                  ) : (
+                    <>
+                      <TrickActionDisplay action={ta?.["1"] ?? null} size={compactHand ? "xs" : "sm"} />
+                      {gameState.trick_lead_seat === 1 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                    </>
+                  )}
                 </div>
               </div>
               {/* Right opp — mobile: centered under col 3 (5/6 from left); desktop: right edge */}
               <div data-testid="trick-seat-3" className="absolute left-[83.33%] -translate-x-1/2 top-0 bottom-0 flex items-center lg:left-auto lg:right-3 lg:translate-x-0">
                 <div className="relative inline-flex">
-                  <TrickActionDisplay action={ta?.["3"] ?? null} size={compactHand ? "xs" : "sm"} />
-                  {gameState.trick_lead_seat === 3 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                  {finishPos(3) ? (
+                    <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(3)!]}</span>
+                  ) : (
+                    <>
+                      <TrickActionDisplay action={ta?.["3"] ?? null} size={compactHand ? "xs" : "sm"} />
+                      {gameState.trick_lead_seat === 3 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                    </>
+                  )}
                 </div>
               </div>
               {/* You (bottom edge) */}
               <div ref={tableSeat0Ref} data-testid="trick-seat-0" className="absolute bottom-3 left-0 right-0 flex justify-center">
                 <div className="relative inline-flex">
-                  {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} size={compactHand ? "xs" : "sm"} />}
-                  {gameState.trick_lead_seat === 0 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                  {finishPos(gameState.my_seat) ? (
+                    <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(gameState.my_seat)!]}</span>
+                  ) : (
+                    <>
+                      {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} size={compactHand ? "xs" : "sm"} />}
+                      {gameState.trick_lead_seat === 0 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                    </>
+                  )}
                 </div>
               </div>
               {/* New trick label */}

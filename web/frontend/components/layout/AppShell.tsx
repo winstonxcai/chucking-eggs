@@ -2,6 +2,7 @@
 
 import { usePlayer } from "@/hooks/usePlayer";
 import Sidebar from "./Sidebar";
+import LandscapeGate from "./LandscapeGate";
 import UsernameModal from "@/components/onboarding/UsernameModal";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -17,10 +18,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen">
-      <Sidebar player={player} />
-      <main className="flex-1 min-w-0">{children}</main>
-      {!player && <UsernameModal onClaim={claim} />}
-    </div>
+    <LandscapeGate>
+      <div className="flex min-h-screen">
+        <Sidebar player={player} />
+        <main className="flex-1 min-w-0">{children}</main>
+        {!player && <UsernameModal onClaim={claim} />}
+      </div>
+    </LandscapeGate>
   );
 }

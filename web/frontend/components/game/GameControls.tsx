@@ -60,15 +60,17 @@ export default function GameControls({
   if (compact) {
     return (
       <div className="flex flex-col gap-1">
-        {/* Thin rope timer */}
-        <div
-          data-testid="rope-timer"
-          className={`h-0.5 rounded-full overflow-hidden bg-border ${!showRope ? "invisible" : ""}`}
-        >
+        {/* Thin rope timer — 1/4 width, centered */}
+        <div className={`flex justify-center ${!showRope ? "invisible" : ""}`}>
           <div
-            className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
-            style={{ width: `${progress * 100}%` }}
-          />
+            data-testid="rope-timer"
+            className="w-1/4 h-0.5 rounded-full overflow-hidden bg-border"
+          >
+            <div
+              className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
+              style={{ width: `${progress * 100}%` }}
+            />
+          </div>
         </div>
         {/* Single row: Group/Ungroup | Play | × | Pass | Combos */}
         <div className="flex items-center justify-center gap-1.5">

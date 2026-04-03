@@ -25,7 +25,7 @@ from .encoding import (
     D_MOVE, MAX_HISTORY,
     encode_action, encode_global_state, encode_history, encode_state,
 )
-from .mixing import TeamMixer
+from .mixing import TeamMixer, UnrestrictedMixer
 from .q_network import QNetworkLSTM
 from .qmix_buffer import QMIXBuffer
 
@@ -260,6 +260,74 @@ def train_qmix_e2e_step(
         "q_lead_grad":   q_lead_grad,
         "q_follow_grad": q_follow_grad,
         "mixer_grad":    mixer_grad,
+    }
+
+
+def train_wqmix_e2e_step(
+    mixer: TeamMixer,
+    mixer_star: UnrestrictedMixer,
+    q_lead: QNetworkLSTM,
+    q_follow: QNetworkLSTM,
+    qmix_buf: QMIXBuffer,
+    opt: torch.optim.Optimizer,
+    opt_star: torch.optim.Optimizer,
+    batch_size: int,
+    device: torch.device,
+    loss_weight: float = 0.001,
+    alpha: float = 0.1,
+) -> dict[str, float]:
+    """WQMIX: Optimistically-Weighted end-to-end training.
+
+    Two mixers:
+      - mixer (TeamMixer): monotonic Q_tot — deployed at inference
+      - mixer_star (UnrestrictedMixer): unrestricted Q* — training-only reference
+
+    OW weighting: w=1 if Q_tot < Q*, w=alpha if Q_tot >= Q*.
+    This down-weights overestimated actions, letting the monotonic mixer
+    avoid forcing up Q-values for actions that hurt the team.
+    """
+    batch = qmix_buf.sample(batch_size, device)
+    returns = batch["return"].float()
+    gs = batch["global_state"]
+
+    # Re-run Q-nets WITH gradients
+    q_vals = _compute_q_vals(q_lead, q_follow, batch, device, no_grad=False)
+
+    # --- Step 1: Train Q* (unrestricted mixer) on unweighted MSE ---
+    q_star = mixer_star(q_vals.detach(), gs)
+    star_loss = nn.functional.mse_loss(q_star, returns)
+    opt_star.zero_grad()
+    star_loss.backward()
+    nn.utils.clip_grad_norm_(mixer_star.parameters(), max_norm=1.0)
+    opt_star.step()
+
+    # --- Step 2: Compute OW weights ---
+    with torch.no_grad():
+        q_tot_detached = mixer(q_vals.detach(), gs)
+        q_star_detached = mixer_star(q_vals.detach(), gs)
+        # w=1 where Q_tot underestimates (safe to push up), w=alpha where overestimated
+        weights = torch.where(q_tot_detached < q_star_detached, 1.0, alpha)
+
+    # --- Step 3: Train Q_tot (monotonic mixer + Q-nets) with weighted MSE ---
+    q_team = mixer(q_vals, gs)
+    td_error = (q_team - returns) ** 2
+    wqmix_loss = (weights * td_error).mean() * loss_weight
+
+    opt.zero_grad()
+    wqmix_loss.backward()
+
+    q_lead_grad = nn.utils.clip_grad_norm_(q_lead.parameters(), max_norm=0.1).item()
+    q_follow_grad = nn.utils.clip_grad_norm_(q_follow.parameters(), max_norm=0.1).item()
+    mixer_grad = nn.utils.clip_grad_norm_(mixer.parameters(), max_norm=1.0).item()
+    opt.step()
+
+    return {
+        "wqmix": wqmix_loss.item() / loss_weight,
+        "star_loss": star_loss.item(),
+        "q_lead_grad": q_lead_grad,
+        "q_follow_grad": q_follow_grad,
+        "mixer_grad": mixer_grad,
+        "ow_frac": (weights < 1.0).float().mean().item(),
     }
 
 

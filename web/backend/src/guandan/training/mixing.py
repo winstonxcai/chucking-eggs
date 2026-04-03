@@ -1,11 +1,11 @@
-"""QMIX mixing network: monotonic team value function.
+"""QMIX / WQMIX mixing networks.
 
-TeamMixer combines individual Q-values (Q_0, Q_2) from teammate agents
-into a team Q-value via hypernetworks that produce positive weights,
-enforcing the monotonicity constraint: ∂Q_team/∂Q_i ≥ 0.
+TeamMixer: monotonic mixer (QMIX) — enforces ∂Q_team/∂Q_i ≥ 0 via abs() weights.
+UnrestrictedMixer: non-monotonic mixer (WQMIX Q*) — no abs(), can express any function.
 
-This allows centralized training while maintaining decentralized execution —
-each agent's Q-network is unchanged; the mixer is only used during training.
+WQMIX uses both: TeamMixer for Q_tot (deployed), UnrestrictedMixer for Q* (training only).
+The OW weighting down-weights overestimated actions (Q_tot > Q*), letting the monotonic
+mixer avoid forcing up Q-values for actions that are bad for the team.
 """
 
 from __future__ import annotations
@@ -71,5 +71,52 @@ class TeamMixer(nn.Module):
         w2 = torch.abs(self.hyper_w2(global_state)).view(B, self.embed_dim, 1)
         b2 = self.hyper_b2(global_state).view(B, 1, 1)
         q_team = (torch.bmm(hidden, w2) + b2).view(B)  # [B]
+
+        return q_team
+
+
+class UnrestrictedMixer(nn.Module):
+    """Unrestricted mixer for WQMIX Q* — no monotonicity constraint.
+
+    Same architecture as TeamMixer but without torch.abs() on hypernetwork
+    weights, allowing negative weights and non-monotonic value functions.
+    Used only during training to approximate the true joint Q-value.
+    """
+
+    def __init__(self, embed_dim: int = 64, hypernet_hidden: int = 128):
+        super().__init__()
+        self.embed_dim = embed_dim
+
+        self.hyper_w1 = nn.Sequential(
+            nn.Linear(D_GLOBAL, hypernet_hidden),
+            nn.ReLU(),
+            nn.Linear(hypernet_hidden, 2 * embed_dim),
+        )
+        self.hyper_b1 = nn.Linear(D_GLOBAL, embed_dim)
+
+        self.hyper_w2 = nn.Sequential(
+            nn.Linear(D_GLOBAL, hypernet_hidden),
+            nn.ReLU(),
+            nn.Linear(hypernet_hidden, embed_dim),
+        )
+        self.hyper_b2 = nn.Sequential(
+            nn.Linear(D_GLOBAL, embed_dim),
+            nn.ReLU(),
+            nn.Linear(embed_dim, 1),
+        )
+
+    def forward(self, q_vals: torch.Tensor, global_state: torch.Tensor) -> torch.Tensor:
+        """Same interface as TeamMixer: [B,2] + [B,D_GLOBAL] → [B]."""
+        B = q_vals.size(0)
+        q_vals = q_vals.unsqueeze(1)
+
+        # No torch.abs() — weights can be negative
+        w1 = self.hyper_w1(global_state).view(B, 2, self.embed_dim)
+        b1 = self.hyper_b1(global_state).view(B, 1, self.embed_dim)
+        hidden = torch.relu(torch.bmm(q_vals, w1) + b1)
+
+        w2 = self.hyper_w2(global_state).view(B, self.embed_dim, 1)
+        b2 = self.hyper_b2(global_state).view(B, 1, 1)
+        q_team = (torch.bmm(hidden, w2) + b2).view(B)
 
         return q_team

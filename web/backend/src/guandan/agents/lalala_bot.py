@@ -67,7 +67,7 @@ class LalalaBot(Agent):
         self._last_history_len = -1
         # Per-game state (mirrors competition client)
         self._remaining = {0: 27, 1: 27, 2: 27, 3: 27}
-        self._pass_num = 0
+        self._pass_num = 0        # cumulative passes observed this game
         self._my_pass_num = 0
 
     def act(self, env, player: int):
@@ -82,6 +82,10 @@ class LalalaBot(Agent):
             self._pass_num = 0
             self._my_pass_num = 0
         self._last_history_len = history_len
+
+        # Reset my_pass_num at the start of each new trick
+        if env.current_trick is None:
+            self._my_pass_num = 0
 
         # Sync remaining counts from env
         for p in range(4):
@@ -137,9 +141,16 @@ class LalalaBot(Agent):
                 trick_type, trick_type,   # curAction = greaterAction = current trick
                 player, greater_pos,
                 remaincards, self._remaining,
-                self._pass_num, self._my_pass_num,
+                self._pass_num,           # cumulative passes this game
+                self._my_pass_num,
                 None,  # remain_cards_classbynum — not used inside passive()
             )
-            return idx if idx is not None else 0
+            result = idx if idx is not None else 0
+            if result == 0:
+                self._pass_num += 1
+                self._my_pass_num += 1
+            return result
         except Exception:
+            self._pass_num += 1
+            self._my_pass_num += 1
             return 0

@@ -18,14 +18,15 @@ CHECKPOINT_DIR = "/checkpoints"
 QMIX_DEFAULTS = dict(
     resume=f"{CHECKPOINT_DIR}/selfplay_best.pt",
     phase="AB",
-    episodes=15000,
+    episodes=50000,
     batch_size=512,
     train_steps=4,
     lr_mixer=1e-3,
     lr_q=1e-6,
     qmix_loss_weight=0.001,
-    eval_interval=2000,
-    eval_games=100,
+    wqmix_alpha=0.1,
+    eval_interval=10000,
+    eval_games=500,
     epsilon_start=0.10,
     epsilon_end=0.01,
     epsilon_decay_frac=0.80,
@@ -60,7 +61,7 @@ image = (
     image=image,
     gpu="A10G",
     cpu=4,
-    timeout=3600 * 2,
+    timeout=3600 * 4,
     volumes={CHECKPOINT_DIR: vol},
 )
 def qmix_remote(**kwargs) -> str:
@@ -84,11 +85,11 @@ def qmix_remote(**kwargs) -> str:
 @app.local_entrypoint()
 def main(
     phase: str = "AB",
-    episodes: int = 15000,
-    run_name: str = "qmix_v1",
+    episodes: int = 50000,
+    run_name: str = "qmix_v2",
     resume: str = "",
     mixer_resume: str = "",
-    eval_games: int = 100,
+    eval_games: int = 500,
 ) -> None:
     """Launch QMIX training on Modal A10G."""
     kwargs: dict = {

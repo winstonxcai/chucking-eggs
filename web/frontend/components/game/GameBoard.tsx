@@ -270,7 +270,7 @@ export default function GameBoard({
   return (
     <div className="flex h-[100dvh] bg-background overflow-x-hidden">
       {/* Main board area */}
-      <div className="flex-1 flex flex-col p-[5px] lg:p-6 gap-0 relative">
+      <div className="flex-1 flex flex-col p-[5px] lg:px-6 lg:pt-2 lg:pb-1 gap-0 relative lg:justify-center">
         {/* Help button */}
         <a
           href="https://www.pagat.com/climbing/guan_dan.html"
@@ -295,10 +295,10 @@ export default function GameBoard({
         )}
 
         {/* Play area: all players + table in a centered grid */}
-        <div className="flex-1 flex items-start lg:items-center justify-center min-h-0">
-          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-1 lg:gap-8 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
+        <div className="flex-1 lg:flex-none flex items-start lg:items-center justify-center min-h-0">
+          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-1 lg:gap-4 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
             {/* Partner (top center, spans column 2) */}
-            <div className="col-start-2 row-start-1 lg:mb-6">
+            <div className="col-start-2 row-start-1">
               {partner && (
                 <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.partner_hand} />
               )}
@@ -383,9 +383,9 @@ export default function GameBoard({
         </div>
 
         {/* Your turn indicator + Controls — hidden on mobile once player is finished */}
-        <div className={`mt-auto lg:mt-0 py-0.5 lg:py-2 ${compactHand && gameState.my_hand.length === 0 ? "hidden lg:block" : ""}`}>
+        <div className={`mt-auto lg:mt-0 py-0.5 lg:py-0 ${compactHand && gameState.my_hand.length === 0 ? "hidden lg:block" : ""}`}>
           {/* Desktop-only turn label */}
-          <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-2 ${!gameState.is_my_turn ? "invisible" : ""}`}>
+          <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-1 ${!gameState.is_my_turn ? "invisible" : ""}`}>
             <div className="w-1.5 h-1.5 rounded-full bg-accent" />
             <span className="text-[13px] font-medium text-accent">
               {gameState.is_leading ? "Your turn to lead" : "Your turn to play"}
@@ -424,7 +424,7 @@ export default function GameBoard({
         </div>
 
         {/* Hand toolbar: desktop only */}
-        <div className="hidden lg:flex py-2 items-center justify-center gap-2">
+        <div className="hidden lg:flex py-1 items-center justify-center gap-2">
           <HandToolbar
             onFlushSelect={handleFlushSelect}
             sfBySuit={sfBySuit}

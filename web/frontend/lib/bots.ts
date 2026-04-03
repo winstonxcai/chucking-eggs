@@ -2,9 +2,9 @@
 // WR matrix (200 games/matchup, 31,200 total games). See runs/wr_matrix_v2/.
 
 // Two groups shown as separate sections in the UI.
-export const OUR_BOTS = ["easy", "medium", "competition", "casual", "hard", "master"] as const;
+export const OUR_BOTS = ["easy", "medium", "casual", "hard"] as const;
 // liuzha and hulalala hidden — port bugs cause them to lose to random
-export const COMPETITION_BOTS = ["wjsd", "yaoji", "jidan"] as const;
+export const COMPETITION_BOTS = ["wjsd", "competition", "yaoji", "jidan", "master"] as const;
 
 export const DIFFICULTY_INFO: Record<
   string,

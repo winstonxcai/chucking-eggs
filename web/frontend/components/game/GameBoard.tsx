@@ -358,8 +358,8 @@ export default function GameBoard({
           </div>
         </div>
 
-        {/* Your turn indicator + Controls */}
-        <div className="py-0.5 lg:py-2">
+        {/* Your turn indicator + Controls — pushed to bottom on mobile */}
+        <div className="mt-auto lg:mt-0 py-0.5 lg:py-2">
           {/* Desktop-only turn label */}
           <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-2 ${!gameState.is_my_turn ? "invisible" : ""}`}>
             <div className="w-1.5 h-1.5 rounded-full bg-accent" />

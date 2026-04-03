@@ -300,18 +300,14 @@ export default function GameBoard({
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1">
               {partner && (
-                <div className={gameState.current_player === 2 ? "ring-2 ring-accent rounded-xl" : ""}>
-                  <OpponentPanel player={partner} thinking={aiThinking === 2} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.partner_hand} />
-                </div>
+                <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.partner_hand} />
               )}
             </div>
 
             {/* Left opponent */}
             <div className="col-start-1 row-start-1 lg:row-start-2">
               {leftOpp && (
-                <div className={gameState.current_player === 1 ? "ring-2 ring-accent rounded-xl" : ""}>
-                  <OpponentPanel player={leftOpp} thinking={aiThinking === 1} />
-                </div>
+                <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} />
               )}
             </div>
 
@@ -385,9 +381,7 @@ export default function GameBoard({
             {/* Right opponent */}
             <div className="col-start-3 row-start-1 lg:row-start-2">
               {rightOpp && (
-                <div className={gameState.current_player === 3 ? "ring-2 ring-accent rounded-xl" : ""}>
-                  <OpponentPanel player={rightOpp} thinking={aiThinking === 3} />
-                </div>
+                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} />
               )}
             </div>
           </div>

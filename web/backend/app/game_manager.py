@@ -126,10 +126,17 @@ class GameManager:
     # Disconnect / reconnect (per-seat and room-level compat)
     # ---------------------------------------------------------------------------
 
-    def disconnect_seat(self, game_id: str, seat: int) -> None:
-        """Mark a specific seat as disconnected."""
+    def disconnect_seat(self, game_id: str, seat: int, ws: object | None = None) -> None:
+        """Mark a specific seat as disconnected.
+
+        If *ws* is given, only disconnect when that exact WebSocket is still
+        the active connection.  This prevents a stale handler (e.g. from a
+        page refresh) from killing the replacement connection.
+        """
         room = self.rooms.get(game_id)
         if room:
+            if ws is not None and room.connections.get(seat) is not ws:
+                return
             room.connections.pop(seat, None)
             room.disconnected_seats[seat] = time.time()
 

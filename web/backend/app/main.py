@@ -457,7 +457,7 @@ async def game_websocket(
     except Exception as e:
         print(f"WebSocket error in game {game_id} seat {seat}: {e}")
     finally:
-        game_manager.disconnect_seat(game_id, seat)
+        game_manager.disconnect_seat(game_id, seat, ws)
         room.schedule_disconnect_takeover(seat)
 
 

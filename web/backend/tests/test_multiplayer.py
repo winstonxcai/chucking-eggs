@@ -374,3 +374,44 @@ class TestBackwardsCompat:
         room = game_manager.reconnect_room(gid, token)
         assert room is not None
         assert room.disconnected_at is None
+
+
+# ---------------------------------------------------------------------------
+# Reconnect race condition
+# ---------------------------------------------------------------------------
+
+class TestReconnectRace:
+    @pytest.mark.asyncio
+    async def test_stale_disconnect_does_not_kill_new_connection(self, client: AsyncClient):
+        """Old WS handler's disconnect_seat must not remove a newer connection."""
+        data = await create_game(client)
+        from app.main import game_manager
+        gid = data["game_id"]
+        room = game_manager.get_room(gid)
+
+        # Simulate: old WS stored, then new WS replaces it
+        old_ws = object()  # sentinel
+        new_ws = object()  # sentinel
+        room.connections[0] = old_ws
+        room.connections[0] = new_ws  # new connection overwrites
+
+        # Old handler's finally fires with the old ws reference
+        game_manager.disconnect_seat(gid, 0, ws=old_ws)
+
+        # New connection should still be alive
+        assert room.connections.get(0) is new_ws
+        assert 0 not in room.disconnected_seats
+
+    @pytest.mark.asyncio
+    async def test_disconnect_without_ws_still_works(self, client: AsyncClient):
+        """Calling disconnect_seat without ws arg still removes unconditionally."""
+        data = await create_game(client)
+        from app.main import game_manager
+        gid = data["game_id"]
+        room = game_manager.get_room(gid)
+
+        room.connections[0] = object()
+        game_manager.disconnect_seat(gid, 0)
+
+        assert 0 not in room.connections
+        assert 0 in room.disconnected_seats

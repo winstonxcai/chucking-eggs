@@ -69,6 +69,12 @@ AGENT_REGISTRY: dict[str, type[Agent]] = {
 if LLMBot is not None:
     AGENT_REGISTRY["llm"] = LLMBot
 
+try:
+    from .guanzero_bot import GuanZeroBot
+    AGENT_REGISTRY["guanzero"] = GuanZeroBot
+except ImportError:
+    GuanZeroBot = None  # type: ignore[assignment,misc]
+
 
 def make_agent(name: str, level_rank: int = Rank.TWO, **kwargs) -> Agent:
     """Create an agent by name.

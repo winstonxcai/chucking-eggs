@@ -8,7 +8,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -157,18 +157,25 @@ def _build_elo_history(games: list[dict], username: str) -> list[dict]:
 
     unique_days = {_day_key(p["played_at"]) for p in relevant}
 
+    first_dt = relevant[0]["played_at"] if hasattr(relevant[0]["played_at"], "year") else datetime.fromisoformat(relevant[0]["played_at"])
+
     if len(unique_days) < 4:
         points = []
         for p in relevant:
             d = p["played_at"] if hasattr(p["played_at"], "year") else datetime.fromisoformat(p["played_at"])
             points.append({"date": f"{d.month}/{d.day} {d.hour:02d}:{d.minute:02d}", "elo": p["elo"]})
+        # Anchor: same date, no time — distinct from "M/D HH:mm" format
+        start_label = f"{first_dt.month}/{first_dt.day}"
     else:
         by_day: dict[str, int] = {}
         for p in relevant:
             by_day[_day_key(p["played_at"])] = p["elo"]
         points = [{"date": date, "elo": elo} for date, elo in by_day.items()]
+        # Anchor: day before first game so the label doesn't duplicate an existing "M/D"
+        prev = first_dt - timedelta(days=1)
+        start_label = f"{prev.month}/{prev.day}"
 
-    points.insert(0, {"date": "Start", "elo": 1200})
+    points.insert(0, {"date": start_label, "elo": 1200})
     return points
 
 

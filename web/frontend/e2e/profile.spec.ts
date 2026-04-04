@@ -14,7 +14,7 @@ const baseFixture = {
     },
   ],
   elo_history: [
-    { date: "Start", elo: 1200 },
+    { date: "4/3", elo: 1200 },
     { date: "4/3 14:00", elo: 1280 },
     { date: "4/3 15:30", elo: 1350 },
   ],

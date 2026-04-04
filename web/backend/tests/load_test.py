@@ -107,13 +107,14 @@ def pick_move(game_state: dict) -> dict | None:
     if not legal:
         return None
 
-    # PASS is appended last by the serializer when available
-    if legal[-1].get("is_pass"):
+    # Always play the smallest legal non-pass combo; fall back to pass if that's all there is
+    non_pass = [m for m in legal if not m.get("is_pass")]
+    move = non_pass[0] if non_pass else legal[0]
+
+    if move.get("is_pass"):
         return {"type": "pass"}
 
-    # Play the smallest legal combo
-    cards = legal[0].get("cards", [])
-    card_ids = [c["id"] for c in cards]
+    card_ids = [c["id"] for c in move.get("cards", [])]
     return {"type": "play_cards", "card_ids": card_ids}
 
 

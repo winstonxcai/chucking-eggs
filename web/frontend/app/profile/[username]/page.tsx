@@ -54,23 +54,7 @@ interface PlayerDoc {
 interface ProfileData {
   player: PlayerDoc;
   games: unknown[];
-}
-
-function buildEloHistory(games: unknown[], username: string) {
-  const points: { date: string; elo: number }[] = [];
-  const sorted = [...(games as { played_at: string; players: { display_name: string; is_bot: boolean; elo_before: number | null; elo_after: number | null }[] }[])]
-    .sort((a, b) => new Date(a.played_at).getTime() - new Date(b.played_at).getTime());
-
-  for (const game of sorted) {
-    const me = game.players.find((p) => !p.is_bot && p.display_name === username);
-    if (!me || me.elo_after == null) continue;
-    const d = new Date(game.played_at);
-    points.push({
-      date: `${d.getMonth() + 1}/${d.getDate()}`,
-      elo: me.elo_after,
-    });
-  }
-  return points;
+  elo_history: { date: string; elo: number }[];
 }
 
 function ProfileContent() {
@@ -107,8 +91,7 @@ function ProfileContent() {
     return <ProfileSkeleton />;
   }
 
-  const { player, games } = data;
-  const eloHistory = buildEloHistory(games as unknown[], username);
+  const { player, games, elo_history = [] } = data;
 
   // Compute win rate
   const wins = (games as { players: { display_name: string; is_bot: boolean; team_result: string }[] }[])
@@ -136,7 +119,7 @@ function ProfileContent() {
       {/* Elo History */}
       <div className="bg-surface border border-border rounded-xl px-6 py-5">
         <h2 className="text-sm font-semibold text-foreground mb-4">Elo History</h2>
-        <EloChart data={eloHistory} />
+        <EloChart data={elo_history} />
       </div>
 
       {/* Win Rate by Difficulty */}

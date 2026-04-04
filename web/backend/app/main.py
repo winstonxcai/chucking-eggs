@@ -8,6 +8,8 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
+from datetime import datetime
+
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -132,6 +134,44 @@ async def claim_username(request: Request, req: ClaimUsernameRequest):
 # Profile & Leaderboard
 # ---------------------------------------------------------------------------
 
+def _build_elo_history(games: list[dict], username: str) -> list[dict]:
+    sorted_games = sorted(games, key=lambda g: g["played_at"])
+
+    relevant = []
+    for game in sorted_games:
+        me = next(
+            (p for p in game.get("players", [])
+             if not p.get("is_bot") and p.get("display_name") == username),
+            None,
+        )
+        if not me or me.get("elo_after") is None:
+            continue
+        relevant.append({"played_at": game["played_at"], "elo": me["elo_after"]})
+
+    if not relevant:
+        return []
+
+    def _day_key(ts) -> str:
+        d = ts if hasattr(ts, "year") else datetime.fromisoformat(ts)
+        return f"{d.month}/{d.day}"
+
+    unique_days = {_day_key(p["played_at"]) for p in relevant}
+
+    if len(unique_days) < 4:
+        points = []
+        for p in relevant:
+            d = p["played_at"] if hasattr(p["played_at"], "year") else datetime.fromisoformat(p["played_at"])
+            points.append({"date": f"{d.month}/{d.day} {d.hour:02d}:{d.minute:02d}", "elo": p["elo"]})
+    else:
+        by_day: dict[str, int] = {}
+        for p in relevant:
+            by_day[_day_key(p["played_at"])] = p["elo"]
+        points = [{"date": date, "elo": elo} for date, elo in by_day.items()]
+
+    points.insert(0, {"date": "Start", "elo": 1200})
+    return points
+
+
 @app.get("/api/profile/{username}")
 async def get_profile(username: str):
     player = await db.get_player_by_username(username)
@@ -147,7 +187,8 @@ async def get_profile(username: str):
         if "played_at" in game_doc and hasattr(game_doc["played_at"], "isoformat"):
             game_doc["played_at"] = game_doc["played_at"].isoformat()
         games.append(game_doc)
-    return {"player": player_doc, "games": games}
+    elo_history = _build_elo_history(stats.get("games", []), username)
+    return {"player": player_doc, "games": games, "elo_history": elo_history}
 
 
 @app.get("/api/leaderboard")

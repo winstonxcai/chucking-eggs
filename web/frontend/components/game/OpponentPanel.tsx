@@ -12,7 +12,8 @@ interface OpponentPanelProps {
 
 export default function OpponentPanel({ player, thinking, revealedHand, isActive }: OpponentPanelProps) {
   const teamColor = player.is_teammate ? "border-l-team-green" : "border-l-team-red";
-  const borderColor = `${teamColor}${isActive ? " animate-border-pulse" : ""}`;
+  const pulseClass = player.is_teammate ? "animate-border-pulse-green" : "animate-border-pulse-red";
+  const borderColor = `${teamColor}${isActive ? ` ${pulseClass}` : ""}`;
   const roleLabel = player.is_out ? "Out" : player.is_teammate ? "Partner" : "Opp";
   const statusLabel = player.is_out
     ? "Out"

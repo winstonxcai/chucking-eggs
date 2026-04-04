@@ -27,13 +27,16 @@
   --font-sans: "Inter", system-ui, sans-serif;
 }
 
-@keyframes border-pulse {
-  0%, 100% { border-left-color: inherit; }
-  50% { border-left-color: transparent; }
+@keyframes border-pulse-green {
+  0%, 100% { border-left-color: var(--team-green); }
+  50%       { border-left-color: transparent; }
 }
-.animate-border-pulse {
-  animation: border-pulse 1.5s ease-in-out infinite;
+@keyframes border-pulse-red {
+  0%, 100% { border-left-color: var(--team-red); }
+  50%       { border-left-color: transparent; }
 }
+.animate-border-pulse-green { animation: border-pulse-green 1.5s ease-in-out infinite; }
+.animate-border-pulse-red   { animation: border-pulse-red   1.5s ease-in-out infinite; }
 
 body {
   background: var(--background);

@@ -50,8 +50,8 @@ test("pass action shows pill badge with hand icon", async ({ page }) => {
   const passBadge = page.locator('[data-testid^="trick-seat"]:has-text("Pass")');
   await expect(passBadge.first()).toBeVisible({ timeout: 60_000 });
 
-  // Pill badge must contain an SVG (the Hand icon from lucide-react)
-  await expect(passBadge.first().locator("svg")).toBeVisible();
+  // Pill badge must contain the Hand SVG icon from lucide-react
+  await expect(passBadge.first().locator("svg.lucide-hand")).toBeVisible();
 });
 
 test("GameOver modal appears after game completes — requires HUMAN_TURN_TIMEOUT_S=5", async ({ page }) => {

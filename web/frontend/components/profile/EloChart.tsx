@@ -35,6 +35,7 @@ export default function EloChart({ data }: EloChartProps) {
           tickLine={false}
           axisLine={false}
           interval="preserveStartEnd"
+          tickFormatter={(v) => v === "Start" ? "" : v}
         />
         <YAxis
           domain={["auto", "auto"]}

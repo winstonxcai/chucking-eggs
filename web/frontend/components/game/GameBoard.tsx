@@ -373,7 +373,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["2"] ?? null} size={compactHand ? "xs" : "sm"} />
-                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400${gameState.trick_lead_seat === 2 ? "" : " invisible"}`} />
+                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-amber-500${gameState.trick_lead_seat === 2 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -386,7 +386,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["1"] ?? null} size={compactHand ? "xs" : "sm"} />
-                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400${gameState.trick_lead_seat === 1 ? "" : " invisible"}`} />
+                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-amber-500${gameState.trick_lead_seat === 1 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -399,7 +399,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["3"] ?? null} size={compactHand ? "xs" : "sm"} />
-                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400${gameState.trick_lead_seat === 3 ? "" : " invisible"}`} />
+                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-amber-500${gameState.trick_lead_seat === 3 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -412,7 +412,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} size={compactHand ? "xs" : "sm"} />}
-                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400${gameState.trick_lead_seat === 0 ? "" : " invisible"}`} />
+                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-amber-500${gameState.trick_lead_seat === 0 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>

@@ -23,8 +23,15 @@ const ORDINAL_COLORS = [
 export default function GameOverModal({ data, humanSeat, onPlayAgain, isMultiplayer, onSaveState, onDismiss }: GameOverModalProps) {
   const humanReward = data.rewards[humanSeat] ?? 0;
   const won = humanReward > 0;
-  const isSweep = Math.abs(humanReward) >= 3;
   const myElo = data.elo_changes?.[String(humanSeat)];
+
+  // Team finish positions (e.g. "1-3" means teammates finished 1st and 3rd)
+  const teamPositions = data.finish_order
+    .map((seat, i) => ({ seat, pos: i + 1 }))
+    .filter((p) => p.seat % 2 === humanSeat % 2)
+    .map((p) => p.pos)
+    .sort((a, b) => a - b);
+  const teamLabel = teamPositions.join("-");
 
   return (
     <div
@@ -48,11 +55,9 @@ export default function GameOverModal({ data, humanSeat, onPlayAgain, isMultipla
           <div className={`text-3xl font-bold tracking-tight ${won ? "text-accent" : "text-foreground"}`}>
             {won ? "Victory" : "Defeat"}
           </div>
-          {isSweep && (
-            <div className="text-sm text-text-secondary mt-1">
-              {won ? "Double win" : "Swept"}
-            </div>
-          )}
+          <div className="text-sm text-text-secondary mt-1">
+            {teamLabel}
+          </div>
         </div>
 
         <div className="w-full h-px bg-border" />

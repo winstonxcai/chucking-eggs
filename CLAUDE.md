@@ -9,21 +9,23 @@ src/guandan/          — Python package (pip-installable via hatch)
   cards.py, combos.py, game.py  — Core game engine
   agents/             — Agent hierarchy (random, greedy, heuristic, strategic, MC, RL)
   training/           — RL training (encoding, q_network, replay, train)
-scripts/              — eval/, train/, util/, modal/ subfolders + run_e2e.sh entry point
-tests/                — Pytest tests
+ml/scripts/           — eval/, train/, util/, modal/ subfolders + run_e2e.sh entry point
+ml/tests/             — ML + game engine pytest tests
+web/                  — Next.js frontend + FastAPI backend
+web/backend/tests/    — Backend API pytest tests
 paper/                — Writeups and archived dev logs
 runs/                 — Experiment outputs (gitignored)
 ```
 
 # Common Commands
 
-- Run tests: `uv run pytest tests/ -v`
-- Smoke train: `./scripts/run_e2e.sh --train-only`
+- Run tests: `uv run pytest`
+- Smoke train: `./ml/scripts/run_e2e.sh --train-only`
 - Full train: `PYTHONPATH=src python -m guandan.training.train --episodes 30000`
 - Quick validation: `PYTHONPATH=src python -m guandan.training.train --quick`
-- Evaluate: `PYTHONPATH=src python scripts/eval/checkpoint.py --checkpoint <path> --opponent heuristic --games 500`
-- Ladder eval: `PYTHONPATH=src python scripts/eval/ladder.py --checkpoint <path>`
-- Modal GPU train: `./scripts/run_e2e.sh --modal`
+- Evaluate: `PYTHONPATH=src python ml/scripts/eval/checkpoint.py --checkpoint <path> --opponent heuristic --games 500`
+- Ladder eval: `PYTHONPATH=src python ml/scripts/eval/ladder.py --checkpoint <path>`
+- Modal GPU train: `./ml/scripts/run_e2e.sh --modal`
 
 # Training Constraints
 
@@ -40,4 +42,4 @@ runs/                 — Experiment outputs (gitignored)
 - Encoding dimensions: state=417, action=160, history_move=83.
 - Curriculum stages: random (65% win gate) -> greedy (60% win gate) -> heuristic (terminal).
 - `uv run` is the standard runner; `PYTHONPATH=src` needed when invoking modules directly.
-- E2E script (`scripts/run_e2e.sh`) is the single entry point with skip flags.
+- E2E script (`ml/scripts/run_e2e.sh`) is the single entry point with skip flags.

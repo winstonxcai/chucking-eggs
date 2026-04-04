@@ -42,7 +42,7 @@ export default function SettingsPage() {
   }, [player, email]);
 
   return (
-    <div className="max-w-lg mx-auto px-8 py-8 flex flex-col gap-6">
+    <div className="max-w-2xl mx-auto px-8 py-8 flex flex-col gap-6">
       <h1 className="text-2xl font-bold text-foreground">Settings</h1>
 
       {/* Account section */}

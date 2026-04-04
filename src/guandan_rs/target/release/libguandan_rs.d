@@ -1,0 +1,1 @@
+/Users/poohthewinnie/Documents/Programming/chucking-eggs/guandan_rs/target/release/libguandan_rs.dylib: /Users/poohthewinnie/Documents/Programming/chucking-eggs/guandan_rs/src/cards.rs /Users/poohthewinnie/Documents/Programming/chucking-eggs/guandan_rs/src/combos.rs /Users/poohthewinnie/Documents/Programming/chucking-eggs/guandan_rs/src/lib.rs

@@ -62,7 +62,7 @@ export default function AttributionsPage() {
         <div className="flex flex-col gap-2">
           <h3 className="text-sm font-semibold text-foreground">Our Bots</h3>
           <div className="border border-border rounded-xl overflow-hidden">
-            <div className="grid grid-cols-[auto_60px_1fr] gap-3 px-4 py-2.5 bg-background border-b border-border">
+            <div className="grid grid-cols-[112px_56px_1fr] gap-3 px-4 py-2.5 bg-background border-b border-border">
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Bot</span>
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider text-right">Elo</span>
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Type</span>
@@ -70,7 +70,7 @@ export default function AttributionsPage() {
             {OUR_BOTS.map((bot, i) => (
               <div
                 key={bot.name}
-                className={`grid grid-cols-[auto_60px_1fr] gap-3 px-4 py-3 items-center ${
+                className={`grid grid-cols-[112px_56px_1fr] gap-3 px-4 py-3 items-center ${
                   i < OUR_BOTS.length - 1 ? "border-b border-border" : ""
                 }`}
               >
@@ -92,7 +92,7 @@ export default function AttributionsPage() {
             </p>
           </div>
           <div className="border border-border rounded-xl overflow-hidden">
-            <div className="grid grid-cols-[auto_60px_1fr] gap-3 px-4 py-2.5 bg-background border-b border-border">
+            <div className="grid grid-cols-[112px_56px_1fr] gap-3 px-4 py-2.5 bg-background border-b border-border">
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Bot</span>
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider text-right">Elo</span>
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">University · Award</span>
@@ -100,16 +100,13 @@ export default function AttributionsPage() {
             {COMPETITION_BOTS.map((bot, i) => (
               <div
                 key={bot.name}
-                className={`grid grid-cols-[auto_60px_1fr] gap-3 px-4 py-3 items-center ${
+                className={`grid grid-cols-[112px_56px_1fr] gap-3 px-4 py-3 items-center ${
                   i < COMPETITION_BOTS.length - 1 ? "border-b border-border" : ""
                 }`}
               >
                 <span className="text-sm font-semibold text-foreground">{bot.name}</span>
                 <span className="text-sm font-mono text-text-secondary text-right">{bot.elo}</span>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-sm text-foreground">{bot.source}</span>
-                  <span className="text-xs text-text-secondary">{bot.award}</span>
-                </div>
+                <span className="text-sm text-text-secondary">{bot.source} · {bot.award}</span>
               </div>
             ))}
           </div>

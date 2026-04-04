@@ -29,15 +29,24 @@ export default function AttributionsPage() {
           Partners sit across from each other and work together to be the first team
           to have both players finish all their cards.
         </p>
-        <Link
-          href="https://www.pagat.com/climbing/guan_dan.html"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:text-accent-hover transition-colors"
-        >
-          Full rules on Pagat.com
-          <span aria-hidden="true">→</span>
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/rules"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:text-accent-hover transition-colors"
+          >
+            Full rules
+            <span aria-hidden="true">→</span>
+          </Link>
+          <Link
+            href="https://www.pagat.com/climbing/guan_dan.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm text-text-secondary hover:text-foreground transition-colors"
+          >
+            Pagat.com reference
+            <span aria-hidden="true">↗</span>
+          </Link>
+        </div>
       </section>
 
       {/* Bot Opponents */}

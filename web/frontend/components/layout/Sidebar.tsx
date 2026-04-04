@@ -14,7 +14,7 @@ interface SidebarProps {
 const navItems = [
   { label: "Play", href: "/", icon: Gamepad2 },
   { label: "Leaderboard", href: "/leaderboard", icon: Trophy },
-  { label: "Rules", href: "https://www.pagat.com/climbing/guan_dan.html", icon: HelpCircle, external: true },
+  { label: "Rules", href: "/rules", icon: HelpCircle },
   { label: "Attributions", href: "/attributions", icon: BookOpen },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
@@ -79,12 +79,11 @@ export default function Sidebar({ player }: SidebarProps) {
 
       {/* Nav */}
       <nav className="flex flex-col gap-0.5 px-1 lg:px-2 flex-1">
-        {navItems.map(({ label, href, icon: Icon, external }) => {
+        {navItems.map(({ label, href, icon: Icon }) => {
           const resolvedHref = label === "Play" && isInGame ? "/game" : href;
           const resolvedLabel = label === "Play" && isInGame ? "Resume" : label;
           const isActive =
-            !external &&
-            (pathname === resolvedHref || (label === "Play" && pathname === "/game"));
+            pathname === resolvedHref || (label === "Play" && pathname === "/game");
           const className = `flex items-center justify-center gap-2.5 px-2 py-3 lg:py-2 rounded-lg text-sm font-medium transition-all duration-150 ease-out border-l-2 ${
             expanded ? "lg:justify-start lg:px-3" : ""
           } ${
@@ -92,14 +91,6 @@ export default function Sidebar({ player }: SidebarProps) {
               ? "border-accent text-accent bg-accent/5"
               : "border-transparent text-foreground hover:bg-accent/8 hover:text-accent"
           }`;
-          if (external) {
-            return (
-              <a key={label} href={href} target="_blank" rel="noopener noreferrer" className={className}>
-                <Icon size={15} strokeWidth={2} />
-                {expanded && <span className="hidden lg:inline">{resolvedLabel}</span>}
-              </a>
-            );
-          }
           return (
             <Link key={label} href={resolvedHref} className={className}>
               <Icon size={15} strokeWidth={isActive ? 2.5 : 2} />

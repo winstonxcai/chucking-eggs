@@ -278,9 +278,7 @@ export default function GameBoard({
         {/* Top-right buttons */}
         <div className="absolute top-2 right-2 lg:top-4 lg:right-4 z-20 flex items-center gap-2">
           <a
-            href="https://www.pagat.com/climbing/guan_dan.html"
-            target="_blank"
-            rel="noopener noreferrer"
+            href="/rules"
             className="text-text-secondary hover:text-foreground transition-colors"
             title="Game rules"
           >
@@ -375,7 +373,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["2"] ?? null} size={compactHand ? "xs" : "sm"} />
-                      {gameState.trick_lead_seat === 2 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400${gameState.trick_lead_seat === 2 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -388,7 +386,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["1"] ?? null} size={compactHand ? "xs" : "sm"} />
-                      {gameState.trick_lead_seat === 1 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400${gameState.trick_lead_seat === 1 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -401,7 +399,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["3"] ?? null} size={compactHand ? "xs" : "sm"} />
-                      {gameState.trick_lead_seat === 3 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400${gameState.trick_lead_seat === 3 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -414,7 +412,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} size={compactHand ? "xs" : "sm"} />}
-                      {gameState.trick_lead_seat === 0 && <Crown className="absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400" />}
+                      <Crown className={`absolute -top-2 -right-2 w-3.5 h-3.5 text-yellow-400${gameState.trick_lead_seat === 0 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>

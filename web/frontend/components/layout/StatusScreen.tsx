@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import Link from "next/link";
 
 type Variant = "error" | "warning" | "info" | "loading";
@@ -10,7 +11,7 @@ interface StatusScreenProps {
   secondaryAction?: { label: string; href: string } | { label: string; onClick: () => void };
 }
 
-const ICON: Record<Variant, JSX.Element> = {
+const ICON: Record<Variant, ReactElement> = {
   error: (
     <div className="w-12 h-12 rounded-full bg-team-red/10 flex items-center justify-center">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--team-red)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

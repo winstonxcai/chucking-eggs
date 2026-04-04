@@ -99,13 +99,20 @@ export interface RematchMsg {
   room_code: string | null;
 }
 
+export interface ForfeitMsg {
+  type: "game_forfeited";
+  forfeiter_name: string;
+  forfeiter_seat: number;
+}
+
 export type ServerMessage =
   | (GameState & { type: "game_state" })
   | MovePlayedMsg
   | GameOverMsg
   | AIThinkingMsg
   | ErrorMsg
-  | RematchMsg;
+  | RematchMsg
+  | ForfeitMsg;
 
 // Phase 2: room / lobby types
 

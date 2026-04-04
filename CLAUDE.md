@@ -34,6 +34,7 @@ runs/                 — Experiment outputs (gitignored)
 
 # Conventions
 
+- **Virtual env**: Use the root `.venv/` for all Python commands (e.g. `.venv/bin/python`, or `uv pip install` which targets it automatically).
 - Python 3.10+, dependencies: numpy, torch. Dev: pytest. Optional: modal.
 - Snake_case everywhere, `_bot` suffix for agent classes.
 - All agents implement `Agent.act(env, player) -> Combo`.

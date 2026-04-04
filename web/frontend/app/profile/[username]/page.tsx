@@ -7,6 +7,41 @@ import GameFeed from "@/components/profile/GameFeed";
 import StatsGrid from "@/components/profile/StatsGrid";
 import StatusScreen from "@/components/layout/StatusScreen";
 
+function ProfileSkeleton() {
+  return (
+    <div className="max-w-2xl mx-auto px-8 py-8 flex flex-col gap-6 animate-pulse">
+      <div className="bg-surface border border-border rounded-xl px-6 py-5 flex items-center justify-between">
+        <div className="flex flex-col gap-2">
+          <div className="h-7 w-32 bg-border rounded-lg" />
+          <div className="h-4 w-48 bg-border/60 rounded" />
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <div className="h-7 w-12 bg-border rounded-lg" />
+          <div className="h-3 w-6 bg-border/60 rounded" />
+        </div>
+      </div>
+      <div className="bg-surface border border-border rounded-xl px-6 py-5">
+        <div className="h-4 w-24 bg-border rounded mb-4" />
+        <div className="h-36 bg-border/40 rounded-lg" />
+      </div>
+      <div className="bg-surface border border-border rounded-xl px-6 py-5">
+        <div className="h-4 w-44 bg-border rounded mb-4" />
+        <div className="grid grid-cols-3 gap-3">
+          <div className="h-16 bg-border/40 rounded-lg" />
+          <div className="h-16 bg-border/40 rounded-lg" />
+          <div className="h-16 bg-border/40 rounded-lg" />
+        </div>
+      </div>
+      <div className="bg-surface border border-border rounded-xl px-6 py-5">
+        <div className="h-4 w-28 bg-border rounded mb-4" />
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="h-10 bg-border/40 rounded-lg mb-2 last:mb-0" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface PlayerDoc {
@@ -69,9 +104,7 @@ function ProfileContent() {
   }
 
   if (!data) {
-    return (
-      <StatusScreen variant="loading" title="Loading profile..." />
-    );
+    return <ProfileSkeleton />;
   }
 
   const { player, games } = data;
@@ -123,7 +156,7 @@ function ProfileContent() {
 
 export default function ProfilePage() {
   return (
-    <Suspense fallback={<div className="p-8" />}>
+    <Suspense fallback={<ProfileSkeleton />}>
       <ProfileContent />
     </Suspense>
   );

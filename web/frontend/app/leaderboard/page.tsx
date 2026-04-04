@@ -25,6 +25,30 @@ interface LeaderboardData {
   bots: BotEntry[];
 }
 
+const NAME_WIDTHS = ["w-1/2", "w-2/3", "w-3/5", "w-2/5", "w-3/4", "w-1/2", "w-3/5", "w-2/3"];
+
+function LeaderboardSkeleton() {
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-6 lg:px-8 lg:py-8 animate-pulse">
+      <div className="h-8 w-36 bg-border rounded-lg mb-6" />
+      <div className="bg-surface border border-border rounded-xl overflow-hidden">
+        <div className="grid grid-cols-[2rem_1fr_4rem] px-4 py-3 border-b border-border gap-2">
+          <div className="h-3 w-3 bg-border/50 rounded" />
+          <div className="h-3 w-12 bg-border/50 rounded" />
+          <div className="h-3 w-6 bg-border/50 rounded" />
+        </div>
+        {NAME_WIDTHS.map((w, i) => (
+          <div key={i} className="grid grid-cols-[2rem_1fr_4rem] px-4 py-3 border-b border-border last:border-0 gap-2 items-center">
+            <div className="h-4 w-4 bg-border/40 rounded" />
+            <div className={`h-4 ${w} bg-border/40 rounded`} />
+            <div className="h-4 w-8 bg-border/40 rounded" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function LeaderboardPage() {
   const { player } = usePlayer();
   const [data, setData] = useState<LeaderboardData | null>(null);
@@ -37,11 +61,7 @@ export default function LeaderboardPage() {
   }, []);
 
   if (!data) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <LeaderboardSkeleton />;
   }
 
   return (

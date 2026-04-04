@@ -55,7 +55,7 @@ function JoinContent() {
   // Clean "Joining room..." screen — no form flash
   if (loading) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-3">
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center gap-3">
         <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         <span className="text-sm text-text-secondary">Joining room…</span>
       </div>

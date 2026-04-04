@@ -56,7 +56,7 @@ function ActionButton({ action, primary }: { action: NonNullable<StatusScreenPro
 
 export default function StatusScreen({ variant, title, message, action, secondaryAction }: StatusScreenProps) {
   return (
-    <div className="h-full flex items-center justify-center bg-background">
+    <div className="min-h-[100dvh] flex items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-4 text-center max-w-sm px-6">
         {ICON[variant]}
         <div className="flex flex-col gap-1">

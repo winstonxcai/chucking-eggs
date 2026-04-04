@@ -32,7 +32,7 @@ htmlcov/
 .idea/
 
 # Rust
-guandan_rs/target/
+src/guandan_rs/target/
 
 # Playwright MCP
 .playwright-mcp/

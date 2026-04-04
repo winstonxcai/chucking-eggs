@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import type { Player } from "@/hooks/usePlayer";
 import { useActiveGame } from "@/hooks/useActiveGame";
+import { STORAGE_KEYS } from "@/lib/storage-keys";
 import { Gamepad2, Trophy, BookOpen, Settings, HelpCircle, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface SidebarProps {
@@ -23,10 +24,26 @@ export default function Sidebar({ player }: SidebarProps) {
   const pathname = usePathname();
   const { isInGame } = useActiveGame();
   const [collapsed, setCollapsed] = useState(false);
+  const [currentElo, setCurrentElo] = useState<number | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("sidebar-collapsed");
     if (stored !== null) setCollapsed(stored === "true");
+    // Seed ELO from localStorage in case prop arrives late
+    const storedElo = localStorage.getItem(STORAGE_KEYS.ELO);
+    if (storedElo) setCurrentElo(parseInt(storedElo, 10));
+  }, []);
+
+  // Keep in sync with prop (covers login/logout transitions)
+  useEffect(() => {
+    if (player?.elo != null) setCurrentElo(player.elo);
+  }, [player?.elo]);
+
+  // Update immediately when a game ends, without waiting for prop re-render
+  useEffect(() => {
+    const handler = (e: Event) => setCurrentElo((e as CustomEvent<number>).detail);
+    window.addEventListener("ce-elo-update", handler);
+    return () => window.removeEventListener("ce-elo-update", handler);
   }, []);
 
   function toggleCollapsed() {
@@ -118,7 +135,7 @@ export default function Sidebar({ player }: SidebarProps) {
             {expanded && (
               <div className="hidden lg:flex flex-col min-w-0">
                 <span className="text-xs font-semibold text-foreground truncate">{player.username}</span>
-                <span className="text-[11px] text-text-secondary">{player.elo} ELO</span>
+                <span className="text-[11px] text-text-secondary">{currentElo ?? player.elo} ELO</span>
               </div>
             )}
           </Link>

@@ -12,10 +12,19 @@ interface GameOverModalProps {
   onDismiss: () => void;
 }
 
+const ORDINALS = ["1st", "2nd", "3rd", "4th"];
+const ORDINAL_COLORS = [
+  "text-amber-500",
+  "text-zinc-400",
+  "text-amber-700/70",
+  "text-text-secondary",
+];
+
 export default function GameOverModal({ data, humanSeat, onPlayAgain, isMultiplayer, onSaveState, onDismiss }: GameOverModalProps) {
   const humanReward = data.rewards[humanSeat] ?? 0;
   const won = humanReward > 0;
-  const eloChange = data.elo_changes?.[String(humanSeat)];
+  const isSweep = Math.abs(humanReward) >= 3;
+  const myElo = data.elo_changes?.[String(humanSeat)];
 
   return (
     <div
@@ -23,7 +32,7 @@ export default function GameOverModal({ data, humanSeat, onPlayAgain, isMultipla
       onClick={onDismiss}
     >
       <div
-        className="relative bg-surface rounded-2xl shadow-xl p-5 lg:p-8 max-w-sm w-full flex flex-col items-center gap-4 max-h-[90dvh] overflow-y-auto"
+        className="relative bg-surface rounded-2xl shadow-xl p-6 lg:p-8 max-w-sm w-full mx-4 flex flex-col gap-5 max-h-[90dvh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -33,50 +42,79 @@ export default function GameOverModal({ data, humanSeat, onPlayAgain, isMultipla
         >
           <X size={16} />
         </button>
-        <span className="text-2xl font-bold text-foreground">
-          {won ? "🎉 Victory!" : "💀 Defeat"}
-        </span>
-        {eloChange ? (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-text-secondary">
-              {eloChange.before} → {eloChange.after}
-            </span>
-            <span className={`text-sm font-semibold ${eloChange.delta >= 0 ? "text-team-green" : "text-team-red"}`}>
-              {eloChange.delta >= 0 ? "+" : ""}{eloChange.delta}
-            </span>
-          </div>
-        ) : (
-          <span className="text-sm text-text-secondary">
-            {humanReward > 0 ? "+" : ""}{humanReward} pts
-          </span>
-        )}
 
-        <div className="w-full flex flex-col gap-1.5 py-2">
-          {data.players.map((p, i) => (
-            <div key={p.seat} className="flex items-center gap-3">
-              <span className="text-sm font-semibold text-text-secondary w-8">
-                {i + 1}
-                {i === 0 ? "st" : i === 1 ? "nd" : i === 2 ? "rd" : "th"}
-              </span>
-              <span
-                className={`text-sm font-semibold ${
-                  p.seat % 2 === humanSeat % 2 ? "text-accent" : "text-foreground"
-                }`}
-              >
-                {p.name}
-              </span>
+        {/* Result header */}
+        <div className="text-center pt-1">
+          <div className={`text-3xl font-bold tracking-tight ${won ? "text-accent" : "text-foreground"}`}>
+            {won ? "Victory" : "Defeat"}
+          </div>
+          {isSweep && (
+            <div className="text-sm text-text-secondary mt-1">
+              {won ? "Double win" : "Swept"}
             </div>
-          ))}
+          )}
         </div>
 
+        <div className="w-full h-px bg-border" />
+
+        {/* Leaderboard — elo shown inline per player for duo/quad */}
+        <div className="w-full flex flex-col divide-y divide-border">
+          {data.players.map((p, i) => {
+            const elo = data.elo_changes?.[String(p.seat)];
+            const isMe = p.seat === humanSeat;
+            const isTeammate = p.seat % 2 === humanSeat % 2 && !isMe;
+            return (
+              <div key={p.seat} className="flex items-center gap-3 py-2.5">
+                <span className={`text-xs font-semibold w-7 shrink-0 tabular-nums ${ORDINAL_COLORS[i]}`}>
+                  {ORDINALS[i]}
+                </span>
+                <span className={`flex-1 text-sm font-semibold truncate ${
+                  isMe ? "text-accent" : isTeammate ? "text-team-green" : "text-foreground"
+                }`}>
+                  {p.name}
+                  {isMe && (
+                    <span className="text-xs font-normal text-text-secondary ml-1.5">(you)</span>
+                  )}
+                  {isTeammate && (
+                    <span className="text-xs font-normal text-text-secondary ml-1.5">(partner)</span>
+                  )}
+                </span>
+                {elo ? (
+                  <span className={`text-xs font-semibold tabular-nums shrink-0 ${
+                    elo.delta >= 0 ? "text-team-green" : "text-team-red"
+                  }`}>
+                    {elo.delta >= 0 ? "+" : ""}{elo.delta}
+                  </span>
+                ) : (
+                  <span className="w-8 shrink-0" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Viewer's full elo summary (before → after) */}
+        {myElo && (
+          <>
+            <div className="w-full h-px bg-border" />
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-text-secondary">Rating</span>
+              <span className="text-text-secondary tabular-nums">
+                {myElo.before} → {myElo.after}
+              </span>
+            </div>
+          </>
+        )}
+
+        {/* Actions */}
         <button
-          className="px-8 py-2.5 bg-gradient-to-b from-accent to-accent-hover text-white rounded-lg font-semibold text-sm shadow-sm hover:opacity-90 transition-opacity duration-150 cursor-pointer"
+          className="w-full py-2.5 bg-gradient-to-b from-accent to-accent-hover text-white rounded-lg font-semibold text-sm shadow-sm hover:opacity-90 transition-opacity duration-150 cursor-pointer"
           onClick={onPlayAgain}
         >
           {isMultiplayer ? "Rematch" : "Play Again"}
         </button>
         <button
-          className="text-xs text-border hover:text-text-secondary transition-colors duration-150"
+          className="text-xs text-border hover:text-text-secondary transition-colors duration-150 -mt-2"
           onClick={onSaveState}
         >
           Save state JSON

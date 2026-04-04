@@ -63,6 +63,8 @@ function ProfileContent() {
 
   const [data, setData] = useState<ProfileData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const viewerUsername =
+    typeof window !== "undefined" ? localStorage.getItem("ce_username") : null;
 
   useEffect(() => {
     if (!username) return;
@@ -131,7 +133,7 @@ function ProfileContent() {
       {/* Recent Games */}
       <div className="bg-surface border border-border rounded-xl px-6 py-5">
         <h2 className="text-sm font-semibold text-foreground mb-2">Recent Games</h2>
-        <GameFeed games={games as Parameters<typeof GameFeed>[0]["games"]} username={username} />
+        <GameFeed games={games as Parameters<typeof GameFeed>[0]["games"]} username={username} viewerUsername={viewerUsername} />
       </div>
     </div>
   );

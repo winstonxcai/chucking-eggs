@@ -22,6 +22,7 @@ interface GameDoc {
 interface GameFeedProps {
   games: GameDoc[];
   username: string;
+  viewerUsername?: string | null;
 }
 
 function formatDate(iso: string) {
@@ -29,7 +30,7 @@ function formatDate(iso: string) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export default function GameFeed({ games, username }: GameFeedProps) {
+export default function GameFeed({ games, username, viewerUsername }: GameFeedProps) {
   if (games.length === 0) {
     return <p className="text-sm text-text-secondary">No games yet.</p>;
   }
@@ -56,7 +57,7 @@ export default function GameFeed({ games, username }: GameFeedProps) {
             ? mySeat.elo_after - mySeat.elo_before
             : null;
 
-        const myName = "you";
+        const myName = viewerUsername === username ? "you" : username;
         const partnerName = partnerSeat?.display_name ?? "bot";
         const opp1Name = opps[0]?.display_name ?? "?";
         const opp2Name = opps[1]?.display_name ?? "?";

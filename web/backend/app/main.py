@@ -187,6 +187,8 @@ async def get_profile(username: str):
     stats = await db.get_player_stats(player["_id"])
     # Serialize MongoDB ObjectId/_id fields
     player_doc = {k: str(v) if k == "_id" else v for k, v in player.items()}
+    if "created_at" in player_doc and hasattr(player_doc["created_at"], "isoformat"):
+        player_doc["created_at"] = player_doc["created_at"].isoformat()
     games = []
     for g in stats.get("games", []):
         game_doc = {k: str(v) if k == "_id" else v for k, v in g.items()}

@@ -70,14 +70,17 @@ def guanzero_remote(
     net = GuanZeroNetwork().to(device)
     level_rank = Rank.TWO
     save_dir = Path(CHECKPOINT_DIR)
-
-    # No distillation phase — start self-play from random weights.
-    # Cross-entropy distillation trains Q-values to be large logits, which
-    # is incompatible with the MSE/MC-return scale used in self-play.
-    print("[GuanZero] Starting self-play from random weights (no distillation).")
-
-    # ── Self-play ─────────────────────────────────────────────────────────
     buffer = ReplayBuffer(capacity=200_000)
+
+    # ── Buffer prefill from Jidan (MSE-compatible) ───────────────────────
+    from guandan.agents.jidan_bot import JidanBot
+    from guandan.training.guanzero_distill import prefill_buffer_from_jidan
+
+    if not benchmark:
+        print(f"[GuanZero] Pre-filling buffer with {distill_games} Jidan games...")
+        total = prefill_buffer_from_jidan(JidanBot(), buffer, distill_games, level_rank)
+        print(f"[GuanZero] Buffer prefilled: {total} transitions, buf_size={len(buffer)}")
+        vol.commit()
 
     if benchmark:
         # Time 100 episodes and extrapolate

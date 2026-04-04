@@ -213,14 +213,18 @@ def train_selfplay(
 ) -> None:
     """Full self-play DMC training loop.
 
-    Evaluates vs Jidan and vs prod RL checkpoint (if provided),
-    logs avg_wr = (wr_jidan + wr_prod) / 2 as the convergence metric.
+    Eval strategy:
+    - vs Heuristic: used as the patience signal (reachable early in training)
+    - vs Jidan: tracked for convergence but NOT used for early stopping
+    - vs prod RL (optional): tracked alongside Jidan
 
-    Early stops when avg_wr fails to improve by ≥ min_delta for `patience`
-    consecutive evals (default: 3 evals = 30K episodes of no progress).
+    Early stops when wr_vs_heuristic fails to improve by ≥ min_delta for
+    `patience` consecutive evals (default: 3 evals = 30K episodes).
     """
+    from ..agents.heuristic_bot import HeuristicBot
     from ..agents.jidan_bot import JidanBot
 
+    heuristic = HeuristicBot(level_rank)
     jidan = JidanBot()
     prod_agent = _load_prod_agent(prod_ckpt_path, device) if prod_ckpt_path else None
 
@@ -230,7 +234,7 @@ def train_selfplay(
     )
 
     env = GuanDanEnv(level_rank=level_rank)
-    best_avg_wr = 0.0
+    best_patience_wr = 0.0
     no_improve_count = 0
 
     if save_dir:
@@ -257,37 +261,42 @@ def train_selfplay(
 
         # Evaluate
         if (ep + 1) % eval_interval == 0:
+            wr_heuristic = evaluate_vs(net, heuristic, eval_games, level_rank, device)
             wr_jidan = evaluate_vs(net, jidan, eval_games, level_rank, device)
-            avg_wr = wr_jidan
+            tracking_wr = (wr_jidan + wr_heuristic) / 2.0
 
             if prod_agent is not None:
                 wr_prod = evaluate_vs(net, prod_agent, eval_games, level_rank, device)
-                avg_wr = (wr_jidan + wr_prod) / 2.0
+                tracking_wr = (wr_jidan + wr_heuristic + wr_prod) / 3.0
                 if verbose:
                     print(
                         f"Episode {ep + 1:6d}: "
-                        f"vs_jidan={wr_jidan:.3f}  vs_prod={wr_prod:.3f}  "
-                        f"avg_wr={avg_wr:.3f}  buf={len(buffer)}"
+                        f"vs_heur={wr_heuristic:.3f}  vs_jidan={wr_jidan:.3f}  "
+                        f"vs_prod={wr_prod:.3f}  tracking={tracking_wr:.3f}  buf={len(buffer)}"
                     )
             else:
                 if verbose:
                     print(
                         f"Episode {ep + 1:6d}: "
-                        f"vs_jidan={wr_jidan:.3f}  avg_wr={avg_wr:.3f}  buf={len(buffer)}"
+                        f"vs_heur={wr_heuristic:.3f}  vs_jidan={wr_jidan:.3f}  "
+                        f"tracking={tracking_wr:.3f}  buf={len(buffer)}"
                     )
 
-            if avg_wr >= best_avg_wr + min_delta:
-                best_avg_wr = avg_wr
+            # Patience is based on heuristic WR only
+            if wr_heuristic >= best_patience_wr + min_delta:
+                best_patience_wr = wr_heuristic
                 no_improve_count = 0
                 if save_dir:
                     _save(net, save_dir / "guanzero_best.pt", level_rank)
             else:
                 no_improve_count += 1
                 if verbose:
-                    print(f"  [Patience] no improvement {no_improve_count}/{patience}")
+                    print(f"  [Patience] heuristic WR no improvement {no_improve_count}/{patience} "
+                          f"(best={best_patience_wr:.3f})")
                 if no_improve_count >= patience:
                     if verbose:
-                        print(f"[Selfplay] Early stop at episode {ep + 1}. Best avg_wr={best_avg_wr:.3f}")
+                        print(f"[Selfplay] Early stop at episode {ep + 1}. "
+                              f"Best heuristic WR={best_patience_wr:.3f}")
                     break
 
         if save_dir and (ep + 1) % (eval_interval * 5) == 0:
@@ -296,7 +305,7 @@ def train_selfplay(
     if save_dir:
         _save(net, save_dir / "guanzero_final.pt", level_rank)
         if verbose:
-            print(f"[Selfplay] Training complete. Best avg_wr={best_avg_wr:.3f}")
+            print(f"[Selfplay] Training complete. Best heuristic WR={best_patience_wr:.3f}")
 
 
 def _save(net, path: Path, level_rank: int) -> None:

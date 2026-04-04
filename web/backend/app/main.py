@@ -297,7 +297,7 @@ async def room_status(game_id: str):
         seats.append(RoomSeatInfo(
             seat=i,
             is_human=is_human,
-            connected=i in room.connections,
+            connected=i in room.connections or i in room.assigned_seats,
             name=info["name"],
         ))
     return RoomStatusResponse(

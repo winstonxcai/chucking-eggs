@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { ComboDTO } from "@/lib/types";
 
 interface ComboBrowserProps {
@@ -39,6 +39,17 @@ const TYPE_ORDER = [
 ];
 
 export default function ComboBrowser({ legalMoves, onSelectCombo }: ComboBrowserProps) {
+  const [openTypes, setOpenTypes] = useState<Set<string>>(new Set());
+
+  const toggleType = (type: string) => {
+    setOpenTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
+
   const grouped = useMemo(() => {
     const groups: Map<string, ComboDTO[]> = new Map();
     for (const combo of legalMoves) {
@@ -66,9 +77,12 @@ export default function ComboBrowser({ legalMoves, onSelectCombo }: ComboBrowser
         const label = TYPE_LABELS[type] ?? type;
         const isBomb = BOMB_TYPES.has(type);
         return (
-          <div key={type} className="flex flex-col gap-2">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-text-secondary">{"\u25b8"}</span>
+          <div key={type} className="flex flex-col gap-1.5">
+            <button
+              className="flex items-center gap-1.5 w-full text-left"
+              onClick={() => toggleType(type)}
+            >
+              <span className="text-xs text-text-secondary">{openTypes.has(type) ? "\u25be" : "\u25b8"}</span>
               <span
                 className={`text-[13px] font-semibold ${
                   isBomb ? "text-accent" : "text-foreground"
@@ -77,22 +91,24 @@ export default function ComboBrowser({ legalMoves, onSelectCombo }: ComboBrowser
                 {label}
               </span>
               <span className="text-xs text-text-secondary">({combos.length})</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5 pl-4">
-              {combos.map((combo, i) => (
-                <button
-                  key={i}
-                  className={`px-2.5 py-1 text-[13px] font-semibold rounded-md cursor-pointer transition-colors ${
-                    isBomb
-                      ? "bg-[#FFF8F5] border border-accent text-accent hover:bg-accent hover:text-white"
-                      : "bg-background border border-border text-foreground hover:border-accent hover:text-accent"
-                  }`}
-                  onClick={() => onSelectCombo(combo)}
-                >
-                  {combo.display}
-                </button>
-              ))}
-            </div>
+            </button>
+            {openTypes.has(type) && (
+              <div className="flex flex-wrap gap-1.5 pl-4">
+                {combos.map((combo, i) => (
+                  <button
+                    key={i}
+                    className={`px-2.5 py-1 text-[13px] font-semibold rounded-md cursor-pointer transition-colors ${
+                      isBomb
+                        ? "bg-[#FFF8F5] border border-accent text-accent hover:bg-accent hover:text-white"
+                        : "bg-background border border-border text-foreground hover:border-accent hover:text-accent"
+                    }`}
+                    onClick={() => onSelectCombo(combo)}
+                  >
+                    {combo.display}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

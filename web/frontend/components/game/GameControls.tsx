@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { LayoutList } from "lucide-react";
 import type { ComboDTO } from "@/lib/types";
 
@@ -40,22 +41,33 @@ export default function GameControls({
   onUngroup,
   onCombos,
 }: GameControlsProps) {
-  const [remainingMs, setRemainingMs] = useState<number | null>(null);
+  const [urgent, setUrgent] = useState(false);
 
   useEffect(() => {
     if (!isMyTurn || !turnDeadlineMs) {
-      setRemainingMs(null);
+      setUrgent(false);
       return;
     }
-    const tick = () => setRemainingMs(Math.max(0, turnDeadlineMs - Date.now()));
-    tick();
-    const id = setInterval(tick, 200);
-    return () => clearInterval(id);
+    const remaining = Math.max(0, turnDeadlineMs - Date.now());
+    if (remaining <= 15000) {
+      setUrgent(true);
+      return;
+    }
+    setUrgent(false);
+    const t = setTimeout(() => setUrgent(true), remaining - 15000);
+    return () => clearTimeout(t);
   }, [isMyTurn, turnDeadlineMs]);
 
-  const showRope = isMyTurn && remainingMs !== null;
-  const progress = remainingMs !== null ? remainingMs / (TIMEOUT_S * 1000) : 1;
-  const urgent = remainingMs !== null && remainingMs < 15000;
+  const showRope = isMyTurn && !!turnDeadlineMs;
+  // Memoized by turnDeadlineMs so framer-motion gets a stable duration and doesn't re-interpolate on every render
+  const { initialProgress, remainingForDuration } = useMemo(() => {
+    if (!turnDeadlineMs) return { initialProgress: 1, remainingForDuration: 0 };
+    const now = Date.now();
+    return {
+      initialProgress: Math.min(1, Math.max(0, (turnDeadlineMs - now) / (TIMEOUT_S * 1000))),
+      remainingForDuration: Math.max(0, turnDeadlineMs - now),
+    };
+  }, [turnDeadlineMs]);
 
   if (compact) {
     return (
@@ -66,9 +78,12 @@ export default function GameControls({
             data-testid="rope-timer"
             className="w-1/4 h-0.5 rounded-full overflow-hidden bg-border"
           >
-            <div
-              className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
-              style={{ width: `${progress * 100}%` }}
+            <motion.div
+              key={turnDeadlineMs}
+              className={`h-full rounded-full ${urgent ? "bg-team-red" : "bg-accent"}`}
+              initial={{ width: `${initialProgress * 100}%` }}
+              animate={{ width: "0%" }}
+              transition={{ duration: remainingForDuration / 1000, ease: "linear" }}
             />
           </div>
         </div>
@@ -131,9 +146,12 @@ export default function GameControls({
         data-testid="rope-timer"
         className={`w-48 h-1 bg-border rounded-full overflow-hidden ${!showRope ? "invisible" : ""}`}
       >
-        <div
-          className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "bg-team-red" : "bg-accent"}`}
-          style={{ width: `${progress * 100}%` }}
+        <motion.div
+          key={turnDeadlineMs}
+          className={`h-full rounded-full ${urgent ? "bg-team-red" : "bg-accent"}`}
+          initial={{ width: `${initialProgress * 100}%` }}
+          animate={{ width: "0%" }}
+          transition={{ duration: remainingForDuration / 1000, ease: "linear" }}
         />
       </div>
 
@@ -147,21 +165,31 @@ export default function GameControls({
           disabled={!matchingCombo}
           onClick={onPlay}
         >
-          {matchingCombo ? `Play ${matchingCombo.type_name}` : "Select cards"}
+          {matchingCombo ? `Play ${matchingCombo.type_name}` : "Select"}
         </button>
         <button
-          className={`px-7 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${isLeading ? "invisible" : ""}`}
+          className={`px-4 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border transition-colors ${
+            hasSelection
+              ? "text-text-secondary hover:border-foreground hover:text-foreground cursor-pointer"
+              : "text-text-secondary opacity-50 cursor-not-allowed"
+          }`}
+          disabled={!hasSelection}
+          onClick={onUnselect}
+        >
+          Unselect
+        </button>
+        <button
+          className={`px-7 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border transition-colors ${
+            isLeading
+              ? "text-text-secondary opacity-50 cursor-not-allowed"
+              : "text-text-secondary hover:border-foreground hover:text-foreground cursor-pointer"
+          }`}
+          disabled={isLeading}
           onClick={onPass}
         >
           Pass
         </button>
       </div>
-      <button
-        className={`px-4 py-1.5 rounded-lg text-sm font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer${isMyTurn && hasSelection ? "" : " invisible"}`}
-        onClick={onUnselect}
-      >
-        Unselect
-      </button>
     </div>
   );
 }

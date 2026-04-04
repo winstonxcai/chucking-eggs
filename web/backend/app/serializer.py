@@ -98,13 +98,23 @@ def combo_sort_key(combo: Combo, level_rank: int) -> tuple:
             rank_key = 99
         else:
             rank_key = level_order_key(combo.key, level_rank)
-        return (1, bomb_tier, rank_key)
+        return (1, bomb_tier, rank_key, 0)
+    elif combo.type == ComboType.FULL_HOUSE:
+        triple_key = level_order_key(combo.key, level_rank)
+        # Pair rank: any non-wild card whose rank isn't the triple rank
+        non_triple_natural = [
+            c.rank for c in combo.cards
+            if not is_wild(c, level_rank) and c.rank != combo.key
+        ]
+        pair_rank = non_triple_natural[0] if non_triple_natural else level_rank
+        pair_key = level_order_key(pair_rank, level_rank)
+        return (0, int(combo.type), triple_key, pair_key)
     else:
         if combo.type in (ComboType.STRAIGHT, ComboType.TUBE, ComboType.PLATE):
             key_val = combo.key  # natural order
         else:
             key_val = level_order_key(combo.key, level_rank)
-        return (0, int(combo.type), key_val)
+        return (0, int(combo.type), key_val, 0)
 
 
 def sort_hand(cards: set[Card], level_rank: int) -> list[Card]:

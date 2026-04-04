@@ -34,6 +34,13 @@ export function usePlayer() {
       setPlayer({ playerId: id, username: name, elo: elo ? parseInt(elo, 10) : 1200 });
     }
     setLoaded(true);
+
+    const onEloUpdate = (e: Event) => {
+      const newElo = (e as CustomEvent<number>).detail;
+      setPlayer((p) => (p ? { ...p, elo: newElo } : p));
+    };
+    window.addEventListener("ce-elo-update", onEloUpdate);
+    return () => window.removeEventListener("ce-elo-update", onEloUpdate);
   }, []);
 
   const claim = useCallback(async (username: string, email?: string): Promise<void> => {
@@ -56,6 +63,7 @@ export function usePlayer() {
   const updateElo = useCallback((elo: number) => {
     lsSet(LS_ELO, String(elo));
     setPlayer((p) => (p ? { ...p, elo } : p));
+    window.dispatchEvent(new CustomEvent("ce-elo-update", { detail: elo }));
   }, []);
 
   return { player, loaded, claim, updateElo };

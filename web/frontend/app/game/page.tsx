@@ -97,7 +97,7 @@ function GameContent() {
 
   useEffect(() => {
     if (!gameOver?.elo_changes) return;
-    const change = gameOver.elo_changes[String(seat)];
+    const change = gameOver.elo_changes["0"];
     if (change?.after != null) updateElo(change.after);
   }, [gameOver, seat, updateElo]);
 

@@ -404,19 +404,23 @@ class GameRoom:
         elo_changes = await self._compute_elo_changes(rewards)
         # DB persistence runs in background — never blocks game-over broadcast
         asyncio.create_task(self._persist_to_db(rewards, elo_changes))
-        await self.broadcast({
-            "type": "game_over",
-            "finish_order": self.env.finish_order,
-            "rewards": rewards,
-            "players": [
-                {"seat": i, "name": self.player_infos[i]["name"]}
-                for i in self.env.finish_order
-            ],
-            "elo_changes": {
-                str(seat): {"delta": v["delta"], "before": v["before"], "after": v["after"]}
-                for seat, v in elo_changes.items()
-            },
-        })
+        # Send per-viewer with rotated seats (frontend always sees itself as seat 0)
+        for viewer in list(self.connections.keys()):
+            def r(s: int, v: int = viewer) -> int:
+                return (s - v + 4) % 4
+            await self.send_to(viewer, {
+                "type": "game_over",
+                "finish_order": [r(s) for s in self.env.finish_order],
+                "rewards": {r(s): rv for s, rv in rewards.items()},
+                "players": [
+                    {"seat": r(i), "name": self.player_infos[i]["name"]}
+                    for i in self.env.finish_order
+                ],
+                "elo_changes": {
+                    str(r(seat)): {"delta": v["delta"], "before": v["before"], "after": v["after"]}
+                    for seat, v in elo_changes.items()
+                },
+            })
 
     # ---------------------------------------------------------------------------
     # Forfeit
@@ -495,16 +499,19 @@ class GameRoom:
         except Exception:
             logger.exception("Forfeit ELO/DB failed for game %s", self.game_id)
 
-        # Broadcast to all connected players
-        await self.broadcast({
-            "type": "game_forfeited",
-            "forfeiter_seat": forfeiter_seat,
-            "forfeiter_name": forfeiter_name,
-            "elo_changes": {
-                str(seat): {"delta": v["delta"], "before": v["before"], "after": v["after"]}
-                for seat, v in elo_changes.items()
-            },
-        })
+        # Send per-viewer with rotated seats
+        for viewer in list(self.connections.keys()):
+            def r(s: int, v: int = viewer) -> int:
+                return (s - v + 4) % 4
+            await self.send_to(viewer, {
+                "type": "game_forfeited",
+                "forfeiter_seat": r(forfeiter_seat),
+                "forfeiter_name": forfeiter_name,
+                "elo_changes": {
+                    str(r(seat)): {"delta": v["delta"], "before": v["before"], "after": v["after"]}
+                    for seat, v in elo_changes.items()
+                },
+            })
 
     # ---------------------------------------------------------------------------
     # AI turns

@@ -88,7 +88,7 @@ export default function Home() {
                           await fetch(`${API_BASE}/api/room/${params.gameId}/forfeit`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ player_id: player.id }),
+                            body: JSON.stringify({ player_id: player.playerId }),
                           });
                         } catch { /* best effort */ }
                         clearGame();

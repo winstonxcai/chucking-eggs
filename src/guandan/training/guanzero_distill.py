@@ -31,34 +31,41 @@ def prefill_buffer_from_jidan(
     buffer,
     n_games: int,
     level_rank: int = Rank.TWO,
+    net=None,
+    optimizer=None,
+    device=None,
+    batch_size: int = 512,
+    train_steps_per_game: int = 2,
     verbose: bool = True,
 ) -> int:
-    """Pre-fill replay buffer with Jidan self-play trajectories.
+    """Pre-fill replay buffer with Jidan trajectories and optionally train.
 
     Runs Jidan (all 4 seats), encodes each move with GuanZero encoding,
-    and pushes (non_history, history, hist_len, action_enc, mc_return) into
-    the buffer. No gradient steps — pure buffer filling.
-
-    This is the MSE-compatible replacement for cross-entropy distillation.
-    The buffer will contain high-quality Jidan demonstrations expressed in
-    the same ±1–3 return scale used by self-play MSE loss.
+    pushes (non_history, history, hist_len, action_enc, mc_return) into the
+    buffer, then optionally runs `train_steps_per_game` MSE gradient steps
+    per game — same pattern as pretrain_from_heuristic in train.py.
 
     Args:
-        teacher:    JidanBot (or any agent) to generate demonstrations.
-        buffer:     GuanZero ReplayBuffer to fill.
-        n_games:    Number of games to simulate.
-        level_rank: Game level rank.
-        verbose:    Print progress every 500 games.
+        teacher:              JidanBot (or any agent) to generate demonstrations.
+        buffer:               GuanZero ReplayBuffer to fill.
+        n_games:              Number of games to simulate.
+        level_rank:           Game level rank.
+        net:                  GuanZeroNetwork to train (None = buffer-fill only).
+        optimizer:            Adam optimizer (required if net is not None).
+        batch_size:           Training batch size.
+        train_steps_per_game: Gradient steps per game (default: 2).
+        verbose:              Print progress every 500 games.
 
     Returns:
         Total number of transitions pushed to the buffer.
     """
+    from .guanzero_selfplay import train_dmc_step
+
     env = GuanDanEnv(level_rank=level_rank)
     total_trans = 0
 
     for game in range(n_games):
         env.reset()
-        # Record (encoding, action) per player per move
         game_transitions: dict[int, list[tuple]] = {p: [] for p in range(4)}
 
         while not env.done:
@@ -66,24 +73,27 @@ def prefill_buffer_from_jidan(
             legal = env.legal_moves()
             action = teacher.act(env, player)
 
-            # Encode state + chosen action
             base = encode_base_state(env, player, level_rank)
             behavior = compute_behavior_flags(env, player, action, legal)
-            nh = np.concatenate([base, behavior])          # [1075]
-            hist = encode_history(env, player)             # [5, 432]
+            nh = np.concatenate([base, behavior])
+            hist = encode_history(env, player)
             hl = _count_valid_history_steps(env, player)
-            a_enc = combo_to_108(action)                   # [108]
+            a_enc = combo_to_108(action)
 
             game_transitions[player].append((nh, hist, hl, a_enc))
             env.step(action)
 
-        # Assign MC returns from final game outcome
         rewards = env.get_rewards()
         for player, tlist in game_transitions.items():
             mc_return = float(rewards[player])
             for nh, hist, hl, a_enc in tlist:
                 buffer.push(nh, hist, hl, a_enc, mc_return)
                 total_trans += 1
+
+        # Train on buffer after each game
+        if net is not None and optimizer is not None:
+            for _ in range(train_steps_per_game):
+                train_dmc_step(net, optimizer, buffer, batch_size, device)
 
         if verbose and (game + 1) % 500 == 0:
             trans_per_game = total_trans / (game + 1)

@@ -77,9 +77,14 @@ def guanzero_remote(
     from guandan.training.guanzero_distill import prefill_buffer_from_jidan
 
     if not benchmark:
-        print(f"[GuanZero] Pre-filling buffer with {distill_games} Jidan games...")
-        total = prefill_buffer_from_jidan(JidanBot(), buffer, distill_games, level_rank)
-        print(f"[GuanZero] Buffer prefilled: {total} transitions, buf_size={len(buffer)}")
+        print(f"[GuanZero] Pre-filling + training on {distill_games} Jidan games...")
+        pretrain_optimizer = torch.optim.Adam(net.parameters(), lr=3e-5)
+        total = prefill_buffer_from_jidan(
+            JidanBot(), buffer, distill_games, level_rank,
+            net=net, optimizer=pretrain_optimizer, device=device,
+            batch_size=batch_size, train_steps_per_game=2,
+        )
+        print(f"[GuanZero] Pretrain done: {total} transitions, buf_size={len(buffer)}")
         vol.commit()
 
     if benchmark:

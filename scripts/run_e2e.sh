@@ -55,7 +55,7 @@ smoke_train() {
 # ─── Modal GPU train ─────────────────────────────────
 modal_train() {
     echo "=== Launching Modal GPU training ==="
-    modal run scripts/modal/launch.py
+    modal run scripts/modal/dmc.py
     echo ""
 }
 
@@ -63,9 +63,9 @@ modal_train() {
 evaluate() {
     local checkpoint="$1"
     echo "=== Evaluating $checkpoint ==="
-    uv run python scripts/eval.py --checkpoint "$checkpoint" --opponent random --games 500
+    uv run python scripts/eval/checkpoint.py --checkpoint "$checkpoint" --opponent random --games 500
     echo ""
-    uv run python scripts/eval.py --checkpoint "$checkpoint" --opponent heuristic --games 500
+    uv run python scripts/eval/checkpoint.py --checkpoint "$checkpoint" --opponent heuristic --games 500
     echo ""
 }
 

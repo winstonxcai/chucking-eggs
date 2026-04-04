@@ -9,7 +9,7 @@ src/guandan/          — Python package (pip-installable via hatch)
   cards.py, combos.py, game.py  — Core game engine
   agents/             — Agent hierarchy (random, greedy, heuristic, strategic, MC, RL)
   training/           — RL training (encoding, q_network, replay, train)
-scripts/              — Evaluation, diagnostics, Modal launcher
+scripts/              — eval/, train/, util/, modal/ subfolders + run_e2e.sh entry point
 tests/                — Pytest tests
 paper/                — Writeups and archived dev logs
 runs/                 — Experiment outputs (gitignored)
@@ -21,9 +21,8 @@ runs/                 — Experiment outputs (gitignored)
 - Smoke train: `./scripts/run_e2e.sh --train-only`
 - Full train: `PYTHONPATH=src python -m guandan.training.train --episodes 30000`
 - Quick validation: `PYTHONPATH=src python -m guandan.training.train --quick`
-- Evaluate: `PYTHONPATH=src python scripts/eval.py --checkpoint <path> --opponent heuristic --games 500`
-- Device diagnostic: `PYTHONPATH=src python scripts/diagnose_device.py`
-- Ladder eval: `PYTHONPATH=src python scripts/ladder.py --checkpoint <path>`
+- Evaluate: `PYTHONPATH=src python scripts/eval/checkpoint.py --checkpoint <path> --opponent heuristic --games 500`
+- Ladder eval: `PYTHONPATH=src python scripts/eval/ladder.py --checkpoint <path>`
 - Modal GPU train: `./scripts/run_e2e.sh --modal`
 
 # Training Constraints

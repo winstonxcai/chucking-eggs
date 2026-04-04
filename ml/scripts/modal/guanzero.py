@@ -71,26 +71,10 @@ def guanzero_remote(
     level_rank = Rank.TWO
     save_dir = Path(CHECKPOINT_DIR)
 
-    # ── Distillation (skip if checkpoint already in volume) ───────────────
-    from guandan.training.guanzero_distill import run_distillation
-
-    distill_path = save_dir / "jidan_distill.pt"
-    if distill_path.exists():
-        print(f"[GuanZero] Loading existing distilled checkpoint from {distill_path}")
-        ckpt = torch.load(distill_path, map_location=device, weights_only=False)
-        net.load_state_dict(ckpt["state_dict"])
-    else:
-        run_distillation(
-            net=net,
-            device=device,
-            level_rank=level_rank,
-            distill_games=distill_games,
-            distill_epochs=distill_epochs,
-            vs_games=distill_games // 2,
-            vs_epochs=distill_epochs,
-            save_path=distill_path,
-        )
-        vol.commit()
+    # No distillation phase — start self-play from random weights.
+    # Cross-entropy distillation trains Q-values to be large logits, which
+    # is incompatible with the MSE/MC-return scale used in self-play.
+    print("[GuanZero] Starting self-play from random weights (no distillation).")
 
     # ── Self-play ─────────────────────────────────────────────────────────
     buffer = ReplayBuffer(capacity=200_000)

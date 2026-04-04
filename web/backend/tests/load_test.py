@@ -35,7 +35,8 @@ DEFAULT_DIFFICULTY = "easy"
 DEFAULT_MODE = "solo"
 
 MSG_TIMEOUT = 60  # seconds to wait for any single WS message
-GAME_TIMEOUT = 180  # seconds max for an entire game
+GAME_TIMEOUT = 300  # seconds max for an entire game (quad pass-first games take ~180-200s)
+GAME_TIMEOUT_BY_MODE = {"solo": 180, "duo": 240, "quad": 360}
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +227,7 @@ async def run_solo_game(
         done = asyncio.Event()
 
         url = ws_url(base_url, room["game_id"], room["reconnect_token"], 0)
-        await asyncio.wait_for(seat_client(session, url, sm, done), timeout=GAME_TIMEOUT)
+        await asyncio.wait_for(seat_client(session, url, sm, done), timeout=GAME_TIMEOUT_BY_MODE["solo"])
         metrics.completed = True
     except Exception as e:
         metrics.error = str(e)
@@ -261,7 +262,7 @@ async def run_duo_game(
             tasks.append(asyncio.create_task(seat_client(session, url, sm, done, f"seat{seat}")))
 
         metrics.seat_metrics = seat_metrics_list
-        await asyncio.wait_for(asyncio.gather(*tasks), timeout=GAME_TIMEOUT)
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=GAME_TIMEOUT_BY_MODE["duo"])
         metrics.completed = True
     except Exception as e:
         metrics.error = str(e)
@@ -295,7 +296,7 @@ async def run_quad_game(
             tasks.append(asyncio.create_task(seat_client(session, url, sm, done, f"seat{seat}")))
 
         metrics.seat_metrics = seat_metrics_list
-        await asyncio.wait_for(asyncio.gather(*tasks), timeout=GAME_TIMEOUT)
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=GAME_TIMEOUT_BY_MODE["quad"])
         metrics.completed = True
     except Exception as e:
         metrics.error = str(e)

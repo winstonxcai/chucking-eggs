@@ -145,8 +145,14 @@ def filter_by_intent(
     flags: dict,
     level_rank: int,
     top_k: int = 8,
+    scores: dict[int, float] | None = None,
 ) -> list[Combo]:
-    """Filter and rank moves by cooperative intent. Uses JidanBot scoring."""
+    """Filter and rank moves by cooperative intent.
+
+    scores: optional {id(combo): q_value} from RL recommender.
+    When provided, higher Q-value = better move (best K selected, sorted best-first).
+    Falls back to static JidanBot scoring when scores is None or id not found.
+    """
     pass_moves = [c for c in legal if c.type == ComboType.PASS]
     non_pass = [c for c in legal if c.type != ComboType.PASS]
 
@@ -168,8 +174,12 @@ def filter_by_intent(
     else:
         filtered = non_pass
 
-    # Sort ascending by JidanBot score (cheap to play first, bombs last)
-    sorted_moves = sorted(filtered, key=lambda c: _jidan_score(c, level_rank))
+    def _score(combo: Combo) -> float:
+        if scores is not None and id(combo) in scores:
+            return -scores[id(combo)]  # negate: higher Q → sorts first (ascending sort)
+        return _jidan_score(combo, level_rank)  # fallback: cheap plays first
+
+    sorted_moves = sorted(filtered, key=_score)
     candidates = sorted_moves[:top_k]
 
     if pass_moves:

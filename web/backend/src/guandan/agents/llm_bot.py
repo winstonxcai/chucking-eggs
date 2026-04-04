@@ -21,6 +21,7 @@ from ..cards import Rank
 from ..cards import ComboType
 from ..combos import Combo
 from .base import Agent
+from .rl_recommender import score_candidates as rl_score_candidates
 from .llm_prompts import (
     compute_cooperative_flags,
     filter_by_intent,
@@ -149,6 +150,9 @@ class LLMBot(Agent):
         flags = compute_cooperative_flags(env, player, legal)
         state_prompt = format_game_state(env, player, flags, self.level_rank)
 
+        # RL Q-network scoring — contextual ranking (falls back to static on error)
+        rl_scores = rl_score_candidates(env, player, legal, self.level_rank)
+
         # ── Stage 1: Intent classification ────────────────────────────────────
         intent = "normal"
         any_flag = flags["can_cooperate"] or flags["can_dwarf"] or flags["can_assist"]
@@ -163,8 +167,11 @@ class LLMBot(Agent):
                 intent = parse_intent(raw)
         self._intent_counts[intent] += 1
 
-        # ── Stage 2: Filter by intent ──────────────────────────────────────────
-        candidates = filter_by_intent(legal, intent, flags, self.level_rank, self.top_k)
+        # ── Stage 2: Filter by intent (RL-scored) ─────────────────────────────
+        candidates = filter_by_intent(
+            legal, intent, flags, self.level_rank, self.top_k,
+            scores=rl_scores,
+        )
 
         if len(candidates) == 1:
             return candidates[0]  # cooperate → PASS, or only one option

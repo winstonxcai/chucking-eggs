@@ -26,7 +26,7 @@ from .strategic_bot import StrategicBot
 from .ez_bot import EzBot
 try:
     from .llm_bot import LLMBot
-except ImportError:
+except Exception:
     LLMBot = None  # type: ignore[assignment,misc]
 from .hulalala_bot import HulalalaBot
 from .jidan_bot import JidanBot

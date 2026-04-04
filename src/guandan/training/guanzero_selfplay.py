@@ -200,19 +200,24 @@ def train_selfplay(
     buffer: ReplayBuffer,
     device: torch.device,
     level_rank: int = Rank.TWO,
-    total_episodes: int = 100_000,
+    total_episodes: int = 150_000,
     batch_size: int = 512,
     train_steps_per_ep: int = 4,
     eval_interval: int = 10_000,
     eval_games: int = 200,
     save_dir: Path | None = None,
     prod_ckpt_path: Path | None = None,
+    patience: int = 3,
+    min_delta: float = 0.01,
     verbose: bool = True,
 ) -> None:
     """Full self-play DMC training loop.
 
     Evaluates vs Jidan and vs prod RL checkpoint (if provided),
     logs avg_wr = (wr_jidan + wr_prod) / 2 as the convergence metric.
+
+    Early stops when avg_wr fails to improve by ≥ min_delta for `patience`
+    consecutive evals (default: 3 evals = 30K episodes of no progress).
     """
     from ..agents.jidan_bot import JidanBot
 
@@ -226,6 +231,7 @@ def train_selfplay(
 
     env = GuanDanEnv(level_rank=level_rank)
     best_avg_wr = 0.0
+    no_improve_count = 0
 
     if save_dir:
         save_dir = Path(save_dir)
@@ -240,11 +246,14 @@ def train_selfplay(
         for nh, hist, hl, a_enc, G in transitions:
             buffer.push(nh, hist, hl, a_enc, G)
 
-        # Train
+        # Train (scheduler only steps when optimizer actually ran)
+        trained = False
         for _ in range(train_steps_per_ep):
-            train_dmc_step(net, optimizer, buffer, batch_size, device)
-
-        scheduler.step()
+            loss = train_dmc_step(net, optimizer, buffer, batch_size, device)
+            if loss is not None:
+                trained = True
+        if trained:
+            scheduler.step()
 
         # Evaluate
         if (ep + 1) % eval_interval == 0:
@@ -267,10 +276,19 @@ def train_selfplay(
                         f"vs_jidan={wr_jidan:.3f}  avg_wr={avg_wr:.3f}  buf={len(buffer)}"
                     )
 
-            if avg_wr > best_avg_wr:
+            if avg_wr >= best_avg_wr + min_delta:
                 best_avg_wr = avg_wr
+                no_improve_count = 0
                 if save_dir:
                     _save(net, save_dir / "guanzero_best.pt", level_rank)
+            else:
+                no_improve_count += 1
+                if verbose:
+                    print(f"  [Patience] no improvement {no_improve_count}/{patience}")
+                if no_improve_count >= patience:
+                    if verbose:
+                        print(f"[Selfplay] Early stop at episode {ep + 1}. Best avg_wr={best_avg_wr:.3f}")
+                    break
 
         if save_dir and (ep + 1) % (eval_interval * 5) == 0:
             _save(net, save_dir / f"guanzero_ep{ep + 1}.pt", level_rank)

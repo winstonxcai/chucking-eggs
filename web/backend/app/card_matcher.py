@@ -10,6 +10,7 @@ def find_matching_combo(
     selected_card_ids: list[str],
     legal_moves: list[Combo],
     hand: set[Card] | None = None,
+    level_rank: int | None = None,
 ) -> list[Combo]:
     """Find legal combos whose card set matches the selected cards.
 
@@ -62,5 +63,22 @@ def find_matching_combo(
                 if combo.type == bomb_type and combo.key == rank:
                     return [Combo(combo.type, combo.key, sel_cards,
                                   combo.length, combo.wild_count)]
+
+    # Pass 4: use game engine combo detection on the selected cards as a fallback.
+    # This handles deck-copy mismatches, wildcard substitution variants, and any
+    # other edge case the heuristic passes miss — guaranteeing that any selection
+    # the game engine itself considers valid will be accepted.
+    if level_rank is not None:
+        from guandan.combos import generate_all_leads
+        sel_set = set(sel_cards)
+        for gen_combo in generate_all_leads(sel_set, level_rank):
+            if gen_combo.type == ComboType.PASS:
+                continue
+            if set(gen_combo.cards) != sel_set:
+                continue  # must use ALL selected cards, not a subset
+            for legal_combo in legal_moves:
+                if legal_combo.type == gen_combo.type and legal_combo.key == gen_combo.key:
+                    return [Combo(gen_combo.type, gen_combo.key, list(sel_cards),
+                                  gen_combo.length, gen_combo.wild_count)]
 
     return []

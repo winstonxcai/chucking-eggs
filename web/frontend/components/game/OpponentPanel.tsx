@@ -25,7 +25,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
 
   return (
     <div
-      className={`flex flex-col gap-0.5 px-1.5 py-1 lg:px-3 lg:py-2 bg-surface rounded-xl border border-border border-l-[3px] ${borderColor} shadow-[0_1px_3px_rgba(0,0,0,0.06)]`}
+      className={`relative flex flex-col gap-0.5 px-1.5 py-1 lg:px-3 lg:py-2 bg-surface rounded-xl border border-border border-l-[3px] ${borderColor} shadow-[0_1px_3px_rgba(0,0,0,0.06)]`}
     >
       {/* Mobile: single-line "Name · Role" */}
       <div className="lg:hidden flex items-center gap-1">
@@ -56,7 +56,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       </div>
 
       {revealedHand && revealedHand.length > 0 && (
-        <div className="flex flex-wrap gap-0.5 max-w-[200px] justify-center mt-1">
+        <div className="absolute top-full left-0 z-10 flex flex-wrap gap-0.5 max-w-[200px] justify-center pt-1">
           {revealedHand.map((card) => (
             <CardComponent key={card.id} card={card} size="sm" />
           ))}

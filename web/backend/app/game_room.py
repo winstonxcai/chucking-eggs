@@ -669,7 +669,7 @@ class GameRoom:
             return
 
         legal = self.env.legal_moves(seat)
-        matches = find_matching_combo(card_ids, legal, hand=self.env.hands[seat])
+        matches = find_matching_combo(card_ids, legal, hand=self.env.hands[seat], level_rank=self.env.level_rank)
 
         if not matches:
             await self.send_to(seat, {"type": "error", "message": "Invalid combo"})

@@ -439,20 +439,21 @@ def evaluate(
                 is_leading = env.current_trick is None
                 q_net = q_lead if is_leading else q_follow
 
-                state_enc = encode_state(env, player)
+                base_state = encode_state(env, player)
                 hand = env.hands[player]
                 action_encs = np.array(
                     [encode_action(m, hand, env.level_rank) for m in legal]
                 )
+                state_encs = np.array([
+                    np.concatenate([base_state,
+                                    compute_behavior_flags(env, player, m, legal)])
+                    for m in legal
+                ])
                 history, hist_len = encode_history(env, player, env.level_rank)
 
                 with torch.no_grad():
                     B = len(legal)
-                    s = (
-                        torch.tensor(state_enc, device=device)
-                        .unsqueeze(0)
-                        .expand(B, -1)
-                    )
+                    s = torch.tensor(state_encs, device=device)
                     a = torch.tensor(action_encs, device=device)
                     h = (
                         torch.tensor(history, device=device)

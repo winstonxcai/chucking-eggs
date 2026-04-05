@@ -285,55 +285,85 @@ export default function GameBoard({
               Results
             </button>
           )}
-          <a
-            href="/rules"
-            className="text-text-secondary hover:text-foreground transition-colors"
-            title="Game rules"
-          >
-            <HelpCircle size={18} />
-          </a>
-          {isMultiplayer && onForfeit && (
-            <div className="relative">
-              <button
-                data-testid="game-menu-button"
-                className="text-text-secondary hover:text-foreground transition-colors"
-                title="Game menu"
-                onClick={() => { setMenuOpen((o) => !o); setForfeitConfirm(false); }}
-              >
-                <Settings size={18} />
-              </button>
-              {menuOpen && (
-                <div className="absolute top-full right-0 mt-1 bg-surface border border-border rounded-lg shadow-md p-1 min-w-[140px] z-30">
-                  {!forfeitConfirm ? (
-                    <button
-                      className="w-full text-left px-3 py-2 text-xs font-medium text-team-red rounded hover:bg-red-50 transition-colors cursor-pointer"
-                      onClick={() => setForfeitConfirm(true)}
-                    >
-                      Forfeit Game
-                    </button>
-                  ) : (
-                    <div className="flex flex-col gap-1.5 p-2">
-                      <span className="text-[11px] text-team-red font-medium">You will lose ELO.</span>
-                      <div className="flex gap-1.5">
-                        <button
-                          className="flex-1 py-1 bg-team-red text-white text-xs font-semibold rounded hover:opacity-90 transition-opacity cursor-pointer"
-                          onClick={() => { onForfeit(); setMenuOpen(false); }}
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          className="flex-1 py-1 bg-background border border-border text-xs rounded hover:border-foreground transition-colors cursor-pointer"
-                          onClick={() => setForfeitConfirm(false)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
+          <div className="relative">
+            <button
+              data-testid="game-menu-button"
+              className="text-text-secondary hover:text-foreground transition-colors p-1"
+              title="Game menu"
+              onClick={() => { setMenuOpen((o) => !o); setForfeitConfirm(false); setAbortConfirm(false); }}
+            >
+              <MoreVertical size={18} />
+            </button>
+            {menuOpen && (
+              <div className="absolute top-full right-0 mt-1 bg-surface border border-border rounded-lg shadow-md p-1 min-w-[140px] z-30">
+                {/* Rules — always shown */}
+                <a
+                  href="/rules"
+                  className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-foreground rounded hover:bg-muted transition-colors"
+                >
+                  <HelpCircle size={13} /> Rules
+                </a>
+
+                {/* Abort — only before first move */}
+                {onAbort && !abortConfirm && !forfeitConfirm && (
+                  <button
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs font-medium text-text-secondary rounded hover:bg-muted transition-colors cursor-pointer"
+                    onClick={() => setAbortConfirm(true)}
+                  >
+                    <LogOut size={13} /> Abort Game
+                  </button>
+                )}
+                {onAbort && abortConfirm && (
+                  <div className="flex flex-col gap-1.5 p-2">
+                    <span className="text-[11px] text-text-secondary font-medium">AI takes your seat. No ELO change.</span>
+                    <div className="flex gap-1.5">
+                      <button
+                        className="flex-1 py-1 bg-surface border border-border text-xs font-semibold rounded hover:border-foreground transition-colors cursor-pointer"
+                        onClick={() => { onAbort(); setMenuOpen(false); }}
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        className="flex-1 py-1 bg-background border border-border text-xs rounded hover:border-foreground transition-colors cursor-pointer"
+                        onClick={() => setAbortConfirm(false)}
+                      >
+                        Cancel
+                      </button>
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+                  </div>
+                )}
+
+                {/* Forfeit — only multiplayer */}
+                {onForfeit && !forfeitConfirm && !abortConfirm && (
+                  <button
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs font-medium text-team-red rounded hover:bg-red-50 transition-colors cursor-pointer"
+                    onClick={() => setForfeitConfirm(true)}
+                  >
+                    <Flag size={13} /> Forfeit Game
+                  </button>
+                )}
+                {onForfeit && forfeitConfirm && (
+                  <div className="flex flex-col gap-1.5 p-2">
+                    <span className="text-[11px] text-team-red font-medium">You will lose ELO.</span>
+                    <div className="flex gap-1.5">
+                      <button
+                        className="flex-1 py-1 bg-team-red text-white text-xs font-semibold rounded hover:opacity-90 transition-opacity cursor-pointer"
+                        onClick={() => { onForfeit(); setMenuOpen(false); }}
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        className="flex-1 py-1 bg-background border border-border text-xs rounded hover:border-foreground transition-colors cursor-pointer"
+                        onClick={() => setForfeitConfirm(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         {/* Reconnection banner */}
         {connectionStatus === "reconnecting" && (

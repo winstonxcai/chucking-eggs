@@ -73,7 +73,7 @@ function GameContent() {
     createGame();
   }, [difficulty, searchParams]);
 
-  const { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, rematch, forfeit } =
+  const { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, rematch, forfeit, sendAbort, hasPlayedFirstMove } =
     useGameSocket(gameId, reconnectToken, seat);
 
   const { updateElo } = usePlayer();
@@ -184,6 +184,15 @@ function GameContent() {
     router.push("/");
   }, [gameId, clearGame, router]);
 
+  const handleAbort = useCallback(() => {
+    sendAbort();
+    clearGame();
+    sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
+    sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
+    sessionStorage.removeItem(STORAGE_KEYS.SEAT);
+    router.push("/");
+  }, [sendAbort, clearGame, router]);
+
   if (createError) {
     return (
       <StatusScreen
@@ -242,6 +251,7 @@ function GameContent() {
       onDeleteGroup={deleteGroup}
       latestError={latestError}
       onForfeit={isMultiplayer ? handleForfeit : undefined}
+      onAbort={isMultiplayer && !hasPlayedFirstMove ? handleAbort : undefined}
     />
   );
 }

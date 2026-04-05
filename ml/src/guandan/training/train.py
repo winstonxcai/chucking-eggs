@@ -605,14 +605,14 @@ def train(args: argparse.Namespace) -> None:
                 for _ in range(batch_size_ep)
             ]
             for f in futures:
-                for s, a, h, hl, mc_return, oc, ge in f.result():
-                    buffer.push(s, a, h, hl, mc_return, oc, ge)
+                for s, a, h, hl, mc_return, oc in f.result():
+                    buffer.push(s, a, h, hl, mc_return, oc)
         else:
             trans = play_episode(
                 env, q_lead, q_follow, epsilon, device, opponent=None
             )
-            for s, a, h, hl, mc_return, oc, ge in trans:
-                buffer.push(s, a, h, hl, mc_return, oc, ge)
+            for s, a, h, hl, mc_return, oc in trans:
+                buffer.push(s, a, h, hl, mc_return, oc)
 
         # Gradient steps — scale with batch size
         loss_lead = None

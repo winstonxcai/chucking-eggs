@@ -10,7 +10,7 @@ from typing import Optional
 
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -18,7 +18,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from .ai_service import AIService
-from .game_manager import GameManager
+from .game_manager import GameManager, LOBBY_TIMEOUT
 from .redis_client import close_redis
 from . import db
 from .elo import BOT_LEADERBOARD_ENTRIES
@@ -107,6 +107,7 @@ class RoomStatusResponse(BaseModel):
     room_code: str | None
     started: bool
     seats: list[RoomSeatInfo]
+    lobby_expires_at: float | None = None
 
 
 class ClaimUsernameRequest(BaseModel):
@@ -237,14 +238,17 @@ async def create_game(req: CreateGameRequest):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/room/create", response_model=CreateRoomResponse)
-async def create_room(req: CreateRoomRequest):
+async def create_room(req: CreateRoomRequest, x_player_id: str | None = Header(None)):
     assert game_manager is not None
     if req.mode not in ("solo", "duo", "quad"):
         req.mode = "solo"
     if req.difficulty not in ("easy", "wjsd", "casual", "competition", "hard",
          "yaoji", "jidan", "hulalala", "liuzha", "master"):
         req.difficulty = "easy"
-    room = await game_manager.create_room(req.mode, req.difficulty, seed=req.seed)
+    try:
+        room = await game_manager.create_room(req.mode, req.difficulty, seed=req.seed, creator_player_id=x_player_id)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="already_in_game")
     seat = 0  # creator always gets seat 0
     return CreateRoomResponse(
         game_id=room.game_id,
@@ -271,9 +275,12 @@ async def set_room_difficulty(game_id: str, req: SetDifficultyRequest):
 
 
 @app.post("/api/room/join/{room_code}", response_model=JoinRoomResponse)
-async def join_room(room_code: str):
+async def join_room(room_code: str, x_player_id: str | None = Header(None)):
     assert game_manager is not None
-    result = game_manager.join_room(room_code)
+    try:
+        result = await game_manager.join_room(room_code, joiner_player_id=x_player_id)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="already_in_game")
     if result is None:
         raise HTTPException(status_code=404, detail="Room not found or already full")
     room, seat = result
@@ -300,12 +307,18 @@ async def room_status(game_id: str):
             connected=i in room.connections or i in room.assigned_seats,
             name=info["name"],
         ))
+    lobby_expires_at = (
+        room.created_at + LOBBY_TIMEOUT
+        if not room.started and room.room_code
+        else None
+    )
     return RoomStatusResponse(
         game_id=room.game_id,
         mode=room.mode,
         room_code=room.room_code,
         started=room.started or (room.assigned_seats >= room.human_seats),
         seats=seats,
+        lobby_expires_at=lobby_expires_at,
     )
 
 

@@ -14,6 +14,7 @@ from .game_room import GameRoom
 GRACE_PERIOD = 60      # seconds to keep a disconnected room alive
 IDLE_TIMEOUT = 300     # seconds before cleaning up an idle room
 CLEANUP_INTERVAL = 30  # seconds between cleanup sweeps
+LOBBY_TIMEOUT = 300    # seconds before auto-closing an unstarted duo/quad room
 
 
 _ROOM_CODE_CHARS = string.ascii_uppercase + string.digits
@@ -47,13 +48,22 @@ class GameManager:
         while True:
             await asyncio.sleep(CLEANUP_INTERVAL)
             now = time.time()
-            expired = []
+            expired_lobby: list[str] = []
+            expired_silent: list[str] = []
             for gid, room in self.rooms.items():
-                if room.disconnected_at and (now - room.disconnected_at > GRACE_PERIOD):
-                    expired.append(gid)
+                if not room.started and room.room_code and now - room.created_at > LOBBY_TIMEOUT:
+                    expired_lobby.append(gid)
+                elif room.disconnected_at and (now - room.disconnected_at > GRACE_PERIOD):
+                    expired_silent.append(gid)
                 elif now - room.last_activity > IDLE_TIMEOUT:
-                    expired.append(gid)
-            for gid in expired:
+                    expired_silent.append(gid)
+            for gid in expired_lobby:
+                room = self.rooms.pop(gid, None)
+                if room:
+                    if room.room_code:
+                        self.room_codes.pop(room.room_code, None)
+                    asyncio.create_task(room.broadcast({"type": "room_closed", "reason": "lobby_timeout"}))
+            for gid in expired_silent:
                 room = self.rooms.pop(gid, None)
                 if room and room.room_code:
                     self.room_codes.pop(room.room_code, None)
@@ -66,11 +76,33 @@ class GameManager:
         """Create a solo game room (backwards compat for /api/game/create)."""
         return await self.create_room("solo", difficulty)
 
-    async def create_room(self, mode: str, difficulty: str, seed: int | None = None) -> GameRoom:
-        """Create a game room with the given mode (solo/duo/quad)."""
+    def _rooms_for_player(self, player_id: str, exclude_game_id: str | None = None) -> list[GameRoom]:
+        """Return all rooms where this player holds a seat (by HTTP-time seat_player_ids).
+        Must be called while holding self._room_lock."""
+        return [
+            room for gid, room in self.rooms.items()
+            if gid != exclude_game_id and player_id in room.seat_player_ids.values()
+        ]
+
+    async def create_room(self, mode: str, difficulty: str, seed: int | None = None, creator_player_id: str | None = None) -> GameRoom:
+        """Create a game room with the given mode (solo/duo/quad).
+
+        If creator_player_id is provided, enforces one-room-per-player:
+        - Raises ValueError('already_in_game') if the player is in a started room.
+        - Auto-closes any unstarted room the player currently owns.
+        """
+        rooms_to_close: list[GameRoom] = []
         async with self._room_lock:
+            if creator_player_id:
+                for existing in self._rooms_for_player(creator_player_id):
+                    if existing.started:
+                        raise ValueError("already_in_game")
+                    rooms_to_close.append(existing)
+                    self.remove_room(existing.game_id)
             game_id = uuid.uuid4().hex[:12]
             room = GameRoom(game_id, mode, difficulty, self.ai_service, seed=seed)
+            if creator_player_id:
+                room.seat_player_ids[0] = creator_player_id
             self.rooms[game_id] = room
 
             if mode != "solo":
@@ -78,6 +110,8 @@ class GameManager:
                 room.room_code = code
                 self.room_codes[code] = game_id
 
+        for old_room in rooms_to_close:
+            await old_room.broadcast({"type": "room_closed", "reason": "creator_left"})
         return room
 
     def _unique_room_code(self) -> str:
@@ -92,24 +126,43 @@ class GameManager:
     # Room joining
     # ---------------------------------------------------------------------------
 
-    def join_room(self, room_code: str) -> tuple[GameRoom, int] | None:
+    async def join_room(self, room_code: str, joiner_player_id: str | None = None) -> tuple[GameRoom, int] | None:
         """
         Find a joinable room by code and return (room, assigned_seat).
         Returns None if not found, already started, or all human seats are taken.
+
+        If joiner_player_id is provided, enforces one-room-per-player:
+        - Raises ValueError('already_in_game') if the player is in a started room.
+        - Auto-closes any unstarted room the player owns (excluding the target room).
         """
-        game_id = self.room_codes.get(room_code.upper())
-        if not game_id:
-            return None
-        room = self.rooms.get(game_id)
-        if not room or room.started:
-            return None
-        # Find the next unassigned human seat (assigned_seats tracks HTTP-level claims)
-        available = sorted(room.human_seats - room.assigned_seats)
-        if not available:
-            return None
-        seat = available[0]
-        room.assigned_seats.add(seat)
-        return room, seat
+        rooms_to_close: list[GameRoom] = []
+        result: tuple[GameRoom, int] | None = None
+        async with self._room_lock:
+            game_id = self.room_codes.get(room_code.upper())
+            if not game_id:
+                return None
+            room = self.rooms.get(game_id)
+            if not room or room.started:
+                return None
+            if joiner_player_id:
+                # exclude the target room — self-join guard (creator joining own quad room)
+                for other in self._rooms_for_player(joiner_player_id, exclude_game_id=game_id):
+                    if other.started:
+                        raise ValueError("already_in_game")
+                    rooms_to_close.append(other)
+                    self.remove_room(other.game_id)
+            # Find the next unassigned human seat (assigned_seats tracks HTTP-level claims)
+            available = sorted(room.human_seats - room.assigned_seats)
+            if not available:
+                return None
+            seat = available[0]
+            room.assigned_seats.add(seat)
+            if joiner_player_id:
+                room.seat_player_ids[seat] = joiner_player_id
+            result = (room, seat)
+        for old_room in rooms_to_close:
+            await old_room.broadcast({"type": "room_closed", "reason": "creator_left"})
+        return result
 
     # ---------------------------------------------------------------------------
     # Room lookup

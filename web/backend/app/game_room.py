@@ -63,6 +63,8 @@ class GameRoom:
 
         # Room lifecycle
         self.last_activity = time.time()
+        self.created_at: float = time.time()
+        self.seat_player_ids: dict[int, str | None] = {}  # populated at HTTP create/join time
         self.disconnected_seats: dict[int, float] = {}  # seat -> disconnect timestamp
 
         # Trick tracking — dict persists each seat's last action so played cards

@@ -46,7 +46,9 @@ function LobbyContent() {
   const [status, setStatus] = useState<RoomStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState("medium");
+  const [countdown, setCountdown] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Persist session to survive page refresh
   useEffect(() => {
@@ -92,6 +94,33 @@ function LobbyContent() {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [gameId, token, fetchStatus]);
+
+  // Start countdown when lobby_expires_at is available
+  useEffect(() => {
+    if (!status?.lobby_expires_at) {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      setCountdown(null);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.ceil(status.lobby_expires_at! - Date.now() / 1000);
+      if (remaining <= 0) {
+        if (countdownRef.current) clearInterval(countdownRef.current);
+        setCountdown(0);
+        sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
+        sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
+        sessionStorage.removeItem(STORAGE_KEYS.SEAT);
+        router.push("/");
+      } else {
+        setCountdown(remaining);
+      }
+    };
+    tick();
+    countdownRef.current = setInterval(tick, 1000);
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, [status?.lobby_expires_at, router]);
 
   const changeDifficulty = useCallback(async (diff: string) => {
     setDifficulty(diff);
@@ -200,6 +229,16 @@ function LobbyContent() {
             <div className="h-10 w-40 bg-border/40 rounded-lg animate-pulse" />
           )}
         </div>
+
+        {/* Lobby expiry countdown */}
+        {countdown !== null && (
+          <div className="flex items-center justify-center gap-1.5 text-xs text-text-secondary">
+            <span>Room closes in</span>
+            <span className={`font-mono font-semibold ${countdown <= 60 ? "text-amber-400" : "text-text-secondary"}`}>
+              {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}
+            </span>
+          </div>
+        )}
 
         {/* Seat list */}
         <div className="bg-surface border border-border rounded-xl overflow-hidden">

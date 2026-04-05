@@ -131,6 +131,7 @@ export interface RoomStatus {
   room_code: string | null;
   started: boolean;
   seats: RoomSeatInfo[];
+  lobby_expires_at: number | null;
 }
 
 export interface CreateRoomResponse {

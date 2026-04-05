@@ -43,7 +43,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       {/* Desktop: two-line name + status */}
       <div className="hidden lg:flex flex-col gap-0.5">
         <div className="flex items-center gap-1.5">
-          <span className="text-sm font-semibold text-foreground relative">
+          <span className="text-sm font-semibold text-foreground relative whitespace-nowrap">
             {thinking ? (
               <>
                 <span className="invisible">{player.name}</span>
@@ -56,7 +56,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       </div>
 
       {revealedHand && revealedHand.length > 0 && (
-        <div className="flex flex-wrap gap-0.5 max-w-[200px] justify-center mt-1">
+        <div className="flex flex-wrap gap-0.5 justify-center mt-1 max-w-[240px]">
           {revealedHand.map((card) => (
             <CardComponent key={card.id} card={card} size="sm" />
           ))}

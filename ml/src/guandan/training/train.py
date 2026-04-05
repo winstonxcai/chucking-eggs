@@ -32,6 +32,9 @@ from .encoding import (
     encode_opponent_cards,
     encode_state,
 )
+from .guanzero_encoding import compute_behavior_flags
+
+STATE_DIM_HYBRID = STATE_DIM + 9  # 417 + 9 behavior flags = 426
 from ..game import GuanDanEnv
 from .q_network import QNetworkLSTM, get_device, load_compat
 from .replay import ReplayBuffer
@@ -61,7 +64,7 @@ class _TeeLogger:
 
 def _setup_run_dir(args: argparse.Namespace) -> Path:
     """Create runs/<run_name>/ directory, write config.json, set up tee logging."""
-    run_dir = Path("runs") / args.run_name
+    run_dir = Path("ml/runs") / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Write config
@@ -114,12 +117,19 @@ def play_episode(
         legal = env.legal_moves()
         is_leading = env.current_trick is None
 
-        state_enc = encode_state(env, player)
+        base_state = encode_state(env, player)  # [417]
         hand = env.hands[player]
         action_encs = np.array(
             [encode_action(m, hand, env.level_rank) for m in legal]
         )
         history, hist_len = encode_history(env, player, env.level_rank)
+
+        # Build per-action states: base_state + behavior flags (9 dims each)
+        state_encs = np.array([
+            np.concatenate([base_state,
+                            compute_behavior_flags(env, player, m, legal)])
+            for m in legal
+        ])  # [B, 426]
 
         q_net = q_lead if is_leading else q_follow
 
@@ -128,11 +138,7 @@ def play_episode(
         else:
             with torch.no_grad():
                 B = len(legal)
-                s = (
-                    torch.tensor(state_enc, device=device)
-                    .unsqueeze(0)
-                    .expand(B, -1)
-                )
+                s = torch.tensor(state_encs, device=device)          # [B, 426]
                 a = torch.tensor(action_encs, device=device)
                 h = (
                     torch.tensor(history, device=device)
@@ -147,7 +153,7 @@ def play_episode(
         opp_cards = encode_opponent_cards(env, player)
 
         transitions[player].append((
-            state_enc, action_encs[idx], history, hist_len, opp_cards,
+            state_encs[idx], action_encs[idx], history, hist_len, opp_cards,
         ))
         env.step(legal[idx])
 
@@ -335,9 +341,12 @@ def pretrain_from_heuristic(
 
         while not env.done:
             player = env.current_player
+            legal = env.legal_moves()
             action = heuristic.act(env, player)
 
-            state_enc = encode_state(env, player)
+            base_state = encode_state(env, player)  # [417]
+            flags = compute_behavior_flags(env, player, action, legal)  # [9]
+            state_enc = np.concatenate([base_state, flags])  # [426]
             action_enc = encode_action(action, env.hands[player], level_rank)
             history, hist_len = encode_history(env, player, level_rank)
 
@@ -502,17 +511,19 @@ def train(args: argparse.Namespace) -> None:
     print(f"Run dir: {run_dir}")
 
     q_lead = QNetworkLSTM(
-        lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden
+        lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden,
+        d_state=STATE_DIM_HYBRID,
     ).to(device)
     q_follow = QNetworkLSTM(
-        lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden
+        lstm_hidden=args.lstm_hidden, hidden=args.mlp_hidden,
+        d_state=STATE_DIM_HYBRID,
     ).to(device)
 
     opt_lead = torch.optim.Adam(q_lead.parameters(), lr=args.lr)
     opt_follow = torch.optim.Adam(q_follow.parameters(), lr=args.lr)
 
     # Single shared buffer — avoids lead starvation from split buffers
-    buffer = ReplayBuffer(capacity=args.buffer_size)
+    buffer = ReplayBuffer(capacity=args.buffer_size, d_state=STATE_DIM_HYBRID)
 
     env = GuanDanEnv(level_rank=Rank.TWO)
 
@@ -635,8 +646,16 @@ def train(args: argparse.Namespace) -> None:
                 q_lead, q_follow, device,
                 n_games=args.eval_games, opponent="heuristic",
             )
+            result_strategic = evaluate(
+                q_lead, q_follow, device,
+                n_games=args.eval_games, opponent="strategic",
+            )
+            result_jidan = evaluate(
+                q_lead, q_follow, device,
+                n_games=args.eval_games, opponent="jidan",
+            )
             elapsed = time.time() - t0
-            wr = result["winrate"]
+            wr = result_strategic["winrate"]  # use strategic as patience signal
 
             if wr > best_wr:
                 best_wr = wr
@@ -650,11 +669,12 @@ def train(args: argparse.Namespace) -> None:
 
             tqdm.write(
                 f"Ep {ep:>6d} | ε={epsilon:.3f} | "
-                f"L_lead={ll_str} L_follow={lf_str} aux={aux_str} | "
+                f"L={ll_str}/{lf_str} aux={aux_str} | "
                 f"buf={len(buffer):>6d} | "
-                f"vs heuristic: {wr:.1%} "
-                f"(1-2:{result['finish_12']} 1-3:{result['finish_13']} 1-4:{result['finish_14']}) "
-                f"(best={best_wr:.1%}, "
+                f"vs_heur={result['winrate']:.1%} "
+                f"vs_strat={result_strategic['winrate']:.1%} "
+                f"vs_jidan={result_jidan['winrate']:.1%} "
+                f"(best_strat={best_wr:.1%}, "
                 f"pat={evals_without_improvement}/{args.patience}) | "
                 f"{elapsed:.0f}s"
             )
@@ -668,6 +688,8 @@ def train(args: argparse.Namespace) -> None:
                 "aux_loss": ((loss_lead[1] if loss_lead else 0) + (loss_follow[1] if loss_follow else 0)) / 2 if loss_lead else None,
                 "buffer_size": len(buffer),
                 "winrate": result["winrate"],
+                "winrate_strategic": result_strategic["winrate"],
+                "winrate_jidan": result_jidan["winrate"],
                 "avg_reward": result["avg_reward"],
                 "finish_12": result["finish_12"],
                 "finish_13": result["finish_13"],

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crown, Hand, HelpCircle, Settings } from "lucide-react";
+import { Crown, Flag, Hand, HelpCircle, LogOut, MoreVertical } from "lucide-react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -28,6 +28,7 @@ interface GameBoardProps {
   onDeleteGroup: (groupId: string) => void;
   latestError?: { message: string; key: number } | null;
   onForfeit?: () => void;
+  onAbort?: () => void;
 }
 
 /** Render a single trick action (cards or "Pass") */
@@ -67,10 +68,12 @@ export default function GameBoard({
   onDeleteGroup,
   latestError,
   onForfeit,
+  onAbort,
 }: GameBoardProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
   const [forfeitConfirm, setForfeitConfirm] = useState(false);
+  const [abortConfirm, setAbortConfirm] = useState(false);
   const [flyingCards, setFlyingCards] = useState<{
     cards: CardDTO[];
     fromRects: DOMRect[];
@@ -254,16 +257,6 @@ export default function GameBoard({
     setSelectedIds(new Set(cards.map((c) => c.id)));
   }, []);
 
-  const handleSaveState = useCallback(() => {
-    const blob = new Blob([JSON.stringify(gameState, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `game-state-${gameState.game_id}-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [gameState]);
-
   // --- Layout data ---
   const partner = gameState.players.find((p) => p.seat === 2);
   const leftOpp = gameState.players.find((p) => p.seat === 1);
@@ -283,6 +276,15 @@ export default function GameBoard({
       <div className="flex-1 flex flex-col p-[5px] lg:px-6 lg:pt-2 lg:pb-1 gap-0 relative lg:justify-center">
         {/* Top-right buttons */}
         <div className="absolute top-2 right-2 lg:top-4 lg:right-4 z-20 flex items-center gap-2">
+          {gameOver && gameOverDismissed && (
+            <button
+              onClick={() => setGameOverDismissed(false)}
+              className="text-text-secondary hover:text-foreground transition-colors text-xs font-medium"
+              title="View results"
+            >
+              Results
+            </button>
+          )}
           <a
             href="/rules"
             className="text-text-secondary hover:text-foreground transition-colors"
@@ -643,7 +645,6 @@ export default function GameBoard({
           humanSeat={gameState.my_seat}
           onPlayAgain={isMultiplayer && onRematch ? onRematch : onPlayAgain}
           isMultiplayer={isMultiplayer}
-          onSaveState={handleSaveState}
           onDismiss={() => setGameOverDismissed(true)}
         />
       )}

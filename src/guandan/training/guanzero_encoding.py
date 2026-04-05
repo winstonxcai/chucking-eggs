@@ -397,3 +397,91 @@ def score_all_actions(
         q_values = net.forward_fast(nh_batch, hist_tensor, hl, act_batch)  # [B]
 
     return q_values
+
+
+# ---------------------------------------------------------------------------
+# Hybrid encoding: 417-dim existing state + 9 behavior flags
+# Uses the proven card-count matrix encoding (fast convergence) plus the
+# paper's behavior regulation as the only new contribution.
+# ---------------------------------------------------------------------------
+
+from .encoding import (
+    encode_state as _encode_state_417,
+    encode_action as _encode_action_160,
+    encode_history as _encode_history_83,
+    STATE_DIM,
+    ACTION_DIM,
+    D_MOVE,
+    MAX_HISTORY,
+)
+
+STATE_DIM_HYBRID = STATE_DIM + 9    # 417 + 9 = 426
+ACTION_DIM_HYBRID = ACTION_DIM      # 160
+D_MOVE_HYBRID = D_MOVE              # 83
+MAX_HISTORY_HYBRID = MAX_HISTORY    # 15
+
+
+def encode_history_padded(env: GuanDanEnv, player: int, level_rank: int):
+    """Wrapper: pads encode_history output to [MAX_HISTORY, D_MOVE] for buffer storage."""
+    hist, hist_len = _encode_history_83(env, player, level_rank)  # [T, 83], int
+    if hist.shape[0] < MAX_HISTORY:
+        pad = np.zeros((MAX_HISTORY - hist.shape[0], D_MOVE), dtype=np.float32)
+        hist = np.concatenate([pad, hist], axis=0)                # [15, 83], oldest first
+    return hist, hist_len                                          # [15, 83], int
+
+
+def encode_state_hybrid(
+    env: GuanDanEnv,
+    player: int,
+    action,
+    legal_moves: list,
+) -> np.ndarray:
+    """417-dim existing state + 9-dim behavior flags = 426 dims per action."""
+    base = _encode_state_417(env, player)                                # [417]
+    flags = compute_behavior_flags(env, player, action, legal_moves)    # [9]
+    return np.concatenate([base, flags])                                 # [426]
+
+
+def score_all_hybrid(
+    net,
+    env: GuanDanEnv,
+    player: int,
+    legal_moves: list,
+    level_rank: int,
+    device,
+) -> "torch.Tensor":  # noqa: F821
+    """Score all legal actions using the hybrid 426-dim state encoding.
+
+    Reuses the existing QNetworkLSTM via encode_history() + forward_from_embedding()
+    (LSTM-once per decision: run LSTM on shared history, expand for B actions).
+    """
+    import torch
+
+    B = len(legal_moves)
+    if B == 0:
+        return torch.zeros(0, device=device)
+
+    base = _encode_state_417(env, player)                        # [417]
+    history, hist_len = _encode_history_83(env, player, level_rank)  # [T, 83], int
+    hand = env.hands[player]
+
+    states, actions = [], []
+    for m in legal_moves:
+        flags = compute_behavior_flags(env, player, m, legal_moves)  # [9]
+        states.append(np.concatenate([base, flags]))                 # [426]
+        actions.append(_encode_action_160(m, hand, level_rank))      # [160]
+
+    s_t = torch.tensor(np.array(states), dtype=torch.float32, device=device)   # [B, 426]
+    a_t = torch.tensor(np.array(actions), dtype=torch.float32, device=device)  # [B, 160]
+
+    # Expand history to [B, T, 83] for batch LSTM call
+    h_np = np.array(history) if not isinstance(history, np.ndarray) else history
+    h_t = torch.tensor(h_np, dtype=torch.float32, device=device
+          ).unsqueeze(0).expand(B, -1, -1).contiguous()                         # [B, T, 83]
+    hl_t = torch.tensor([hist_len], dtype=torch.long, device=device).expand(B)  # [B]
+
+    with torch.no_grad():
+        hist_emb = net.encode_history(h_t, hl_t)                  # [B, lstm_hidden]
+        q_values = net.forward_from_embedding(s_t, a_t, hist_emb)  # [B]
+
+    return q_values

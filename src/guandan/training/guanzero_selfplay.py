@@ -16,18 +16,20 @@ import torch.nn.functional as F
 from ..cards import Rank
 from ..game import GuanDanEnv
 from .guanzero_encoding import (
-    _count_valid_history_steps,
-    combo_to_108,
-    compute_behavior_flags,
-    encode_base_state,
-    encode_history,
-    score_all_actions,
+    encode_state_hybrid,
+    encode_history_padded,
+    score_all_hybrid,
+    STATE_DIM_HYBRID,
+    ACTION_DIM_HYBRID,
+    D_MOVE_HYBRID,
+    MAX_HISTORY_HYBRID,
+    _encode_action_160,
 )
 
-_D_NON_HISTORY = 1075
-_D_ACTION = 108
-_N_HIST_STEPS = 5
-_D_HIST_STEP = 432
+_D_NON_HISTORY = STATE_DIM_HYBRID   # 426
+_D_ACTION = ACTION_DIM_HYBRID       # 160
+_N_HIST_STEPS = MAX_HISTORY_HYBRID  # 15
+_D_HIST_STEP = D_MOVE_HYBRID        # 83
 
 
 class ReplayBuffer:
@@ -69,9 +71,22 @@ class ReplayBuffer:
 
 
 def make_nets_buffers_optimizers(device, buffer_capacity=50_000, lr=3e-5):
-    """Create 4 nets, 4 buffers, 4 optimizers — one per seat."""
-    from .guanzero_network import GuanZeroNetwork
-    nets = [GuanZeroNetwork().to(device) for _ in range(4)]
+    """Create 4 nets, 4 buffers, 4 optimizers — one per seat.
+
+    Uses QNetworkLSTM with hybrid dims (d_state=426, d_action=160, d_move=83).
+    """
+    from .q_network import QNetworkLSTM
+    nets = [
+        QNetworkLSTM(
+            d_state=STATE_DIM_HYBRID,   # 426
+            d_action=ACTION_DIM_HYBRID, # 160
+            d_move=D_MOVE_HYBRID,       # 83
+            lstm_hidden=128,
+            hidden=512,
+            n_layers=3,
+        ).to(device)
+        for _ in range(4)
+    ]
     buffers = [ReplayBuffer(capacity=buffer_capacity) for _ in range(4)]
     optimizers = [torch.optim.Adam(net.parameters(), lr=lr) for net in nets]
     return nets, buffers, optimizers
@@ -103,19 +118,16 @@ def play_selfplay_episode(
             env.step(legal[0])
             continue
 
-        q_values = score_all_actions(nets[player], env, player, legal, level_rank, device)
+        q_values = score_all_hybrid(nets[player], env, player, legal, level_rank, device)
 
         if random.random() < epsilon:
             idx = random.randint(0, len(legal) - 1)
         else:
             idx = int(q_values.argmax().item())
 
-        base = encode_base_state(env, player, level_rank)
-        behavior = compute_behavior_flags(env, player, legal[idx], legal)
-        nh = np.concatenate([base, behavior])
-        hist = encode_history(env, player)
-        hl = _count_valid_history_steps(env, player)
-        a_enc = combo_to_108(legal[idx])
+        nh = encode_state_hybrid(env, player, legal[idx], legal)              # [426]
+        hist, hl = encode_history_padded(env, player, level_rank)            # [15,83], int
+        a_enc = _encode_action_160(legal[idx], env.hands[player], level_rank)  # [160]
 
         transitions[player].append((nh, hist, hl, a_enc))
         env.step(legal[idx])
@@ -143,7 +155,7 @@ def train_dmc_step(
 
     net.train()
     batch = buffer.sample(batch_size, device)
-    lstm_emb = net.batch_encode_history(batch["history"], batch["hist_len"])
+    lstm_emb = net.encode_history(batch["history"], batch["hist_len"])
     q_pred = net.forward_from_embedding(batch["non_history"], batch["action"], lstm_emb)
     loss = F.mse_loss(q_pred, batch["return"])
 
@@ -176,7 +188,7 @@ def evaluate_vs(
                 if len(legal) == 1:
                     env.step(legal[0])
                 else:
-                    q = score_all_actions(nets[p], env, p, legal, level_rank, device)
+                    q = score_all_hybrid(nets[p], env, p, legal, level_rank, device)
                     env.step(legal[int(q.argmax().item())])
             else:
                 env.step(opponent.act(env, p))

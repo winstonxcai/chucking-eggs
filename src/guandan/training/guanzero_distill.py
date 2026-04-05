@@ -1,12 +1,7 @@
-"""GuanZero buffer prefill from Jidan teacher (MSE-compatible).
+"""GuanZero buffer prefill from Jidan teacher (hybrid encoding, MSE-compatible).
 
-Pre-fills the replay buffer with Jidan's trajectories using the same
-(state, action, mc_return) format and MSE loss as self-play. This is
-equivalent to pretrain_from_heuristic in train.py but using the GuanZero
-108-dim encoding and Jidan as the teacher.
-
-No separate training phase — only buffer filling. Self-play then starts
-from a warm buffer of high-quality Jidan demonstrations.
+Pre-fills the replay buffer with Jidan's trajectories using the hybrid
+417+9 state encoding and existing 160-dim action encoding.
 """
 
 from __future__ import annotations
@@ -18,11 +13,9 @@ import numpy as np
 from ..cards import Rank
 from ..game import GuanDanEnv
 from .guanzero_encoding import (
-    _count_valid_history_steps,
-    combo_to_108,
-    compute_behavior_flags,
-    encode_base_state,
-    encode_history,
+    encode_state_hybrid,
+    encode_history_padded,
+    _encode_action_160,
 )
 
 
@@ -80,12 +73,9 @@ def prefill_buffer_from_jidan(
             legal = env.legal_moves()
             action = teacher.act(env, player)
 
-            base = encode_base_state(env, player, level_rank)
-            behavior = compute_behavior_flags(env, player, action, legal)
-            nh = np.concatenate([base, behavior])
-            hist = encode_history(env, player)
-            hl = _count_valid_history_steps(env, player)
-            a_enc = combo_to_108(action)
+            nh = encode_state_hybrid(env, player, action, legal)               # [426]
+            hist, hl = encode_history_padded(env, player, level_rank)          # [15,83], int
+            a_enc = _encode_action_160(action, env.hands[player], level_rank)  # [160]
 
             game_transitions[player].append((nh, hist, hl, a_enc))
             env.step(action)

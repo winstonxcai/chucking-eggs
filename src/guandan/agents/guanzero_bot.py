@@ -11,16 +11,18 @@ from pathlib import Path
 import torch
 
 from ..cards import Rank
-from ..training.guanzero_encoding import score_all_actions
-from ..training.guanzero_network import GuanZeroNetwork
+from ..training.guanzero_encoding import (
+    score_all_hybrid,
+    STATE_DIM_HYBRID,
+    ACTION_DIM_HYBRID,
+    D_MOVE_HYBRID,
+)
 
 
 class GuanZeroBot:
-    """Wraps 4 trained GuanZeroNetworks (one per seat) as an Agent.
+    """Wraps 4 QNetworkLSTM models (one per seat, hybrid encoding) as an Agent.
 
-    Usage:
-        bot = GuanZeroBot("checkpoints/guanzero_best.pt")
-        action = bot.act(env, player)
+    Checkpoint format: {"nets": [sd0, sd1, sd2, sd3], "level_rank": int}
     """
 
     def __init__(
@@ -29,6 +31,8 @@ class GuanZeroBot:
         device: torch.device | None = None,
         level_rank: int = Rank.TWO,
     ) -> None:
+        from ..training.q_network import QNetworkLSTM
+
         if device is None:
             device = torch.device(
                 "mps" if torch.backends.mps.is_available()
@@ -40,14 +44,20 @@ class GuanZeroBot:
 
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
+        def _make_net():
+            return QNetworkLSTM(
+                d_state=STATE_DIM_HYBRID,
+                d_action=ACTION_DIM_HYBRID,
+                d_move=D_MOVE_HYBRID,
+                lstm_hidden=128, hidden=512, n_layers=3,
+            ).to(device)
+
         if "nets" in ckpt:
-            # 4-network checkpoint
-            self.nets = [GuanZeroNetwork().to(device) for _ in range(4)]
+            self.nets = [_make_net() for _ in range(4)]
             for i, sd in enumerate(ckpt["nets"]):
                 self.nets[i].load_state_dict(sd)
         else:
-            # Legacy single-network checkpoint — replicate to all 4 seats
-            net = GuanZeroNetwork().to(device)
+            net = _make_net()
             net.load_state_dict(ckpt.get("state_dict", ckpt))
             self.nets = [net] * 4
 
@@ -55,12 +65,8 @@ class GuanZeroBot:
             net.eval()
 
     def act(self, env, player: int):
-        """Choose the highest-Q legal action using this seat's network."""
         legal = env.legal_moves()
         if len(legal) == 1:
             return legal[0]
-
-        q_values = score_all_actions(
-            self.nets[player], env, player, legal, self.level_rank, self.device
-        )
-        return legal[int(q_values.argmax().item())]
+        q = score_all_hybrid(self.nets[player], env, player, legal, self.level_rank, self.device)
+        return legal[int(q.argmax().item())]

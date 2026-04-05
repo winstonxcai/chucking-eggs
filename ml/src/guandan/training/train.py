@@ -558,7 +558,7 @@ def train(args: argparse.Namespace) -> None:
 
     # ── Phase 2: Self-Play ────────────────────────────────────
     print(f"\n{'='*60}")
-    print(f"  PHASE 2: Self-Play ({args.episodes} episodes)")
+    print(f"  PHASE 2: vs Strategic+Jidan ({args.episodes} episodes)")
     print(f"{'='*60}")
     print(f"Buffer: {len(buffer):,} transitions "
           f"({pretrain_trans:,} from pretrain, will be gradually replaced)\n")
@@ -567,6 +567,12 @@ def train(args: argparse.Namespace) -> None:
     eps_decay_episodes = int(args.episodes * 0.85)
     best_wr = 0.0
     evals_without_improvement = 0
+
+    # Fixed opponents for phase 2 (no self-play — too unstable at this scale)
+    opp_strategic = make_agent("strategic", env.level_rank)
+    opp_jidan = make_agent("jidan", env.level_rank)
+    phase2_opponents = [opp_strategic, opp_jidan]
+    phase2_opp_names = ["strategic", "jidan"]
 
     # Parallel episode collection setup
     n_workers = args.n_workers
@@ -587,20 +593,20 @@ def train(args: argparse.Namespace) -> None:
     last_save_ep = 0
     pbar = tqdm(
         total=args.episodes, unit="ep", file=sys.stderr,
-        dynamic_ncols=True, desc="self-play",
+        dynamic_ncols=True, desc="phase2",
     )
     while ep < args.episodes:
         batch_size_ep = min(n_workers, args.episodes - ep)
         frac = min(1.0, (ep + 1) / eps_decay_episodes)
         epsilon = eps_start + (eps_end - eps_start) * frac
 
-        # Self-play: opponent=None, all 4 seats use Q-network
+        # Train vs strategic+jidan (50/50 mix each episode)
         if use_parallel:
             futures = [
                 pool.submit(
                     _episode_worker, lead_sd, follow_sd,
                     args.lstm_hidden, args.mlp_hidden,
-                    epsilon, None,  # self-play
+                    epsilon, random.choice(phase2_opp_names),
                 )
                 for _ in range(batch_size_ep)
             ]
@@ -608,8 +614,9 @@ def train(args: argparse.Namespace) -> None:
                 for s, a, h, hl, mc_return, oc in f.result():
                     buffer.push(s, a, h, hl, mc_return, oc)
         else:
+            opp = random.choice(phase2_opponents)
             trans = play_episode(
-                env, q_lead, q_follow, epsilon, device, opponent=None
+                env, q_lead, q_follow, epsilon, device, opponent=opp
             )
             for s, a, h, hl, mc_return, oc in trans:
                 buffer.push(s, a, h, hl, mc_return, oc)
@@ -701,7 +708,7 @@ def train(args: argparse.Namespace) -> None:
 
             if evals_without_improvement >= args.patience:
                 tqdm.write(
-                    f"Early stopping: no improvement in WR vs heuristic "
+                    f"Early stopping: no improvement in WR vs strategic "
                     f"for {args.patience} evals"
                 )
                 break

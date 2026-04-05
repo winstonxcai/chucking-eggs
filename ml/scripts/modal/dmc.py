@@ -61,7 +61,7 @@ image = (
 
 @app.function(
     image=image,
-    gpu="T4",
+    gpu="A10G",
     timeout=3600 * 6,  # 6 hour max
     volumes={CHECKPOINT_DIR: vol},
 )

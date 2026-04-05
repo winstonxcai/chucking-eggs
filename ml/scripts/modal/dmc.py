@@ -31,6 +31,10 @@ TRAIN_DEFAULTS = dict(
     lstm_hidden=128,
     mlp_hidden=512,
     train_steps=4,
+    pretrain_games=5000,
+    n_workers=4,
+    quick=False,
+    run_name=None,
 )
 
 _root = Path(__file__).resolve().parent.parent.parent
@@ -68,11 +72,15 @@ def train_remote(**kwargs) -> str:
 
     sys.path.insert(0, "/root/src")
 
+    from datetime import datetime
+
     from guandan.training.train import train
 
     os.chdir(CHECKPOINT_DIR)
 
     params = {**TRAIN_DEFAULTS, **kwargs}
+    if "run_name" not in params or params["run_name"] is None:
+        params["run_name"] = datetime.now().strftime("%Y%m%d_%H%M%S")
     train(argparse.Namespace(**params))
     vol.commit()
 

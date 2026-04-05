@@ -388,7 +388,7 @@ export default function GameBoard({
         <div className="flex-1 flex items-start lg:items-center justify-center min-h-0">
           <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-x-1 gap-y-3 lg:gap-x-4 lg:gap-y-10 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
             {/* Partner (top center, spans column 2) */}
-            <div className="col-start-2 row-start-1">
+            <div className="col-start-2 row-start-1 h-7 lg:h-[68px]">
               {partner && (
                 <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.partner_hand} />
               )}

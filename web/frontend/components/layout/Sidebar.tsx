@@ -101,16 +101,16 @@ export default function Sidebar({ player }: SidebarProps) {
           const resolvedLabel = label === "Play" && isInGame ? "Resume" : label;
           const isActive =
             pathname === resolvedHref || (label === "Play" && pathname === "/game");
-          const className = `flex items-center justify-center gap-2.5 px-2 py-3 lg:py-2 rounded-lg text-sm font-medium transition-all duration-150 ease-out border-l-2 ${
-            expanded ? "lg:justify-start lg:px-3" : ""
+          const className = `flex items-center justify-center gap-2.5 px-2 py-3 lg:py-2 rounded-lg text-sm font-medium transition-all duration-150 ease-out ${
+            expanded ? "lg:justify-start lg:px-3 lg:border-l-2" : ""
           } ${
             isActive
-              ? "border-accent text-accent bg-accent/5"
-              : "border-transparent text-foreground hover:bg-accent/8 hover:text-accent"
+              ? `text-accent bg-accent/5${expanded ? " lg:border-accent" : ""}`
+              : `text-foreground hover:bg-accent/8 hover:text-accent${expanded ? " lg:border-transparent" : ""}`
           }`;
           return (
             <Link key={label} href={resolvedHref} className={className}>
-              <Icon size={15} strokeWidth={isActive ? 2.5 : 2} />
+              <Icon size={17} strokeWidth={isActive ? 2.5 : 2} />
               {expanded && <span className="hidden lg:inline">{resolvedLabel}</span>}
             </Link>
           );

@@ -1,4 +1,4 @@
-"""Solo bot tests: verify all 4 difficulties create valid games.
+"""Solo bot tests: verify all difficulties create valid games.
 
 HTTP-only tests verify agents load and games create successfully for all
 difficulties. The send_to fix (json.dumps outside try/except) ensures
@@ -12,7 +12,7 @@ import json
 import pytest
 from httpx import AsyncClient
 
-DIFFICULTIES = ["easy", "medium", "hard", "expert"]
+DIFFICULTIES = ["easy", "hard"]
 
 
 # ---------------------------------------------------------------------------
@@ -31,11 +31,11 @@ class TestSoloBotHTTP:
         assert "reconnect_token" in data
 
     @pytest.mark.asyncio
-    async def test_expert_agent_loaded(self, client: AsyncClient):
-        """Expert difficulty should use the RL agent (or strategic fallback) — not None."""
+    async def test_hard_agent_loaded(self, client: AsyncClient):
+        """Hard difficulty should map to a named agent — not None."""
         from app.main import game_manager
         ai = game_manager.ai_service
-        agent_name = ai.get_agent_name("expert")
+        agent_name = ai.get_agent_name("hard")
         assert agent_name is not None
         assert isinstance(agent_name, str)
         assert len(agent_name) > 0

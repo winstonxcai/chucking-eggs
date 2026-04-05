@@ -28,38 +28,45 @@ from .guanzero_encoding import (
 
 def prefill_buffer_from_jidan(
     teacher,
-    buffer,
+    buffers: "list | ReplayBuffer",
     n_games: int,
     level_rank: int = Rank.TWO,
-    net=None,
-    optimizer=None,
+    nets: "list | None" = None,
+    optimizers: "list | None" = None,
     device=None,
     batch_size: int = 512,
     train_steps_per_game: int = 2,
     verbose: bool = True,
 ) -> int:
-    """Pre-fill replay buffer with Jidan trajectories and optionally train.
+    """Pre-fill 4 seat-specific replay buffers from Jidan trajectories.
 
-    Runs Jidan (all 4 seats), encodes each move with GuanZero encoding,
-    pushes (non_history, history, hist_len, action_enc, mc_return) into the
-    buffer, then optionally runs `train_steps_per_game` MSE gradient steps
-    per game — same pattern as pretrain_from_heuristic in train.py.
+    Accepts either:
+    - `buffers`: a list of 4 ReplayBuffers (one per seat) — routes each
+      transition to the corresponding seat's buffer.
+    - `buffers`: a single ReplayBuffer — all transitions go to it (legacy).
+
+    Optionally trains `nets[seat]` on `buffers[seat]` after each game.
 
     Args:
-        teacher:              JidanBot (or any agent) to generate demonstrations.
-        buffer:               GuanZero ReplayBuffer to fill.
+        teacher:              Agent to generate demonstrations (e.g. JidanBot).
+        buffers:              List of 4 ReplayBuffers, or a single ReplayBuffer.
         n_games:              Number of games to simulate.
         level_rank:           Game level rank.
-        net:                  GuanZeroNetwork to train (None = buffer-fill only).
-        optimizer:            Adam optimizer (required if net is not None).
+        nets:                 List of 4 GuanZeroNetworks (or None = no training).
+        optimizers:           List of 4 Adam optimizers (required if nets given).
+        device:               torch.device.
         batch_size:           Training batch size.
-        train_steps_per_game: Gradient steps per game (default: 2).
+        train_steps_per_game: Gradient steps per seat per game.
         verbose:              Print progress every 500 games.
 
     Returns:
-        Total number of transitions pushed to the buffer.
+        Total transitions pushed across all buffers.
     """
     from .guanzero_selfplay import train_dmc_step
+
+    # Normalise: if single buffer passed, wrap in list of 4 (broadcast)
+    single_buffer = not isinstance(buffers, list)
+    buf_list = [buffers] * 4 if single_buffer else buffers
 
     env = GuanDanEnv(level_rank=level_rank)
     total_trans = 0
@@ -87,18 +94,26 @@ def prefill_buffer_from_jidan(
         for player, tlist in game_transitions.items():
             mc_return = float(rewards[player])
             for nh, hist, hl, a_enc in tlist:
-                buffer.push(nh, hist, hl, a_enc, mc_return)
+                buf_list[player].push(nh, hist, hl, a_enc, mc_return)
                 total_trans += 1
 
-        # Train on buffer after each game
-        if net is not None and optimizer is not None:
-            for _ in range(train_steps_per_game):
-                train_dmc_step(net, optimizer, buffer, batch_size, device)
+        # Train each seat's network on its own buffer
+        if nets is not None and optimizers is not None:
+            for seat in range(4):
+                for _ in range(train_steps_per_game):
+                    train_dmc_step(nets[seat], optimizers[seat], buf_list[seat], batch_size, device)
 
         if verbose and (game + 1) % 500 == 0:
+            buf_sizes = [len(b) for b in buf_list]
             trans_per_game = total_trans / (game + 1)
             print(f"  [Prefill] {game + 1}/{n_games} games, "
                   f"{total_trans} transitions ({trans_per_game:.1f}/game)  "
-                  f"buf={len(buffer)}")
+                  f"bufs={buf_sizes}")
 
     return total_trans
+
+
+# Keep type hint importable without circular import
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .guanzero_selfplay import ReplayBuffer

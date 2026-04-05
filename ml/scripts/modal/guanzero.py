@@ -1,12 +1,8 @@
-"""Modal GPU launcher for GuanZero training (arXiv:2402.13582).
+"""Modal GPU launcher for GuanZero training — 4-network version (arXiv:2402.13582).
 
 Usage:
-    # Benchmark run — measure speed, stops before full training:
     modal run ml/scripts/modal/guanzero.py --benchmark
-
-    # Full training (run after benchmark approval):
-    modal run ml/scripts/modal/guanzero.py --detach
-    modal run ml/scripts/modal/guanzero.py --distill-games 8000 --selfplay-episodes 100000 --detach
+    modal run --detach ml/scripts/modal/guanzero.py
 """
 
 from __future__ import annotations
@@ -22,7 +18,6 @@ CHECKPOINT_DIR = "/checkpoints"
 
 _root = Path(__file__).resolve().parent.parent.parent.parent  # chucking-eggs/
 
-# Same image as dmc.py: Rust movegen + torch + numpy
 image = (
     modal.Image.debian_slim(python_version="3.10")
     .apt_install("curl", "build-essential")
@@ -42,16 +37,16 @@ image = (
 @app.function(
     image=image,
     gpu="A10G",
-    timeout=3600 * 8,
+    timeout=3600 * 10,
     volumes={CHECKPOINT_DIR: vol},
 )
 def guanzero_remote(
     distill_games: int = 8000,
-    distill_epochs: int = 3,
-    selfplay_episodes: int = 100_000,
+    selfplay_episodes: int = 150_000,
     batch_size: int = 512,
     eval_interval: int = 10_000,
     eval_games: int = 200,
+    buffer_capacity: int = 50_000,
     benchmark: bool = False,
 ) -> str:
     import os
@@ -63,66 +58,67 @@ def guanzero_remote(
 
     import torch
     from guandan.cards import Rank
-    from guandan.training.guanzero_network import GuanZeroNetwork
-    from guandan.training.guanzero_selfplay import ReplayBuffer
+    from guandan.training.guanzero_selfplay import make_nets_buffers_optimizers
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    net = GuanZeroNetwork().to(device)
     level_rank = Rank.TWO
     save_dir = Path(CHECKPOINT_DIR)
-    buffer = ReplayBuffer(capacity=200_000)
 
-    # ── Buffer prefill from Jidan (MSE-compatible) ───────────────────────
-    from guandan.agents.jidan_bot import JidanBot
-    from guandan.training.guanzero_distill import prefill_buffer_from_jidan
+    # Create 4 nets, 4 buffers, 4 optimizers
+    nets, buffers, optimizers = make_nets_buffers_optimizers(
+        device, buffer_capacity=buffer_capacity, lr=3e-5
+    )
+    n_params = sum(p.numel() for net in nets for p in net.parameters())
+    print(f"[GuanZero] 4 networks, {n_params:,} total params, device={device}")
 
-    if not benchmark:
-        print(f"[GuanZero] Pre-filling + training on {distill_games} Jidan games...")
-        pretrain_optimizer = torch.optim.Adam(net.parameters(), lr=3e-5)
-        total = prefill_buffer_from_jidan(
-            JidanBot(), buffer, distill_games, level_rank,
-            net=net, optimizer=pretrain_optimizer, device=device,
-            batch_size=batch_size, train_steps_per_game=2,
-        )
-        print(f"[GuanZero] Pretrain done: {total} transitions, buf_size={len(buffer)}")
-        vol.commit()
-
+    # ── Benchmark ─────────────────────────────────────────────────────────
     if benchmark:
-        # Time 100 episodes and extrapolate
         from guandan.game import GuanDanEnv
         from guandan.training.guanzero_selfplay import play_selfplay_episode, train_dmc_step
-        import torch.optim as optim
 
-        optimizer = optim.Adam(net.parameters(), lr=3e-5)
         env = GuanDanEnv(level_rank=level_rank)
         N = 100
         t0 = time.perf_counter()
         for i in range(N):
-            transitions = play_selfplay_episode(net, env, epsilon=0.1, device=device, level_rank=level_rank)
-            for nh, hist, hl, a_enc, G in transitions:
-                buffer.push(nh, hist, hl, a_enc, G)
-            for _ in range(4):
-                train_dmc_step(net, optimizer, buffer, batch_size, device)
+            transitions = play_selfplay_episode(nets, env, epsilon=0.1, device=device, level_rank=level_rank)
+            for (seat, nh, hist, hl, a_enc, G) in transitions:
+                buffers[seat].push(nh, hist, hl, a_enc, G)
+            for seat in range(4):
+                for _ in range(4):
+                    train_dmc_step(nets[seat], optimizers[seat], buffers[seat], batch_size, device)
         elapsed = time.perf_counter() - t0
         sec_per_ep = elapsed / N
-
         lines = [
             f"[Benchmark] {N} episodes in {elapsed:.1f}s ({sec_per_ep:.2f}s/ep)",
             f"  GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu'}",
         ]
-        for target in [15_000, 50_000, 100_000]:
+        for target in [15_000, 50_000, 150_000]:
             hrs = sec_per_ep * target / 3600
             lines.append(f"  {target:,} episodes → {hrs:.1f} hrs")
         vol.commit()
         return "\n".join(lines)
 
-    # Full self-play training
-    prod_ckpt = save_dir / "prod_03_29_11_51.pt"  # may not exist on Modal vol
+    # ── Buffer prefill + pretrain from Jidan ──────────────────────────────
+    from guandan.agents.jidan_bot import JidanBot
+    from guandan.training.guanzero_distill import prefill_buffer_from_jidan
+
+    print(f"[GuanZero] Pre-filling 4 seat buffers with {distill_games} Jidan games...")
+    total = prefill_buffer_from_jidan(
+        JidanBot(), buffers, distill_games, level_rank,
+        nets=nets, optimizers=optimizers, device=device,
+        batch_size=batch_size, train_steps_per_game=2,
+    )
+    print(f"[GuanZero] Prefill done: {total} transitions")
+    vol.commit()
+
+    # ── Self-play training ─────────────────────────────────────────────────
+    prod_ckpt = save_dir / "prod_03_29_11_51.pt"
     from guandan.training.guanzero_selfplay import train_selfplay
 
     train_selfplay(
-        net=net,
-        buffer=buffer,
+        nets=nets,
+        buffers=buffers,
+        optimizers=optimizers,
         device=device,
         level_rank=level_rank,
         total_episodes=selfplay_episodes,
@@ -133,31 +129,27 @@ def guanzero_remote(
         prod_ckpt_path=prod_ckpt if prod_ckpt.exists() else None,
     )
     vol.commit()
-    return f"[GuanZero] Training complete. {selfplay_episodes} episodes. Checkpoints in volume."
+    return f"[GuanZero] Training complete. {selfplay_episodes} episodes."
 
 
 @app.local_entrypoint()
 def main(
     distill_games: int = 8000,
-    distill_epochs: int = 3,
     selfplay_episodes: int = 150_000,
     batch_size: int = 512,
     eval_interval: int = 10_000,
     eval_games: int = 200,
+    buffer_capacity: int = 50_000,
     benchmark: bool = False,
 ):
-    """Launch GuanZero training on Modal A10G GPU.
-
-    Distillation is skipped if /checkpoints/jidan_distill.pt already exists in the volume.
-    Pass --benchmark to measure speed and extrapolate runtime before full training.
-    """
+    """Launch GuanZero 4-network training on Modal A10G GPU."""
     result = guanzero_remote.remote(
         distill_games=distill_games,
-        distill_epochs=distill_epochs,
         selfplay_episodes=selfplay_episodes,
         batch_size=batch_size,
         eval_interval=eval_interval,
         eval_games=eval_games,
+        buffer_capacity=buffer_capacity,
         benchmark=benchmark,
     )
     print(result)

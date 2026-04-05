@@ -1,4 +1,8 @@
-"""GuanZero agent wrapper — plugs into the existing agent interface."""
+"""GuanZero agent wrapper — plugs into the existing agent interface.
+
+Supports both 4-network checkpoints (one per seat) and legacy single-network
+checkpoints (replicated to all 4 seats for backwards compatibility).
+"""
 
 from __future__ import annotations
 
@@ -12,7 +16,7 @@ from ..training.guanzero_network import GuanZeroNetwork
 
 
 class GuanZeroBot:
-    """Wraps a trained GuanZeroNetwork as an Agent.
+    """Wraps 4 trained GuanZeroNetworks (one per seat) as an Agent.
 
     Usage:
         bot = GuanZeroBot("checkpoints/guanzero_best.pt")
@@ -35,18 +39,28 @@ class GuanZeroBot:
         self.level_rank = level_rank
 
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-        state_dict = ckpt.get("state_dict", ckpt)
-        self.net = GuanZeroNetwork().to(device)
-        self.net.load_state_dict(state_dict)
-        self.net.eval()
+
+        if "nets" in ckpt:
+            # 4-network checkpoint
+            self.nets = [GuanZeroNetwork().to(device) for _ in range(4)]
+            for i, sd in enumerate(ckpt["nets"]):
+                self.nets[i].load_state_dict(sd)
+        else:
+            # Legacy single-network checkpoint — replicate to all 4 seats
+            net = GuanZeroNetwork().to(device)
+            net.load_state_dict(ckpt.get("state_dict", ckpt))
+            self.nets = [net] * 4
+
+        for net in self.nets:
+            net.eval()
 
     def act(self, env, player: int):
-        """Choose the highest-Q legal action."""
+        """Choose the highest-Q legal action using this seat's network."""
         legal = env.legal_moves()
         if len(legal) == 1:
             return legal[0]
 
         q_values = score_all_actions(
-            self.net, env, player, legal, self.level_rank, self.device
+            self.nets[player], env, player, legal, self.level_rank, self.device
         )
         return legal[int(q_values.argmax().item())]

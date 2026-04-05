@@ -102,11 +102,11 @@ export default function Sidebar({ player }: SidebarProps) {
           const isActive =
             pathname === resolvedHref || (label === "Play" && pathname === "/game");
           const className = `flex items-center justify-center gap-2.5 px-2 py-3 lg:py-2 rounded-lg text-sm font-medium transition-all duration-150 ease-out ${
-            expanded ? "lg:justify-start lg:px-3 lg:border-l-2" : ""
+            expanded ? "lg:justify-start lg:px-3" : ""
           } ${
             isActive
-              ? `text-accent bg-accent/5${expanded ? " lg:border-accent" : ""}`
-              : `text-foreground hover:bg-accent/8 hover:text-accent${expanded ? " lg:border-transparent" : ""}`
+              ? "text-accent bg-accent/8"
+              : "text-foreground hover:bg-accent/8 hover:text-accent"
           }`;
           return (
             <Link key={label} href={resolvedHref} className={className}>

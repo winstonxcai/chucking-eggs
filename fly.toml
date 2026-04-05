@@ -1,5 +1,5 @@
 app = 'chucking-eggs'
-primary_region = 'sin'
+primary_region = 'lax'
 
 [build]
   dockerfile = "web/backend/Dockerfile"

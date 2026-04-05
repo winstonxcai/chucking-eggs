@@ -32,7 +32,7 @@ TRAIN_DEFAULTS = dict(
     mlp_hidden=512,
     train_steps=4,
     pretrain_games=5000,
-    n_workers=4,
+    n_workers=1,  # Modal sandbox doesn't support multiprocessing
     quick=False,
     run_name=None,
 )

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crown, Flag, Hand, HelpCircle, LogOut, MoreVertical } from "lucide-react";
+import { ChevronDown, ChevronRight, Crown, Flag, Hand, HelpCircle, LogOut, MoreVertical } from "lucide-react";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -539,7 +539,7 @@ export default function GameBoard({
             className="flex items-center justify-between w-full text-[13px] font-semibold text-text-secondary tracking-wider uppercase"
           >
             <span>Groups</span>
-            <span className="text-xs">{groupsOpen ? "▾" : "▸"}</span>
+            {groupsOpen ? <ChevronDown size={14} strokeWidth={2} /> : <ChevronRight size={14} strokeWidth={2} />}
           </button>
           {groupsOpen && (
             localGroups.length === 0 ? (
@@ -572,7 +572,7 @@ export default function GameBoard({
             className="flex items-center justify-between w-full text-[13px] font-semibold text-text-secondary tracking-wider uppercase"
           >
             <span>Legal Combos</span>
-            <span className="text-xs">{legalOpen ? "▾" : "▸"}</span>
+            {legalOpen ? <ChevronDown size={14} strokeWidth={2} /> : <ChevronRight size={14} strokeWidth={2} />}
           </button>
           {legalOpen && (
             gameState.is_my_turn ? (
@@ -597,7 +597,7 @@ export default function GameBoard({
             className="flex items-center justify-between w-full text-[13px] font-semibold text-text-secondary tracking-wider uppercase"
           >
             <span>All Combos</span>
-            <span className="text-xs">{allOpen ? "▾" : "▸"}</span>
+            {allOpen ? <ChevronDown size={14} strokeWidth={2} /> : <ChevronRight size={14} strokeWidth={2} />}
           </button>
           {allOpen && (
             <ComboBrowser

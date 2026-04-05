@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { LayoutList } from "lucide-react";
+import { LayoutList, X } from "lucide-react";
 import type { ComboDTO } from "@/lib/types";
 
 const TIMEOUT_S = 90;
@@ -117,7 +117,7 @@ export default function GameControls({
               className={`px-2 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer${hasSelection ? "" : " invisible"}`}
               onClick={onUnselect}
             >
-              ×
+              <X size={14} strokeWidth={2} />
             </button>
             <button
               className={`px-2.5 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${isLeading ? "invisible" : ""}`}

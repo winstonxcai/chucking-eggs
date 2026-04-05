@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ComboDTO } from "@/lib/types";
 
 interface ComboBrowserProps {
@@ -82,7 +83,7 @@ export default function ComboBrowser({ legalMoves, onSelectCombo }: ComboBrowser
               className="flex items-center gap-1.5 w-full text-left"
               onClick={() => toggleType(type)}
             >
-              <span className="text-xs text-text-secondary">{openTypes.has(type) ? "\u25be" : "\u25b8"}</span>
+              {openTypes.has(type) ? <ChevronDown size={14} strokeWidth={2} className="text-text-secondary shrink-0" /> : <ChevronRight size={14} strokeWidth={2} className="text-text-secondary shrink-0" />}
               <span
                 className={`text-[13px] font-semibold ${
                   isBomb ? "text-accent" : "text-foreground"

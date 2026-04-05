@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 import torch
 
@@ -146,8 +146,8 @@ def main() -> None:
                         help="Comma-separated agent names (default: all rule-based)")
     parser.add_argument("--rl-checkpoint", type=str, default=None,
                         help="Path to RL checkpoint .pt file (required if 'rl' in agents)")
-    parser.add_argument("--output", type=str, default="runs/wr_matrix",
-                        help="Output directory (default: runs/wr_matrix)")
+    parser.add_argument("--output", type=str, default="ml/runs/wr_matrix",
+                        help="Output directory (default: ml/runs/wr_matrix)")
     parser.add_argument("--rating-passes", type=int, default=30,
                         help="Glicko-2 convergence passes (default: 30)")
     args = parser.parse_args()

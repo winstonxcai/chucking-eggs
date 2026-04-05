@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 
 # Add src to path for imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from guandan.training.q_network import QNetworkLSTM, get_device
 from guandan.training.train import evaluate

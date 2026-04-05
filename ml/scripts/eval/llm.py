@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from guandan.agents import make_agent
 from guandan.agents.llm_bot import LLMBot
@@ -158,7 +158,7 @@ def main() -> None:
     print_results(results, stats)
 
     # Save results
-    run_dir = Path("runs") / args.run_name
+    run_dir = Path("ml/runs") / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
     output = {
         "model": args.model,

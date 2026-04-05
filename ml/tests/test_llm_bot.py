@@ -1,6 +1,9 @@
-"""Tests for LLMBot — all LLM calls mocked."""
+"""Tests for LLMBot — all LLM calls mocked. (Skipped — LLM agent pivoted away from.)"""
 
 from __future__ import annotations
+
+import pytest
+pytestmark = pytest.mark.skip(reason="LLM agent no longer in use")
 
 from unittest.mock import MagicMock, patch
 

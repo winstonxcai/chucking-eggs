@@ -82,7 +82,7 @@ class AIService:
             self.agents[agent_name] = make_agent(agent_name, level_rank=Rank.TWO)
 
     def _try_load_rl_agent(self) -> None:
-        checkpoints_dir = Path(__file__).resolve().parents[3] / "checkpoints"
+        checkpoints_dir = Path(__file__).resolve().parents[3] / "ml" / "checkpoints"
         prod_files = sorted(checkpoints_dir.glob("prod_*.pt"))
         checkpoint_path = prod_files[-1] if prod_files else checkpoints_dir / "selfplay_best.pt"
         if not checkpoint_path.exists():

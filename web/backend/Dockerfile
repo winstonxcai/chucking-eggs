@@ -6,7 +6,7 @@ COPY web/backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Build context is repo root — use full paths
-COPY src/ /app/src/
+COPY ml/src/ /app/src/
 COPY web/backend/app/ /app/app/
 
 ENV PYTHONPATH=/app/src:/app

@@ -281,7 +281,7 @@ def main(args: argparse.Namespace | None = None) -> None:
         parser.add_argument("--run-name", type=str, default="qmix")
         args = parser.parse_args()
 
-    run_dir = Path("runs") / args.run_name
+    run_dir = Path("ml/runs") / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
     _setup_logging(run_dir / "train.log")
     os.makedirs(args.checkpoint_dir, exist_ok=True)

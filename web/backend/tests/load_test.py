@@ -443,8 +443,8 @@ def print_report(r: LoadTestResults) -> None:
 
 
 def save_results(r: LoadTestResults) -> str:
-    """Save results to runs/load_tests/<timestamp>.json. Returns the file path."""
-    out_dir = Path("runs/load_tests")
+    """Save results to ml/runs/load_tests/<timestamp>.json. Returns the file path."""
+    out_dir = Path("ml/runs/load_tests")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     completed = [g for g in r.game_metrics if g.completed]

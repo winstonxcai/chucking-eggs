@@ -28,7 +28,7 @@ from guandan.training.guanzero_network import GuanZeroNetwork
 from guandan.training.guanzero_selfplay import ReplayBuffer
 
 
-_PROD_CKPT = Path("checkpoints/prod_03_29_11_51.pt")
+_PROD_CKPT = Path("ml/checkpoints/prod_03_29_11_51.pt")
 
 
 def _get_device(args) -> torch.device:

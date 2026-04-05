@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 # Checkpoint: prod_03_29_11_51.pt — Elo #1 (1786), no-GNN, lstm_hidden=256, hidden=1024
 # Keys: 'lead' / 'follow'
-_DEFAULT_CKPT = Path(__file__).resolve().parents[5] / "checkpoints" / "prod_03_29_11_51.pt"
+_DEFAULT_CKPT = Path(__file__).resolve().parents[3] / "checkpoints" / "prod_03_29_11_51.pt"
 
 _q_lead: QNetworkLSTM | None = None
 _q_follow: QNetworkLSTM | None = None

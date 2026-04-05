@@ -544,7 +544,7 @@ def _run_stage(
 
 def _train_curriculum(args: argparse.Namespace, device, level_rank) -> None:
     """Curriculum training from random weights. Exp 1 of isolated pipeline."""
-    run_dir = Path("runs") / args.run_name
+    run_dir = Path("ml/runs") / args.run_name
     t0 = time.time()
 
     log.info("=" * 60)
@@ -745,7 +745,7 @@ def main(args: argparse.Namespace | None = None) -> None:
                             help="Named opponent for training episodes seats 1&3 (None=self-play)")
         args = parser.parse_args()
 
-    run_dir = Path("runs") / args.run_name
+    run_dir = Path("ml/runs") / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
     _setup_logging(run_dir / "train.log")
 

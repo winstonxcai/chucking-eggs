@@ -12,9 +12,6 @@ import json
 import pytest
 from httpx import AsyncClient
 
-from tests.web.conftest import create_game
-
-
 DIFFICULTIES = ["easy", "medium", "hard", "expert"]
 
 

@@ -16,7 +16,7 @@ app = modal.App("guanzero-train")
 vol = modal.Volume.from_name("guandan-checkpoints", create_if_missing=True)
 CHECKPOINT_DIR = "/checkpoints"
 
-_root = Path(__file__).resolve().parent.parent.parent.parent  # chucking-eggs/
+_root = Path(__file__).resolve().parent.parent.parent  # ml/
 
 image = (
     modal.Image.debian_slim(python_version="3.10")

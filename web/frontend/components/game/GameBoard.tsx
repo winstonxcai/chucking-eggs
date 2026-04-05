@@ -390,7 +390,7 @@ export default function GameBoard({
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1 h-7 lg:h-[68px] relative overflow-visible flex justify-center">
               {partner && (
-                <div className="absolute bottom-0">
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
                   <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.partner_hand} />
                 </div>
               )}

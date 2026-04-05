@@ -56,7 +56,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       </div>
 
       {revealedHand && revealedHand.length > 0 && (
-        <div className="flex flex-wrap gap-0.5 justify-center mt-1 max-w-[240px]">
+        <div className="flex flex-wrap gap-0.5 justify-center mt-1 w-[240px]">
           {revealedHand.map((card) => (
             <CardComponent key={card.id} card={card} size="sm" />
           ))}

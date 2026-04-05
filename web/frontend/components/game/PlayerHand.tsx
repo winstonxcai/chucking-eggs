@@ -26,10 +26,11 @@ export default function PlayerHand({
   hiddenIds,
   compact,
 }: PlayerHandProps) {
-  // Ungrouped cards (not in any group, not flying)
+  // Ungrouped cards (not in any group). Flying cards stay in the array so
+  // the hand container keeps its width and the layout doesn't reflow mid-animation.
   const ungroupedCards = useMemo(
-    () => cards.filter((c) => !groupedCardIds.has(c.id) && !hiddenIds?.has(c.id)),
-    [cards, groupedCardIds, hiddenIds]
+    () => cards.filter((c) => !groupedCardIds.has(c.id)),
+    [cards, groupedCardIds]
   );
   const ungroupedGroups = useMemo(() => groupByRank(ungroupedCards), [ungroupedCards]);
 
@@ -43,8 +44,8 @@ export default function PlayerHand({
       <div className="flex items-end justify-center gap-3 min-w-max px-2 pt-3">
         {/* Groups on the left */}
         {groups.map((group) => {
-          // Hide group if any of its cards are flying
-          if (hiddenIds && group.cardIds.some((cid) => hiddenIds.has(cid))) return null;
+          // Keep flying groups in the DOM (invisible) so the hand width stays stable.
+          const groupIsHidden = hiddenIds ? group.cardIds.some((cid) => hiddenIds.has(cid)) : false;
           const groupCards = cards.filter((c) => group.cardIds.includes(c.id));
           const isSelected = group.cardIds.some((cid) => selectedIds.has(cid));
           return (
@@ -54,7 +55,7 @@ export default function PlayerHand({
                 isSelected
                   ? "border-2 border-accent bg-[#FFF8F5]"
                   : "border border-border bg-surface hover:border-accent/50"
-              }`}
+              } ${groupIsHidden ? "invisible" : ""}`}
               onClick={() => onGroupClick(group)}
             >
               <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wide">
@@ -77,12 +78,13 @@ export default function PlayerHand({
         {/* Ungrouped cards with rank stacking */}
         {ungroupedGroups.map((rankGroup) => {
           const anySelected = rankGroup.some((c) => selectedIds.has(c.id));
+          const rankGroupIsHidden = hiddenIds ? rankGroup.some((c) => hiddenIds.has(c.id)) : false;
           return (
             <div
               key={rankGroup[0].rank + "-" + rankGroup[0].suit}
               className={`flex flex-col items-center transition-transform ${
                 anySelected ? "-translate-y-3" : ""
-              }`}
+              } ${rankGroupIsHidden ? "invisible" : ""}`}
             >
               <CardComponent
                 card={rankGroup[0]}

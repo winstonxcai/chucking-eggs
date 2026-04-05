@@ -25,7 +25,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
 
   return (
     <div
-      className={`flex flex-col gap-0.5 px-1.5 py-1 lg:px-3 lg:py-2 bg-surface rounded-xl border border-border border-l-[3px] ${borderColor} shadow-[0_1px_3px_rgba(0,0,0,0.06)]`}
+      className={`flex flex-col gap-0.5 px-1.5 py-1 lg:px-3 lg:py-2 min-w-[60px] lg:min-w-[96px] bg-surface rounded-xl border border-border border-l-[3px] ${borderColor} shadow-[0_1px_3px_rgba(0,0,0,0.06)]`}
     >
       {/* Mobile: single-line "Name · Role" */}
       <div className="lg:hidden flex items-center gap-1">

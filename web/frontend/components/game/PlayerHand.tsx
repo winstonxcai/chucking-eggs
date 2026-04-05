@@ -40,7 +40,7 @@ export default function PlayerHand({
   return (
     // overflow-x-auto creates a scroll container. CSS forces overflow-y to auto too,
     // which would clip the -translate-y-3 upward lift. pt-3 provides clearance above cards.
-    <div className="overflow-x-auto pb-1 -mx-2">
+    <div className="overflow-x-auto pb-1 -mx-2" style={{ minHeight: compact ? "68px" : "84px" }}>
       <div className="flex items-end justify-center gap-3 min-w-max px-2 pt-3">
         {/* Groups on the left */}
         {groups.map((group) => {

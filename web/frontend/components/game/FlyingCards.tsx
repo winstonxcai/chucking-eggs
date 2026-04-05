@@ -9,17 +9,21 @@ interface FlyingCardsProps {
   fromRects: DOMRect[];
   toRect: DOMRect;
   compact?: boolean;
+  onArrived?: () => void;
 }
 
-export default function FlyingCards({ cards, fromRects, toRect, compact }: FlyingCardsProps) {
+export default function FlyingCards({ cards, fromRects, toRect, compact, onArrived }: FlyingCardsProps) {
   const [arrived, setArrived] = useState(false);
 
   useEffect(() => {
     // Double rAF to ensure initial position is painted before triggering transition
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => setArrived(true));
+      requestAnimationFrame(() => {
+        setArrived(true);
+        onArrived?.();
+      });
     });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Target dimensions based on compact mode
   const cardW = compact ? 28 : 36;

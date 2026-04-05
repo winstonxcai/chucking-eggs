@@ -156,6 +156,12 @@ export default function GameBoard({
     setSelectedIds(new Set());
   }, [matchingCombo, onPlayCards]);
 
+  // Reset the flying clock to when the CSS transition actually starts (after double rAF),
+  // so the 300ms minimum wait is measured from animation start, not from handlePlay.
+  const handleFlyingArrived = useCallback(() => {
+    flyingStartRef.current = Date.now();
+  }, []);
+
   // Clear flying overlay once game state updates (server confirmed the play),
   // but always wait at least 300ms so the animation can complete.
   useEffect(() => {
@@ -435,7 +441,7 @@ export default function GameBoard({
         </div>
 
         {/* Your turn indicator + Controls — hidden on mobile once player is finished */}
-        <div className={`mt-auto lg:mt-0 py-0.5 lg:py-0 ${compactHand && gameState.my_hand.length === 0 ? "hidden lg:block" : ""}`}>
+        <div className={`mt-auto lg:mt-0 py-0.5 lg:py-0 ${compactHand && gameState.my_hand.length === 0 ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
           {/* Desktop-only turn label */}
           <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-1 ${!gameState.is_my_turn ? "invisible" : ""}`}>
             <div className="w-1.5 h-1.5 rounded-full bg-accent" />
@@ -462,7 +468,7 @@ export default function GameBoard({
         </div>
 
         {/* Player hand with groups — hidden on mobile once player is finished */}
-        <div className={`py-0 lg:py-1 ${compactHand && gameState.my_hand.length === 0 ? "hidden lg:block" : ""}`}>
+        <div className={`py-0 lg:py-1 ${compactHand && gameState.my_hand.length === 0 ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
           <PlayerHand
             cards={gameState.my_hand}
             selectedIds={selectedIds}
@@ -626,6 +632,7 @@ export default function GameBoard({
           fromRects={flyingCards.fromRects}
           toRect={flyingCards.toRect}
           compact={compactHand}
+          onArrived={handleFlyingArrived}
         />
       )}
 

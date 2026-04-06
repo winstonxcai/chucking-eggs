@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Crown, Flag, Hand, HelpCircle, LogOut, MoreVertical } from "lucide-react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
@@ -71,7 +72,6 @@ export default function GameBoard({
   onAbort,
 }: GameBoardProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [menuOpen, setMenuOpen] = useState(false);
   const [forfeitConfirm, setForfeitConfirm] = useState(false);
   const [abortConfirm, setAbortConfirm] = useState(false);
   const [flyingCards, setFlyingCards] = useState<{
@@ -296,33 +296,44 @@ export default function GameBoard({
               Results
             </button>
           )}
-          <div className="relative">
-            <button
-              data-testid="game-menu-button"
-              className="text-text-secondary hover:text-foreground transition-colors p-1"
-              title="Game menu"
-              onClick={() => { setMenuOpen((o) => !o); setForfeitConfirm(false); setAbortConfirm(false); }}
-            >
-              <MoreVertical size={18} />
-            </button>
-            {menuOpen && (
-              <div className="absolute top-full right-0 mt-1 bg-surface border border-border rounded-lg shadow-md p-1 min-w-[140px] z-30">
+          <DropdownMenu.Root
+            onOpenChange={(open) => {
+              if (!open) { setForfeitConfirm(false); setAbortConfirm(false); }
+            }}
+          >
+            <DropdownMenu.Trigger asChild>
+              <button
+                data-testid="game-menu-button"
+                className="text-text-secondary hover:text-foreground transition-colors p-1"
+                title="Game menu"
+              >
+                <MoreVertical size={18} />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={4}
+                className="bg-surface border border-border rounded-lg shadow-md p-1 min-w-[140px] z-30"
+              >
                 {/* Rules — always shown */}
-                <a
-                  href="/rules"
-                  className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-foreground rounded hover:bg-muted transition-colors"
-                >
-                  <HelpCircle size={13} /> Rules
-                </a>
+                <DropdownMenu.Item asChild>
+                  <a
+                    href="/rules"
+                    className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-foreground rounded hover:bg-muted outline-none transition-colors cursor-pointer"
+                  >
+                    <HelpCircle size={13} /> Rules
+                  </a>
+                </DropdownMenu.Item>
 
                 {/* Abort — only before first move */}
                 {onAbort && !abortConfirm && !forfeitConfirm && (
-                  <button
-                    className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs font-medium text-text-secondary rounded hover:bg-muted transition-colors cursor-pointer"
-                    onClick={() => setAbortConfirm(true)}
+                  <DropdownMenu.Item
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs font-medium text-text-secondary rounded hover:bg-muted outline-none transition-colors cursor-pointer"
+                    onSelect={(e) => { e.preventDefault(); setAbortConfirm(true); }}
                   >
                     <LogOut size={13} /> Abort Game
-                  </button>
+                  </DropdownMenu.Item>
                 )}
                 {onAbort && abortConfirm && (
                   <div className="flex flex-col gap-1.5 p-2">
@@ -330,28 +341,24 @@ export default function GameBoard({
                     <div className="flex gap-1.5">
                       <button
                         className="flex-1 py-1 bg-surface border border-border text-xs font-semibold rounded hover:border-foreground transition-colors cursor-pointer"
-                        onClick={() => { onAbort(); setMenuOpen(false); }}
-                      >
-                        Confirm
-                      </button>
+                        onClick={() => onAbort()}
+                      >Confirm</button>
                       <button
                         className="flex-1 py-1 bg-background border border-border text-xs rounded hover:border-foreground transition-colors cursor-pointer"
                         onClick={() => setAbortConfirm(false)}
-                      >
-                        Cancel
-                      </button>
+                      >Cancel</button>
                     </div>
                   </div>
                 )}
 
                 {/* Forfeit — only multiplayer */}
                 {onForfeit && !forfeitConfirm && !abortConfirm && (
-                  <button
-                    className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs font-medium text-team-red rounded hover:bg-red-50 transition-colors cursor-pointer"
-                    onClick={() => setForfeitConfirm(true)}
+                  <DropdownMenu.Item
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs font-medium text-team-red rounded hover:bg-red-50 outline-none transition-colors cursor-pointer"
+                    onSelect={(e) => { e.preventDefault(); setForfeitConfirm(true); }}
                   >
                     <Flag size={13} /> Forfeit Game
-                  </button>
+                  </DropdownMenu.Item>
                 )}
                 {onForfeit && forfeitConfirm && (
                   <div className="flex flex-col gap-1.5 p-2">
@@ -359,22 +366,18 @@ export default function GameBoard({
                     <div className="flex gap-1.5">
                       <button
                         className="flex-1 py-1 bg-team-red text-white text-xs font-semibold rounded hover:opacity-90 transition-opacity cursor-pointer"
-                        onClick={() => { onForfeit(); setMenuOpen(false); }}
-                      >
-                        Confirm
-                      </button>
+                        onClick={() => onForfeit()}
+                      >Confirm</button>
                       <button
                         className="flex-1 py-1 bg-background border border-border text-xs rounded hover:border-foreground transition-colors cursor-pointer"
                         onClick={() => setForfeitConfirm(false)}
-                      >
-                        Cancel
-                      </button>
+                      >Cancel</button>
                     </div>
                   </div>
                 )}
-              </div>
-            )}
-          </div>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         </div>
         {/* Reconnection banner */}
         {connectionStatus === "reconnecting" && (

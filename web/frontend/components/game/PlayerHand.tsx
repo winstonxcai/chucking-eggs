@@ -45,13 +45,13 @@ export default function PlayerHand({
   };
 
   // Pill dimensions for rank stacking
-  const pillClass = compact ? "w-8 h-[14px]" : "w-9 h-[22px]";
+  const pillClass = compact ? "w-8 h-[14px]" : "w-9 h-[22px] lg:w-10 lg:h-[26px]";
 
   return (
     // overflow-x-auto creates a scroll container. CSS forces overflow-y to auto too,
-    // which would clip the -translate-y-3 upward lift. pt-3 provides clearance above cards.
-    <div className="overflow-x-auto pb-1 -mx-2" style={{ minHeight: compact ? "68px" : "84px" }}>
-      <div className="flex items-end justify-center gap-3 min-w-max px-2 pt-3">
+    // which would clip the -translate-y-3 upward lift. pt-4 provides clearance above cards + hover.
+    <div className="overflow-x-auto pb-1 -mx-2" style={{ minHeight: compact ? "68px" : "96px" }}>
+      <div className="flex items-end justify-center gap-3 min-w-max px-2 pt-4">
         {/* Groups on the left */}
         {groups.map((group) => {
           // Keep flying groups in the DOM (invisible) so the hand width stays stable.

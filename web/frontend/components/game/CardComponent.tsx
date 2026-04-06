@@ -22,9 +22,9 @@ export default function CardComponent({ card, selected, onClick, size = "md" }: 
     ? card.rank === 17 ? "#C75D4A" : "#1A1612"  // RJ red, BJ dark
     : suitColor[card.suit] ?? "#1A1612";
   const isWild = card.is_wild;
-  const w = size === "xs" ? "w-7 h-[40px]" : size === "sm" ? "w-9 h-[52px]" : "w-12 h-[68px]";
-  const textSize = size === "xs" ? "text-[10px]" : size === "sm" ? "text-xs" : "text-base";
-  const suitSize = size === "xs" ? "text-[9px]" : size === "sm" ? "text-[11px]" : "text-sm";
+  const w = size === "xs" ? "w-7 h-[40px]" : size === "sm" ? "w-9 h-[52px] lg:w-10 lg:h-[60px]" : "w-12 h-[68px] lg:w-14 lg:h-[80px]";
+  const textSize = size === "xs" ? "text-[10px]" : size === "sm" ? "text-xs lg:text-sm" : "text-base lg:text-lg";
+  const suitSize = size === "xs" ? "text-[9px]" : size === "sm" ? "text-[11px] lg:text-xs" : "text-sm lg:text-base";
 
   let borderClass = "border-[1.5px] border-border";
   let shadowClass = "shadow-[0_1px_3px_rgba(0,0,0,0.08)]";

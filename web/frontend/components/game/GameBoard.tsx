@@ -405,13 +405,13 @@ export default function GameBoard({
             <div className="col-start-2 row-start-1 h-7 lg:h-[82px] relative overflow-visible flex justify-center">
               {partner && (
                 <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
-                  <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={handDone ? undefined : gameState.partner_hand} wideReveal />
+                  <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={handDone ? undefined : gameState.partner_hand} wideReveal revealAnchor="center" />
                 </div>
               )}
             </div>
 
             {/* Left opponent */}
-            <div className="col-start-1 row-start-1 lg:row-start-2 xl:w-[240px] xl:flex xl:justify-end">
+            <div className="col-start-1 row-start-1 lg:row-start-2">
               {leftOpp && (
                 <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={handDone ? undefined : gameState.opponent_hands?.["1"]} />
               )}
@@ -480,9 +480,9 @@ export default function GameBoard({
             </div>
 
             {/* Right opponent */}
-            <div className="col-start-3 row-start-1 lg:row-start-2 xl:w-[240px] xl:flex xl:justify-start">
+            <div className="col-start-3 row-start-1 lg:row-start-2">
               {rightOpp && (
-                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={handDone ? undefined : gameState.opponent_hands?.["3"]} />
+                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={handDone ? undefined : gameState.opponent_hands?.["3"]} revealAnchor="end" />
               )}
             </div>
           </div>

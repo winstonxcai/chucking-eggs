@@ -9,9 +9,10 @@ interface OpponentPanelProps {
   revealedHand?: CardDTO[];
   isActive?: boolean;
   wideReveal?: boolean;
+  revealAnchor?: "start" | "end" | "center";
 }
 
-export default function OpponentPanel({ player, thinking, revealedHand, isActive, wideReveal }: OpponentPanelProps) {
+export default function OpponentPanel({ player, thinking, revealedHand, isActive, wideReveal, revealAnchor = "start" }: OpponentPanelProps) {
   const teamColor = player.is_teammate ? "border-l-team-green" : "border-l-team-red";
   const pulseClass = player.is_teammate ? "animate-border-pulse-green" : "animate-border-pulse-red";
   const borderColor = `${teamColor}${isActive ? ` ${pulseClass}` : ""}`;
@@ -24,9 +25,14 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
         ? "Partner"
         : "Opponent";
 
+  const anchorClass =
+    revealAnchor === "end" ? "right-0" :
+    revealAnchor === "center" ? "left-1/2 -translate-x-1/2" :
+    "left-0";
+
   return (
     <div
-      className={`flex flex-col gap-0.5 px-1.5 py-1 lg:px-3 lg:py-2 min-w-[60px] lg:min-w-[96px] bg-surface rounded-xl border border-border border-l-[3px] ${borderColor} shadow-[0_1px_3px_rgba(0,0,0,0.06)]`}
+      className={`relative flex flex-col gap-0.5 px-1.5 py-1 lg:px-3 lg:py-2 min-w-[60px] lg:min-w-[96px] bg-surface rounded-xl border border-border border-l-[3px] ${borderColor} shadow-[0_1px_3px_rgba(0,0,0,0.06)]`}
     >
       {/* Mobile: single-line "Name · Role" */}
       <div className="lg:hidden flex items-center gap-1">
@@ -57,7 +63,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       </div>
 
       {revealedHand && revealedHand.length > 0 && (
-        <div className={`flex flex-wrap gap-0.5 justify-center mt-1 ${wideReveal ? "w-[360px]" : "w-[240px]"}`}>
+        <div className={`absolute top-full mt-1 z-10 flex flex-wrap gap-0.5 ${anchorClass} ${wideReveal ? "w-[360px]" : "w-[240px]"}`}>
           {revealedHand.map((card) => (
             <CardComponent key={card.id} card={card} size="sm" />
           ))}

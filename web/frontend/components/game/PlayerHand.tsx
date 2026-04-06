@@ -113,7 +113,7 @@ export default function PlayerHand({
             >
               <CardComponent
                 card={rankGroup[0]}
-                size={compact ? "sm" : "md"}
+                size="sm"
                 selected={selectedIds.has(rankGroup[0].id)}
                 onClick={() => handleRankCardClick(rankGroup[0], rankGroup)}
               />

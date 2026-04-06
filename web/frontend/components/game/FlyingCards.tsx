@@ -12,7 +12,7 @@ interface FlyingCardsProps {
   onArrived?: () => void;
 }
 
-export default function FlyingCards({ cards, fromRects, toRect, compact, onArrived }: FlyingCardsProps) {
+export default function FlyingCards({ cards, fromRects, toRect, onArrived }: FlyingCardsProps) {
   const [arrived, setArrived] = useState(false);
 
   useEffect(() => {
@@ -52,7 +52,7 @@ export default function FlyingCards({ cards, fromRects, toRect, compact, onArriv
 
         return (
           <div key={card.id} className="absolute" style={style}>
-            <CardComponent card={card} size={compact ? "xs" : "sm"} />
+            <CardComponent card={card} size="sm" />
           </div>
         );
       })}

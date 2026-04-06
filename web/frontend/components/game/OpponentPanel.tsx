@@ -8,9 +8,10 @@ interface OpponentPanelProps {
   thinking?: boolean;
   revealedHand?: CardDTO[];
   isActive?: boolean;
+  wideReveal?: boolean;
 }
 
-export default function OpponentPanel({ player, thinking, revealedHand, isActive }: OpponentPanelProps) {
+export default function OpponentPanel({ player, thinking, revealedHand, isActive, wideReveal }: OpponentPanelProps) {
   const teamColor = player.is_teammate ? "border-l-team-green" : "border-l-team-red";
   const pulseClass = player.is_teammate ? "animate-border-pulse-green" : "animate-border-pulse-red";
   const borderColor = `${teamColor}${isActive ? ` ${pulseClass}` : ""}`;
@@ -56,7 +57,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       </div>
 
       {revealedHand && revealedHand.length > 0 && (
-        <div className="flex flex-wrap gap-0.5 justify-center mt-1 w-[240px]">
+        <div className={`flex flex-wrap gap-0.5 justify-center mt-1 ${wideReveal ? "w-[360px]" : "w-[240px]"}`}>
           {revealedHand.map((card) => (
             <CardComponent key={card.id} card={card} size="sm" />
           ))}

@@ -9,6 +9,7 @@ interface PlayerHandProps {
   cards: CardDTO[];
   selectedIds: Set<string>;
   onToggleCard: (id: string) => void;
+  onToggleCards: (ids: string[]) => void;
   groups: CardGroup[];
   groupedCardIds: Set<string>;
   onGroupClick: (group: CardGroup) => void;
@@ -20,6 +21,7 @@ export default function PlayerHand({
   cards,
   selectedIds,
   onToggleCard,
+  onToggleCards,
   groups,
   groupedCardIds,
   onGroupClick,
@@ -33,6 +35,14 @@ export default function PlayerHand({
     [cards, groupedCardIds]
   );
   const ungroupedGroups = useMemo(() => groupByRank(ungroupedCards), [ungroupedCards]);
+
+  const handleRankCardClick = (card: CardDTO, rankGroup: CardDTO[]) => {
+    if (rankGroup.length > 2 && !rankGroup.some((c) => selectedIds.has(c.id))) {
+      onToggleCards(rankGroup.map((c) => c.id));
+    } else {
+      onToggleCard(card.id);
+    }
+  };
 
   // Pill dimensions for rank stacking
   const pillClass = compact ? "w-8 h-[14px]" : "w-9 h-[22px]";
@@ -81,7 +91,7 @@ export default function PlayerHand({
           const rankGroupIsHidden = hiddenIds ? rankGroup.some((c) => hiddenIds.has(c.id)) : false;
           return (
             <div
-              key={rankGroup[0].rank + "-" + rankGroup[0].suit}
+              key={rankGroup[0].id}
               className={`flex flex-col items-center transition-transform ${
                 anySelected ? "-translate-y-3" : ""
               } ${rankGroupIsHidden ? "invisible" : ""}`}
@@ -90,7 +100,7 @@ export default function PlayerHand({
                 card={rankGroup[0]}
                 size={compact ? "sm" : "md"}
                 selected={selectedIds.has(rankGroup[0].id)}
-                onClick={() => onToggleCard(rankGroup[0].id)}
+                onClick={() => handleRankCardClick(rankGroup[0], rankGroup)}
               />
               {rankGroup.slice(1).map((card) => (
                 <div
@@ -101,15 +111,17 @@ export default function PlayerHand({
                       ? "bg-surface border-2 border-accent shadow-[0_1px_4px_rgba(217,119,87,0.15)]"
                       : "bg-surface border-[1.5px] border-border shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
                   }`}
-                  onClick={() => onToggleCard(card.id)}
+                  onClick={() => handleRankCardClick(card, rankGroup)}
                 >
                   <span
                     className={`${compact ? "text-[9px]" : "text-[13px]"} font-semibold`}
                     style={{
-                      color: card.suit === 1 || card.suit === 2 ? "#C75D4A" : "#1A1612",
+                      color: card.rank >= 16
+                        ? card.rank === 17 ? "#C75D4A" : "#1A1612"
+                        : card.suit === 1 || card.suit === 2 ? "#C75D4A" : "#1A1612",
                     }}
                   >
-                    {card.suit_symbol}
+                    {card.rank >= 16 ? card.rank_display : card.suit_symbol}
                   </span>
                 </div>
               ))}

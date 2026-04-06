@@ -137,6 +137,14 @@ export default function GameBoard({
     });
   }, []);
 
+  const toggleCards = useCallback((ids: string[]) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+  }, []);
+
   const matchingCombo = useMemo(
     () => findMatchingCombo(selectedIds, gameState.legal_moves, gameState.my_hand),
     [selectedIds, gameState.legal_moves, gameState.my_hand]
@@ -507,6 +515,7 @@ export default function GameBoard({
             cards={gameState.my_hand}
             selectedIds={selectedIds}
             onToggleCard={toggleCard}
+            onToggleCards={toggleCards}
             groups={localGroups}
             groupedCardIds={groupedCardIds}
             onGroupClick={handleGroupClick}
@@ -675,7 +684,10 @@ export default function GameBoard({
         <GameOverModal
           data={gameOver}
           humanSeat={gameState.my_seat}
-          onPlayAgain={isMultiplayer && onRematch ? onRematch : onPlayAgain}
+          onPlayAgain={() => {
+            setGameOverDismissed(true);
+            (isMultiplayer && onRematch ? onRematch : onPlayAgain)?.();
+          }}
           isMultiplayer={isMultiplayer}
           onDismiss={() => setGameOverDismissed(true)}
         />

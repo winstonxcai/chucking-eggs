@@ -64,6 +64,9 @@ export default function LeaderboardPage() {
     return <LeaderboardSkeleton />;
   }
 
+  const merged = [...data.humans, ...data.bots].sort((a, b) => b.elo - a.elo);
+  let humanRank = 0;
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 lg:px-8 lg:py-8">
       <h1 className="text-2xl font-bold text-foreground mb-6">Leaderboard</h1>
@@ -77,8 +80,24 @@ export default function LeaderboardPage() {
           <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide hidden sm:block">Games</span>
         </div>
 
-        {/* Human rows */}
-        {data.humans.map((entry, i) => {
+        {merged.map((entry) => {
+          if (entry.is_bot) {
+            return (
+              <div
+                key={entry.username}
+                className="grid grid-cols-[2rem_1fr_4rem] sm:grid-cols-[2rem_1fr_4rem_5rem] px-4 py-3 border-b border-border last:border-0 items-center cursor-default"
+              >
+                <span className="text-sm text-text-secondary">—</span>
+                <span className="text-sm text-text-secondary flex items-center gap-2 truncate">
+                  {entry.username}
+                  <span className="text-xs border border-border text-foreground/50 bg-background px-1.5 py-0.5 rounded-md shrink-0">bot</span>
+                </span>
+                <span className="text-sm tabular-nums text-text-secondary">{entry.elo}</span>
+                <span className="text-sm text-text-secondary hidden sm:block">—</span>
+              </div>
+            );
+          }
+          const rank = ++humanRank;
           const isMe = player?.username === entry.username;
           return (
             <Link
@@ -86,7 +105,7 @@ export default function LeaderboardPage() {
               href={`/profile/${entry.username}`}
               className="grid grid-cols-[2rem_1fr_4rem] sm:grid-cols-[2rem_1fr_4rem_5rem] px-4 py-3 border-b border-border hover:bg-background transition-colors items-center"
             >
-              <span className="text-sm text-text-secondary tabular-nums">{i + 1}</span>
+              <span className="text-sm text-text-secondary tabular-nums">{rank}</span>
               <span className={`text-sm font-medium flex items-center gap-2 truncate ${isMe ? "text-accent" : "text-foreground"}`}>
                 {entry.username}
                 {isMe && (
@@ -98,27 +117,6 @@ export default function LeaderboardPage() {
             </Link>
           );
         })}
-
-        {/* Divider */}
-        <div className="px-4 py-2 bg-background border-b border-border">
-          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">AI Anchors</span>
-        </div>
-
-        {/* Bot rows */}
-        {data.bots.map((bot) => (
-          <div
-            key={bot.username}
-            className="grid grid-cols-[2rem_1fr_4rem] sm:grid-cols-[2rem_1fr_4rem_5rem] px-4 py-3 border-b border-border last:border-0 items-center cursor-default"
-          >
-            <span className="text-sm text-text-secondary">—</span>
-            <span className="text-sm text-text-secondary flex items-center gap-2 truncate">
-              {bot.username}
-              <span className="text-xs border border-border text-foreground/50 bg-background px-1.5 py-0.5 rounded-md shrink-0">bot</span>
-            </span>
-            <span className="text-sm tabular-nums text-text-secondary">{bot.elo}</span>
-            <span className="text-sm text-text-secondary hidden sm:block">—</span>
-          </div>
-        ))}
       </div>
     </div>
   );

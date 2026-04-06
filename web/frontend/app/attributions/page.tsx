@@ -2,16 +2,12 @@ import Link from "next/link";
 
 const OUR_BOTS = [
   { name: "Easy",   elo: 1415, source: "Strategic heuristic agent" },
-  { name: "Medium", elo: 1461, source: "Strategic heuristic agent" },
-  { name: "Casual", elo: 1523, source: "Strategic heuristic agent" },
+  { name: "Medium", elo: 1523, source: "Strategic heuristic agent" },
   { name: "Hard",   elo: 1621, source: "Strategic heuristic agent" },
-  { name: "Expert", elo: 1786, source: "Deep RL neural network" },
 ];
 
 const COMPETITION_BOTS = [
   { name: "Wjsd",        elo: 1212, source: "SAU",   award: "3rd Prize" },
-  { name: "Liuzha",      elo: 1260, source: "SEU",   award: "2nd Prize" },
-  { name: "Hulalala",    elo: 1264, source: "SEU",   award: "3rd Prize" },
   { name: "Competition", elo: 1464, source: "SEU",   award: "1st Prize · Li Jing" },
   { name: "Master",      elo: 1726, source: "Fudan", award: "2nd Prize · Chen Yuguan" },
   { name: "Yaoji",       elo: 1772, source: "NUAA",  award: "3rd Prize" },
@@ -118,7 +114,7 @@ export default function AttributionsPage() {
         <h2 className="text-xl font-bold text-foreground tracking-tight">This Project</h2>
         <p className="text-sm text-text-secondary leading-relaxed">
           Chucking Eggs is an open-source Guan Dan engine and deep reinforcement learning trainer.
-          The strategic, heuristic, and Expert bots were built and trained in-house.
+          The strategic and heuristic bots were built in-house.
           Competition bots were ported from the 2020 NJUPT Guan Dan AI Competition with permission.
         </p>
       </section>

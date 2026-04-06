@@ -24,16 +24,13 @@ BOT_ELOS: dict[str, int] = {
 
 # Bot entries injected server-side into the leaderboard.
 BOT_LEADERBOARD_ENTRIES: list[dict] = [
-    {"username": "Expert", "elo": 1786, "games_played": None, "is_bot": True},
     {"username": "Jidan", "elo": 1779, "games_played": None, "is_bot": True},
     {"username": "Yaoji", "elo": 1772, "games_played": None, "is_bot": True},
     {"username": "NoAI", "elo": 1726, "games_played": None, "is_bot": True},
     {"username": "Tiger / Falcon / Leopard", "elo": 1621, "games_played": None, "is_bot": True},
-    {"username": "Panda / Owl / Cat (Medium)", "elo": 1523, "games_played": None, "is_bot": True},
+    {"username": "Panda / Owl / Cat", "elo": 1523, "games_played": None, "is_bot": True},
     {"username": "Lalala", "elo": 1464, "games_played": None, "is_bot": True},
     {"username": "Koala / Turtle / Lamb", "elo": 1415, "games_played": None, "is_bot": True},
-    {"username": "Hulalala", "elo": 1264, "games_played": None, "is_bot": True},
-    {"username": "Liuzha", "elo": 1260, "games_played": None, "is_bot": True},
     {"username": "Wjsd", "elo": 1212, "games_played": None, "is_bot": True},
 ]
 

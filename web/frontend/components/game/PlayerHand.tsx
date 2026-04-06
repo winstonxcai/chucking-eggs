@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CardDTO, CardGroup } from "@/lib/types";
 import { groupByRank } from "@/lib/cards";
 import CardComponent from "./CardComponent";
@@ -47,10 +47,25 @@ export default function PlayerHand({
   // Pill dimensions for rank stacking
   const pillClass = compact ? "w-8 h-[14px]" : "w-9 h-[22px] lg:w-10 lg:h-[26px]";
 
+  // Lock in the tallest height ever rendered (e.g. when groups with labels are present)
+  // so the container never shrinks as cards are played, preventing layout shifts on the gameboard.
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [lockedMinH, setLockedMinH] = useState(0);
+  useEffect(() => { setLockedMinH(0); }, [compact]);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver(([entry]) => {
+      setLockedMinH((prev) => Math.max(prev, entry.borderBoxSize[0].blockSize));
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
   return (
     // overflow-x-auto creates a scroll container. CSS forces overflow-y to auto too,
     // which would clip the -translate-y-3 upward lift. pt-4 provides clearance above cards + hover.
-    <div className="overflow-x-auto pb-1 -mx-2" style={{ minHeight: compact ? "68px" : "96px" }}>
+    <div ref={containerRef} className="overflow-x-auto pb-1 -mx-2" style={{ minHeight: lockedMinH || (compact ? 68 : 96) }}>
       <div className="flex items-end justify-center gap-3 min-w-max px-2 pt-4">
         {/* Groups on the left */}
         {groups.map((group) => {

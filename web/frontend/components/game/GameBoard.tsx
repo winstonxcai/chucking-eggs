@@ -476,7 +476,7 @@ export default function GameBoard({
             {/* Right opponent */}
             <div className="col-start-3 row-start-1 lg:row-start-2">
               {rightOpp && (
-                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} />
+                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.opponent_hands?.["3"]} />
               )}
             </div>
           </div>

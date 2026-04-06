@@ -533,8 +533,7 @@ def train(args: argparse.Namespace) -> None:
     n_lead_params = sum(p.numel() for p in q_lead.parameters())
     n_follow_params = sum(p.numel() for p in q_follow.parameters())
     print(f"Lead params: {n_lead_params:,}  Follow params: {n_follow_params:,}")
-    print(f"Training: heuristic imitation → self-play")
-    print(f"Eval opponent: heuristic")
+    print(f"Training: heuristic imitation → curriculum (heuristic→xingdream→strategic→jidan)")
 
     # ── Phase 1: Heuristic Imitation ──────────────────────────
     pretrain_trans = 0
@@ -556,23 +555,33 @@ def train(args: argparse.Namespace) -> None:
         }, pretrain_path)
         print(f"  Saved {pretrain_path}")
 
-    # ── Phase 2: Self-Play ────────────────────────────────────
+    # ── Phase 2: Curriculum ─────────────────────────────────────
+    # Progressive opponents: heuristic(1461) → xingdream(1523) → strategic(1621) → jidan(1779)
+    CURRICULUM = [
+        ("heuristic",  0.40),  # 2a: consolidate pretrain
+        ("xingdream",  0.35),  # 2b: +62 Elo
+        ("strategic",  0.30),  # 2c: +98 Elo
+        ("jidan",      None),  # 2d: terminal, +158 Elo
+    ]
+    STAGE_PATIENCE = 15
+
+    stage_idx = 0
+    stage_opp_name, stage_gate = CURRICULUM[stage_idx]
+    stage_opp = make_agent(stage_opp_name, env.level_rank)
+
     print(f"\n{'='*60}")
-    print(f"  PHASE 2: vs Strategic+Jidan ({args.episodes} episodes)")
+    print(f"  PHASE 2: Curriculum ({args.episodes} episodes)")
+    print(f"  Stages: {' → '.join(f'{n}({g:.0%})' if g else n for n, g in CURRICULUM)}")
     print(f"{'='*60}")
     print(f"Buffer: {len(buffer):,} transitions "
-          f"({pretrain_trans:,} from pretrain, will be gradually replaced)\n")
+          f"({pretrain_trans:,} from pretrain)")
+    print(f"Starting stage 2a: vs {stage_opp_name}"
+          f" (gate={stage_gate:.0%})\n" if stage_gate else f"")
 
-    eps_start, eps_end = 0.20, 0.05  # Lower start since network is warm
+    eps_start, eps_end = 0.20, 0.05
     eps_decay_episodes = int(args.episodes * 0.85)
     best_wr = 0.0
     evals_without_improvement = 0
-
-    # Fixed opponents for phase 2 (no self-play — too unstable at this scale)
-    opp_strategic = make_agent("strategic", env.level_rank)
-    opp_jidan = make_agent("jidan", env.level_rank)
-    phase2_opponents = [opp_strategic, opp_jidan]
-    phase2_opp_names = ["strategic", "jidan"]
 
     # Parallel episode collection setup
     n_workers = args.n_workers
@@ -593,20 +602,20 @@ def train(args: argparse.Namespace) -> None:
     last_save_ep = 0
     pbar = tqdm(
         total=args.episodes, unit="ep", file=sys.stderr,
-        dynamic_ncols=True, desc="phase2",
+        dynamic_ncols=True, desc=f"2a-{stage_opp_name}",
     )
     while ep < args.episodes:
         batch_size_ep = min(n_workers, args.episodes - ep)
         frac = min(1.0, (ep + 1) / eps_decay_episodes)
         epsilon = eps_start + (eps_end - eps_start) * frac
 
-        # Train vs strategic+jidan (50/50 mix each episode)
+        # Collect episode vs current stage opponent
         if use_parallel:
             futures = [
                 pool.submit(
                     _episode_worker, lead_sd, follow_sd,
                     args.lstm_hidden, args.mlp_hidden,
-                    epsilon, random.choice(phase2_opp_names),
+                    epsilon, stage_opp_name,
                 )
                 for _ in range(batch_size_ep)
             ]
@@ -614,14 +623,13 @@ def train(args: argparse.Namespace) -> None:
                 for s, a, h, hl, mc_return, oc in f.result():
                     buffer.push(s, a, h, hl, mc_return, oc)
         else:
-            opp = random.choice(phase2_opponents)
             trans = play_episode(
-                env, q_lead, q_follow, epsilon, device, opponent=opp
+                env, q_lead, q_follow, epsilon, device, opponent=stage_opp
             )
             for s, a, h, hl, mc_return, oc in trans:
                 buffer.push(s, a, h, hl, mc_return, oc)
 
-        # Gradient steps — scale with batch size
+        # Gradient steps
         loss_lead = None
         loss_follow = None
         for _ in range(args.train_steps * batch_size_ep):
@@ -632,7 +640,6 @@ def train(args: argparse.Namespace) -> None:
             if lf is not None:
                 loss_follow = lf
 
-        # Sync weights to workers after training steps
         if use_parallel:
             lead_sd, follow_sd = _sync_weights()
 
@@ -641,6 +648,8 @@ def train(args: argparse.Namespace) -> None:
         if loss_lead is not None:
             ql = (loss_lead[0] + (loss_follow[0] if loss_follow else 0)) / 2
             pbar.set_postfix(
+                stage=f"2{'abcd'[stage_idx]}",
+                opp=stage_opp_name,
                 ε=f"{epsilon:.3f}",
                 loss=f"{ql:.4f}",
                 wr=f"{best_wr:.1%}",
@@ -662,11 +671,24 @@ def train(args: argparse.Namespace) -> None:
                 q_lead, q_follow, device,
                 n_games=args.eval_games, opponent="jidan",
             )
-            elapsed = time.time() - t0
-            wr = result_strategic["winrate"]  # use strategic as patience signal
+            # Also eval vs current stage opponent if not already covered
+            if stage_opp_name not in ("heuristic", "strategic", "jidan"):
+                result_stage = evaluate(
+                    q_lead, q_follow, device,
+                    n_games=args.eval_games, opponent=stage_opp_name,
+                )
+                wr_stage = result_stage["winrate"]
+            elif stage_opp_name == "heuristic":
+                wr_stage = result["winrate"]
+            elif stage_opp_name == "strategic":
+                wr_stage = result_strategic["winrate"]
+            else:
+                wr_stage = result_jidan["winrate"]
 
-            if wr > best_wr:
-                best_wr = wr
+            elapsed = time.time() - t0
+
+            if wr_stage > best_wr:
+                best_wr = wr_stage
                 evals_without_improvement = 0
             else:
                 evals_without_improvement += 1
@@ -675,20 +697,21 @@ def train(args: argparse.Namespace) -> None:
             lf_str = f"{loss_follow[0]:.4f}" if loss_follow is not None else "n/a"
             aux_str = f"{(loss_lead[1] + (loss_follow[1] if loss_follow else 0)) / 2:.4f}" if loss_lead is not None else "n/a"
 
+            stage_label = f"2{'abcd'[stage_idx]}-{stage_opp_name}"
             tqdm.write(
-                f"Ep {ep:>6d} | ε={epsilon:.3f} | "
+                f"Ep {ep:>6d} [{stage_label}] | ε={epsilon:.3f} | "
                 f"L={ll_str}/{lf_str} aux={aux_str} | "
                 f"buf={len(buffer):>6d} | "
                 f"vs_heur={result['winrate']:.1%} "
                 f"vs_strat={result_strategic['winrate']:.1%} "
                 f"vs_jidan={result_jidan['winrate']:.1%} "
-                f"(best_strat={best_wr:.1%}, "
-                f"pat={evals_without_improvement}/{args.patience}) | "
+                f"(vs_{stage_opp_name}={wr_stage:.1%}, "
+                f"pat={evals_without_improvement}/{STAGE_PATIENCE}) | "
                 f"{elapsed:.0f}s"
             )
 
             _append_metrics(run_dir, {
-                "phase": "self-play",
+                "phase": f"curriculum-{stage_label}",
                 "episode": ep,
                 "epsilon": round(epsilon, 4),
                 "loss_lead": loss_lead[0] if loss_lead else None,
@@ -698,6 +721,8 @@ def train(args: argparse.Namespace) -> None:
                 "winrate": result["winrate"],
                 "winrate_strategic": result_strategic["winrate"],
                 "winrate_jidan": result_jidan["winrate"],
+                "winrate_stage": wr_stage,
+                "stage": stage_label,
                 "avg_reward": result["avg_reward"],
                 "finish_12": result["finish_12"],
                 "finish_13": result["finish_13"],
@@ -706,11 +731,34 @@ def train(args: argparse.Namespace) -> None:
                 "elapsed_s": round(elapsed, 1),
             })
 
-            if evals_without_improvement >= args.patience:
+            # Check stage advancement
+            advance = False
+            if stage_gate is not None and wr_stage >= stage_gate:
                 tqdm.write(
-                    f"Early stopping: no improvement in WR vs strategic "
-                    f"for {args.patience} evals"
+                    f"  ★ Gate met: vs_{stage_opp_name}={wr_stage:.1%} >= {stage_gate:.0%}. "
+                    f"Advancing to next stage."
                 )
+                advance = True
+            elif evals_without_improvement >= STAGE_PATIENCE:
+                tqdm.write(
+                    f"  → Patience exhausted ({STAGE_PATIENCE} evals). "
+                    f"Advancing to next stage."
+                )
+                advance = True
+
+            if advance and stage_idx < len(CURRICULUM) - 1:
+                stage_idx += 1
+                stage_opp_name, stage_gate = CURRICULUM[stage_idx]
+                stage_opp = make_agent(stage_opp_name, env.level_rank)
+                buffer.clear()
+                best_wr = 0.0
+                evals_without_improvement = 0
+                stage_label = f"2{'abcd'[stage_idx]}-{stage_opp_name}"
+                gate_str = f"gate={stage_gate:.0%}" if stage_gate else "terminal"
+                tqdm.write(f"  Starting stage {stage_label} ({gate_str})")
+                pbar.set_description(f"{stage_label}")
+            elif advance and stage_idx >= len(CURRICULUM) - 1:
+                tqdm.write("  Terminal stage — patience exhausted. Stopping.")
                 break
 
         # Save checkpoint
@@ -720,6 +768,7 @@ def train(args: argparse.Namespace) -> None:
             torch.save(
                 {
                     "episode": ep,
+                    "stage": f"2{'abcd'[stage_idx]}-{stage_opp_name}",
                     "lead_state_dict": q_lead.state_dict(),
                     "follow_state_dict": q_follow.state_dict(),
                     "opt_lead_state_dict": opt_lead.state_dict(),

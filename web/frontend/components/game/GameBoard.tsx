@@ -411,7 +411,7 @@ export default function GameBoard({
             </div>
 
             {/* Left opponent */}
-            <div className="col-start-1 row-start-1 lg:row-start-2 lg:w-[240px] lg:flex lg:justify-end">
+            <div className="col-start-1 row-start-1 lg:row-start-2 xl:w-[240px] xl:flex xl:justify-end">
               {leftOpp && (
                 <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={handDone ? undefined : gameState.opponent_hands?.["1"]} />
               )}
@@ -480,7 +480,7 @@ export default function GameBoard({
             </div>
 
             {/* Right opponent */}
-            <div className="col-start-3 row-start-1 lg:row-start-2 lg:w-[240px] lg:flex lg:justify-start">
+            <div className="col-start-3 row-start-1 lg:row-start-2 xl:w-[240px] xl:flex xl:justify-start">
               {rightOpp && (
                 <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={handDone ? undefined : gameState.opponent_hands?.["3"]} />
               )}

@@ -750,7 +750,7 @@ def train(args: argparse.Namespace) -> None:
                 stage_idx += 1
                 stage_opp_name, stage_gate = CURRICULUM[stage_idx]
                 stage_opp = make_agent(stage_opp_name, env.level_rank)
-                buffer.clear()
+                # Keep buffer warm — don't clear between stages
                 best_wr = 0.0
                 evals_without_improvement = 0
                 stage_label = f"2{'abcd'[stage_idx]}-{stage_opp_name}"

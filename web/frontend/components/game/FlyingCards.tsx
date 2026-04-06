@@ -25,9 +25,9 @@ export default function FlyingCards({ cards, fromRects, toRect, compact, onArriv
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Target dimensions based on compact mode
-  const cardW = compact ? 28 : 36;
-  const cardH = compact ? 40 : 52;
+  // Use actual rendered card dimensions from the source rects
+  const cardW = fromRects[0].width;
+  const cardH = fromRects[0].height;
   const totalWidth = cards.length * cardW + (cards.length - 1) * 2;
   const targetBaseX = toRect.left + toRect.width / 2 - totalWidth / 2;
   const targetY = toRect.bottom - cardH;

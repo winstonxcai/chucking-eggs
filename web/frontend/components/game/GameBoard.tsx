@@ -265,6 +265,9 @@ export default function GameBoard({
     setSelectedIds(new Set(cards.map((c) => c.id)));
   }, []);
 
+  // Gate layout changes behind animation to prevent shifts that move tableSeat0Ref mid-flight
+  const handDone = compactHand && gameState.my_hand.length === 0 && !flyingCards;
+
   // --- Layout data ---
   const partner = gameState.players.find((p) => p.seat === 2);
   const leftOpp = gameState.players.find((p) => p.seat === 1);
@@ -399,7 +402,7 @@ export default function GameBoard({
             <div className="col-start-2 row-start-1 h-7 lg:h-[82px] relative overflow-visible flex justify-center">
               {partner && (
                 <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
-                  <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.partner_hand} />
+                  <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={handDone ? undefined : gameState.partner_hand} />
                 </div>
               )}
             </div>
@@ -407,7 +410,7 @@ export default function GameBoard({
             {/* Left opponent */}
             <div className="col-start-1 row-start-1 lg:row-start-2">
               {leftOpp && (
-                <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.opponent_hands?.["1"]} />
+                <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={handDone ? undefined : gameState.opponent_hands?.["1"]} />
               )}
             </div>
 
@@ -476,14 +479,14 @@ export default function GameBoard({
             {/* Right opponent */}
             <div className="col-start-3 row-start-1 lg:row-start-2">
               {rightOpp && (
-                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.opponent_hands?.["3"]} />
+                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={handDone ? undefined : gameState.opponent_hands?.["3"]} />
               )}
             </div>
           </div>
         </div>
 
         {/* Your turn indicator + Controls — hidden on mobile once player is finished */}
-        <div className={`mt-auto lg:mt-0 py-0.5 lg:py-0 ${compactHand && gameState.my_hand.length === 0 ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
+        <div className={`mt-auto lg:mt-0 py-0.5 lg:py-0 ${handDone ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
           {/* Desktop-only turn label */}
           <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-1 ${!gameState.is_my_turn ? "invisible" : ""}`}>
             <div className="w-1.5 h-1.5 rounded-full bg-accent" />
@@ -510,7 +513,7 @@ export default function GameBoard({
         </div>
 
         {/* Player hand with groups — hidden on mobile once player is finished */}
-        <div className={`py-0 lg:py-1 ${compactHand && gameState.my_hand.length === 0 ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
+        <div className={`py-0 lg:py-1 ${handDone ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
           <PlayerHand
             cards={gameState.my_hand}
             selectedIds={selectedIds}

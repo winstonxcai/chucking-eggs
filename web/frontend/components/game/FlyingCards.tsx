@@ -38,24 +38,21 @@ export default function FlyingCards({ cards, fromRects, toRect, compact, onArriv
         const from = fromRects[i];
         const targetX = targetBaseX + i * (cardW + 2);
 
-        const style: React.CSSProperties = arrived
-          ? {
-              left: targetX,
-              top: targetY,
-              width: cardW,
-              height: cardH,
-              transition: "all 300ms cubic-bezier(0.4, 0, 0.2, 1)",
-            }
-          : {
-              left: from.left,
-              top: from.top,
-              width: from.width,
-              height: from.height,
-            };
+        const dx = from.left - targetX;
+        const dy = from.top - targetY;
+
+        const style: React.CSSProperties = {
+          left: targetX,
+          top: targetY,
+          width: cardW,
+          height: cardH,
+          transform: arrived ? "translate(0, 0)" : `translate(${dx}px, ${dy}px)`,
+          transition: arrived ? "transform 300ms cubic-bezier(0.4, 0, 0.2, 1)" : "none",
+        };
 
         return (
           <div key={card.id} className="absolute" style={style}>
-            <CardComponent card={card} size={arrived ? (compact ? "xs" : "sm") : "md"} />
+            <CardComponent card={card} size={compact ? "xs" : "sm"} />
           </div>
         );
       })}

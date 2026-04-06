@@ -18,6 +18,7 @@ function GameContent() {
   const [reconnectToken, setReconnectToken] = useState<string | null>(null);
   const [seat, setSeat] = useState<number>(0);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [playingAgain, setPlayingAgain] = useState(false);
 
   const difficulty = searchParams.get("difficulty") || "easy";
 
@@ -95,6 +96,11 @@ function GameContent() {
     }
   }, [gameOver, closeReason, clearGame]);
 
+  // Reset playingAgain once the socket clears gameOver (new game transition complete)
+  useEffect(() => {
+    if (!gameOver) setPlayingAgain(false);
+  }, [gameOver]);
+
   useEffect(() => {
     if (!gameOver?.elo_changes) return;
     const change = gameOver.elo_changes["0"];
@@ -136,6 +142,7 @@ function GameContent() {
   }, [gameId, router]);
 
   const handlePlayAgain = useCallback(async () => {
+    setPlayingAgain(true);
     try {
       const res = await fetch(`${API_BASE}/api/game/create`, {
         method: "POST",

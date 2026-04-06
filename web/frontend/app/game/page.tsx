@@ -231,11 +231,11 @@ function GameContent() {
     );
   }
 
-  if (!gameId || !gameState) {
+  if (!gameId || !gameState || playingAgain) {
     return (
       <StatusScreen
         variant="loading"
-        title={!gameId ? "Creating game..." : "Connecting..."}
+        title={!gameId || playingAgain ? "Creating game..." : "Connecting..."}
         message="Setting up your table"
       />
     );

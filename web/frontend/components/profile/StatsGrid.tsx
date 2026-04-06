@@ -71,7 +71,7 @@ export default function StatsGrid({ games, username }: StatsGridProps) {
               />
             </div>
             <span className="text-xs text-text-secondary tabular-nums w-16 text-right shrink-0">
-              {wins}W / {total}G
+              {wins}W {total - wins}L
             </span>
           </div>
         );

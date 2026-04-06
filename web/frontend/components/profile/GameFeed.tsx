@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 interface GamePlayer {
   player_id: string | null;
   display_name: string;
@@ -30,14 +32,18 @@ function formatDate(iso: string) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+const PAGE_SIZE = 10;
+
 export default function GameFeed({ games, username, viewerUsername }: GameFeedProps) {
+  const [visible, setVisible] = useState(PAGE_SIZE);
+
   if (games.length === 0) {
     return <p className="text-sm text-text-secondary">No games yet.</p>;
   }
 
   return (
     <div className="flex flex-col divide-y divide-border">
-      {games.slice(0, 5).map((game) => {
+      {games.slice(0, visible).map((game) => {
         // Find the seat of this user
         const mySeat = game.players.find(
           (p) => !p.is_bot && p.display_name === username
@@ -90,6 +96,14 @@ export default function GameFeed({ games, username, viewerUsername }: GameFeedPr
           </div>
         );
       })}
+      {visible < games.length && (
+        <button
+          onClick={() => setVisible((v) => v + PAGE_SIZE)}
+          className="pt-3 text-xs text-text-secondary hover:text-foreground transition-colors"
+        >
+          Show more
+        </button>
+      )}
     </div>
   );
 }

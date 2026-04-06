@@ -33,7 +33,7 @@ interface GameBoardProps {
 }
 
 /** Render a single trick action (cards or "Pass") */
-function TrickActionDisplay({ action, size = "sm" }: { action: TrickAction | null; size?: "xs" | "sm" }) {
+function TrickActionDisplay({ action, size = "sm" }: { action: TrickAction | null; size?: "xs" | "sm" | "md" }) {
   if (!action) return null;
   if (action.type === "pass") {
     return (
@@ -426,7 +426,7 @@ export default function GameBoard({
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(2)!]}</span>
                   ) : (
                     <>
-                      <TrickActionDisplay action={ta?.["2"] ?? null} size={compactHand ? "xs" : "sm"} />
+                      <TrickActionDisplay action={ta?.["2"] ?? null} size={compactHand ? "sm" : "md"} />
                       <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${gameState.trick_lead_seat === 2 ? "" : " invisible"}`} />
                     </>
                   )}
@@ -439,7 +439,7 @@ export default function GameBoard({
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(1)!]}</span>
                   ) : (
                     <>
-                      <TrickActionDisplay action={ta?.["1"] ?? null} size={compactHand ? "xs" : "sm"} />
+                      <TrickActionDisplay action={ta?.["1"] ?? null} size={compactHand ? "sm" : "md"} />
                       <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${gameState.trick_lead_seat === 1 ? "" : " invisible"}`} />
                     </>
                   )}
@@ -452,7 +452,7 @@ export default function GameBoard({
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(3)!]}</span>
                   ) : (
                     <>
-                      <TrickActionDisplay action={ta?.["3"] ?? null} size={compactHand ? "xs" : "sm"} />
+                      <TrickActionDisplay action={ta?.["3"] ?? null} size={compactHand ? "sm" : "md"} />
                       <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${gameState.trick_lead_seat === 3 ? "" : " invisible"}`} />
                     </>
                   )}
@@ -465,7 +465,7 @@ export default function GameBoard({
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(gameState.my_seat)!]}</span>
                   ) : (
                     <>
-                      {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} size={compactHand ? "xs" : "sm"} />}
+                      {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} size={compactHand ? "sm" : "md"} />}
                       <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${gameState.trick_lead_seat === 0 ? "" : " invisible"}`} />
                     </>
                   )}

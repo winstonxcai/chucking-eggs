@@ -98,7 +98,7 @@ async def get_player_stats(player_id: str) -> dict:
     games = await db.games.find(
         {"players.player_id": player_id},
         sort=[("played_at", -1)],
-    ).to_list(length=20)
+    ).to_list(length=None)
     return {"player": player, "games": games}
 
 

@@ -30,7 +30,7 @@ export default function FlyingCards({ cards, fromRects, toRect, compact, onArriv
   const cardH = compact ? 40 : 52;
   const totalWidth = cards.length * cardW + (cards.length - 1) * 2;
   const targetBaseX = toRect.left + toRect.width / 2 - totalWidth / 2;
-  const targetY = toRect.top + toRect.height / 2 - cardH / 2;
+  const targetY = toRect.bottom - cardH;
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none">

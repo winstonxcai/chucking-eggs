@@ -56,6 +56,7 @@ interface ProfileData {
   player: PlayerDoc;
   games: unknown[];
   elo_history: { date: string; elo: number }[];
+  peak_elo?: number;
 }
 
 function ProfileContent() {
@@ -94,7 +95,7 @@ function ProfileContent() {
     return <ProfileSkeleton />;
   }
 
-  const { player, games, elo_history = [] } = data;
+  const { player, games, elo_history = [], peak_elo } = data;
 
   // Compute win rate
   const wins = (games as { players: { display_name: string; is_bot: boolean; team_result: string }[] }[])
@@ -103,9 +104,7 @@ function ProfileContent() {
   const total = games.length;
   const winPct = total > 0 ? Math.round((wins / total) * 100) : 0;
 
-  const peakElo = elo_history.length > 0
-    ? Math.max(...elo_history.map((p) => p.elo))
-    : player.elo;
+  const peakElo = peak_elo ?? player.elo;
 
   return (
     <div className="max-w-2xl mx-auto px-8 py-8 flex flex-col gap-6">
@@ -125,9 +124,7 @@ function ProfileContent() {
         <div className="flex flex-col items-end">
           <span className="text-2xl font-bold text-accent">{player.elo}</span>
           <span className="text-xs text-text-secondary">Elo</span>
-          {peakElo > player.elo && (
-            <span className="text-xs text-text-secondary mt-1">peak {peakElo}</span>
-          )}
+          <span className="text-xs text-text-secondary mt-1">peak {peakElo}</span>
         </div>
       </div>
 

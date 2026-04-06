@@ -197,8 +197,18 @@ async def get_profile(username: str):
         if "played_at" in game_doc and hasattr(game_doc["played_at"], "isoformat"):
             game_doc["played_at"] = game_doc["played_at"].isoformat()
         games.append(game_doc)
-    elo_history = _build_elo_history(stats.get("games", []), username)
-    return {"player": player_doc, "games": games, "elo_history": elo_history}
+    raw_games = stats.get("games", [])
+    elo_history = _build_elo_history(raw_games, username)
+    peak_elo = player.get("elo", 1200)
+    for g in raw_games:
+        me = next(
+            (p for p in g.get("players", [])
+             if not p.get("is_bot") and p.get("display_name") == username),
+            None,
+        )
+        if me and me.get("elo_after") is not None:
+            peak_elo = max(peak_elo, me["elo_after"])
+    return {"player": player_doc, "games": games, "elo_history": elo_history, "peak_elo": peak_elo}
 
 
 @app.get("/api/leaderboard")

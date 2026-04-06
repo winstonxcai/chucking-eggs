@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
+import { useAnimate } from "framer-motion";
 import { LayoutList, X } from "lucide-react";
 import type { ComboDTO } from "@/lib/types";
 
@@ -42,6 +42,7 @@ export default function GameControls({
   onCombos,
 }: GameControlsProps) {
   const [urgent, setUrgent] = useState(false);
+  const [scope, animate] = useAnimate();
 
   useEffect(() => {
     if (!isMyTurn || !turnDeadlineMs) {
@@ -58,16 +59,23 @@ export default function GameControls({
     return () => clearTimeout(t);
   }, [isMyTurn, turnDeadlineMs]);
 
+  useEffect(() => {
+    if (!scope.current) return;
+    if (!isMyTurn || !turnDeadlineMs) {
+      animate(scope.current, { width: "100%" }, { duration: 0 });
+      return;
+    }
+    const remaining = Math.max(0, turnDeadlineMs - Date.now());
+    const initialPct = Math.min(100, Math.max(0, (remaining / (TIMEOUT_S * 1000)) * 100));
+    const controls = animate(
+      scope.current,
+      [{ width: `${initialPct}%` }, { width: "0%" }],
+      { duration: remaining / 1000, ease: "linear" }
+    );
+    return () => controls.cancel();
+  }, [isMyTurn, turnDeadlineMs]);
+
   const showRope = isMyTurn && !!turnDeadlineMs;
-  // Memoized by turnDeadlineMs so framer-motion gets a stable duration and doesn't re-interpolate on every render
-  const { initialProgress, remainingForDuration } = useMemo(() => {
-    if (!turnDeadlineMs) return { initialProgress: 1, remainingForDuration: 0 };
-    const now = Date.now();
-    return {
-      initialProgress: Math.min(1, Math.max(0, (turnDeadlineMs - now) / (TIMEOUT_S * 1000))),
-      remainingForDuration: Math.max(0, turnDeadlineMs - now),
-    };
-  }, [turnDeadlineMs]);
 
   if (compact) {
     return (
@@ -78,12 +86,9 @@ export default function GameControls({
             data-testid="rope-timer"
             className="w-1/4 h-0.5 rounded-full overflow-hidden bg-border"
           >
-            <motion.div
-              key={turnDeadlineMs}
+            <div
+              ref={scope}
               className={`h-full rounded-full ${urgent ? "bg-team-red" : "bg-accent"}`}
-              initial={{ width: `${initialProgress * 100}%` }}
-              animate={{ width: "0%" }}
-              transition={{ duration: remainingForDuration / 1000, ease: "linear" }}
             />
           </div>
         </div>
@@ -146,12 +151,9 @@ export default function GameControls({
         data-testid="rope-timer"
         className={`w-48 h-1 bg-border rounded-full overflow-hidden ${!showRope ? "invisible" : ""}`}
       >
-        <motion.div
-          key={turnDeadlineMs}
+        <div
+          ref={scope}
           className={`h-full rounded-full ${urgent ? "bg-team-red" : "bg-accent"}`}
-          initial={{ width: `${initialProgress * 100}%` }}
-          animate={{ width: "0%" }}
-          transition={{ duration: remainingForDuration / 1000, ease: "linear" }}
         />
       </div>
 

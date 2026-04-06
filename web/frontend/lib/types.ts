@@ -62,6 +62,7 @@ export interface GameState {
   sf_options: Record<string, { label: string; cardIds: string[] }[]>;
   turn_deadline_ms?: number;
   partner_hand?: CardDTO[];
+  opponent_hands?: Record<string, CardDTO[]>;
   all_moves: ComboDTO[];
   trick_lead_seat: number | null;
   mode?: string;

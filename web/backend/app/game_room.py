@@ -520,15 +520,15 @@ class GameRoom:
     # ---------------------------------------------------------------------------
 
     async def run_ai_turns(self) -> None:
-        """Run AI turns and human auto-passes until a human has real choices or the game ends."""
+        """Run AI turns until it's a human's turn or the game ends."""
         async with self._ai_lock:
             while not self.env.done:
                 seat = self.env.current_player
                 legal = self.env.legal_moves(seat)
                 only_pass = len(legal) == 1 and legal[0].type == ComboType.PASS
 
-                if seat not in self.human_seats or seat in self.env.finish_order:
-                    # AI turn (or finished human — auto-pass)
+                if seat not in self.human_seats:
+                    # AI turn
                     if only_pass:
                         combo = legal[0]
                     else:

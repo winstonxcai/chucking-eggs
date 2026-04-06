@@ -413,16 +413,22 @@ async def game_websocket(
 
     await room.connect(ws, seat)
 
-    # Register player_id and update display name from DB
+    # Register player_id immediately (no I/O)
     if player_id:
         room.player_ids[seat] = player_id
-        try:
-            player_doc = await db.get_player_by_id(player_id)
-            if player_doc:
-                room.player_infos[seat]["name"] = player_doc["username"]
-                room.player_infos[seat]["elo"] = player_doc.get("elo", 1200)
-        except Exception:
-            pass  # non-critical; display name stays as default
+
+    # Fetch display name/elo from DB concurrently — don't block game start
+    if player_id:
+        async def _update_player_info() -> None:
+            try:
+                player_doc = await db.get_player_by_id(player_id)
+                if player_doc:
+                    room.player_infos[seat]["name"] = player_doc["username"]
+                    room.player_infos[seat]["elo"] = player_doc.get("elo", 1200)
+                    await room.broadcast_game_state()
+            except Exception:
+                pass
+        asyncio.create_task(_update_player_info())
 
     # Determine whether this connection causes the game to start
     game_just_started = False

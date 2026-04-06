@@ -135,28 +135,26 @@ function GameContent() {
     }
   }, [gameId, router]);
 
-  const handlePlayAgain = useCallback(() => {
-    sessionStorage.removeItem(STORAGE_KEYS.GAME_ID);
-    sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
-    sessionStorage.removeItem(STORAGE_KEYS.SEAT);
-    setGameId(null);
-    setReconnectToken(null);
-    setSeat(0);
-    fetch(`${API_BASE}/api/game/create`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ difficulty }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        setGameId(data.game_id);
-        setReconnectToken(data.reconnect_token);
-        setSeat(0);
-        sessionStorage.setItem(STORAGE_KEYS.GAME_ID, data.game_id);
-        sessionStorage.setItem(STORAGE_KEYS.RECONNECT_TOKEN, data.reconnect_token);
-        sessionStorage.setItem(STORAGE_KEYS.SEAT, "0");
+  const handlePlayAgain = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/game/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ difficulty }),
       });
-  }, [difficulty]);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json();
+      // Atomic swap: old gameId → new, no null intermediate state
+      setGameId(data.game_id);
+      setReconnectToken(data.reconnect_token);
+      setSeat(0);
+      sessionStorage.setItem(STORAGE_KEYS.GAME_ID, data.game_id);
+      sessionStorage.setItem(STORAGE_KEYS.RECONNECT_TOKEN, data.reconnect_token);
+      sessionStorage.setItem(STORAGE_KEYS.SEAT, "0");
+    } catch {
+      router.push("/");
+    }
+  }, [difficulty, router]);
 
   // Handle forfeit broadcast from another player
   useEffect(() => {

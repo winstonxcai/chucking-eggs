@@ -375,13 +375,13 @@ export default function GameBoard({
         </div>
         {/* Reconnection banner */}
         {connectionStatus === "reconnecting" && (
-          <div className="flex items-center justify-center gap-2 py-2 px-4 bg-accent/5 border border-accent/20 rounded-lg mb-2">
+          <div className="flex items-center justify-center gap-2 py-2 px-4 bg-accent/5 border border-accent/20 rounded-lg mb-2 w-1/2 mx-auto">
             <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
             <span className="text-xs font-medium text-accent">Reconnecting to server...</span>
           </div>
         )}
         {connectionStatus === "disconnected" && (
-          <div className="flex items-center justify-center gap-2 py-2 px-4 bg-team-red/5 border border-team-red/20 rounded-lg mb-2">
+          <div className="flex items-center justify-center gap-2 py-2 px-4 bg-team-red/5 border border-team-red/20 rounded-lg mb-2 w-1/2 mx-auto">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--team-red)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
               <circle cx="12" cy="12" r="10" />
               <line x1="15" y1="9" x2="9" y2="15" />
@@ -394,9 +394,9 @@ export default function GameBoard({
 
         {/* Play area: all players + table in a centered grid */}
         <div className="flex-1 flex items-start lg:items-center justify-center min-h-0">
-          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,640px)_auto] lg:grid-rows-[auto_auto] gap-x-1 gap-y-3 lg:gap-x-4 lg:gap-y-10 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
+          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,768px)_auto] lg:grid-rows-[auto_auto] gap-x-1 gap-y-3 lg:gap-x-4 lg:gap-y-10 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
             {/* Partner (top center, spans column 2) */}
-            <div className="col-start-2 row-start-1 h-7 lg:h-[68px] relative overflow-visible flex justify-center">
+            <div className="col-start-2 row-start-1 h-7 lg:h-[82px] relative overflow-visible flex justify-center">
               {partner && (
                 <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
                   <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.partner_hand} />
@@ -407,12 +407,12 @@ export default function GameBoard({
             {/* Left opponent */}
             <div className="col-start-1 row-start-1 lg:row-start-2">
               {leftOpp && (
-                <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} />
+                <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={compactHand && gameState.my_hand.length === 0 ? undefined : gameState.opponent_hands?.["1"]} />
               )}
             </div>
 
             {/* Table surface — all trick actions inside */}
-            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[560px] lg:h-[300px] lg:rounded-2xl lg:border-2 lg:border-[#D9CFC2]/25 lg:bg-gradient-to-br lg:from-[#3D3329] lg:to-[#2A221A] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
+            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[672px] lg:h-[360px] lg:rounded-2xl lg:border-2 lg:border-[#D9CFC2]/25 lg:bg-gradient-to-br lg:from-[#3D3329] lg:to-[#2A221A] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
                 <div className="relative inline-flex">

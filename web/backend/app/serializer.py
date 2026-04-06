@@ -269,6 +269,16 @@ def serialize_game_state(
     else:
         partner_hand = None
 
+    # Reveal opponent hands once the human player has finished
+    opp_seats = [(human_seat + 1) % 4, (human_seat + 3) % 4]
+    opponent_hands: dict[str, list[dict]] = {}
+    if human_seat in env.finish_order:
+        for opp_seat in opp_seats:
+            if env.hands[opp_seat]:
+                rotated = str(_rotate(opp_seat, human_seat))
+                p_sorted = sort_hand(env.hands[opp_seat], env.level_rank)
+                opponent_hands[rotated] = [card_to_dto(c) for c in p_sorted]
+
     trick_lead_seat = _rotate(env.trick_winner, human_seat) if env.trick_winner is not None else None
 
     return {
@@ -288,6 +298,7 @@ def serialize_game_state(
         "groups": groups or [],
         "sf_options": sf_options,
         "partner_hand": partner_hand,
+        "opponent_hands": opponent_hands,
         "all_moves": all_moves,
         "trick_lead_seat": trick_lead_seat,
         "mode": mode,

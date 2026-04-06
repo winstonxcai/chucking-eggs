@@ -411,9 +411,11 @@ export default function GameBoard({
             </div>
 
             {/* Left opponent */}
-            <div className="col-start-1 row-start-1 lg:row-start-2 h-7 overflow-visible lg:h-auto">
+            <div className="col-start-1 row-start-1 lg:row-start-2 h-7 lg:h-[82px] w-[60px] lg:w-[96px] relative overflow-visible">
               {leftOpp && (
-                <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={handDone ? undefined : gameState.opponent_hands?.["1"]} />
+                <div className="absolute top-0 left-0">
+                  <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={handDone ? undefined : gameState.opponent_hands?.["1"]} />
+                </div>
               )}
             </div>
 
@@ -480,9 +482,11 @@ export default function GameBoard({
             </div>
 
             {/* Right opponent */}
-            <div className="col-start-3 row-start-1 lg:row-start-2 h-7 overflow-visible lg:h-auto">
+            <div className="col-start-3 row-start-1 lg:row-start-2 h-7 lg:h-[82px] w-[60px] lg:w-[96px] relative overflow-visible">
               {rightOpp && (
-                <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={handDone ? undefined : gameState.opponent_hands?.["3"]} />
+                <div className="absolute top-0 right-0">
+                  <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={handDone ? undefined : gameState.opponent_hands?.["3"]} />
+                </div>
               )}
             </div>
           </div>

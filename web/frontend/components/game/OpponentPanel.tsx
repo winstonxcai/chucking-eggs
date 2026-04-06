@@ -56,7 +56,10 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       </div>
 
       {revealedHand && revealedHand.length > 0 && (
-        <div className="flex flex-wrap gap-0.5 mt-1 max-w-[360px]">
+        <div
+          className="grid gap-0.5 mt-1 w-fit"
+          style={{ gridTemplateColumns: `repeat(${Math.min(revealedHand.length, 6)}, auto)` }}
+        >
           {revealedHand.map((card) => (
             <CardComponent key={card.id} card={card} size="sm" />
           ))}

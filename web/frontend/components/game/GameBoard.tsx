@@ -534,8 +534,8 @@ export default function GameBoard({
           />
         </div>
 
-        {/* Hand toolbar: desktop only, hidden once hand is done */}
-        <div className={`py-1 items-center justify-center gap-2 ${handDone ? "hidden" : "hidden lg:flex"}`}>
+        {/* Hand toolbar: desktop only */}
+        <div className="hidden lg:flex py-1 items-center justify-center gap-2">
           <HandToolbar
             onFlushSelect={handleFlushSelect}
             sfBySuit={sfBySuit}
@@ -549,8 +549,8 @@ export default function GameBoard({
         </div>
       </div>
 
-      {/* Sidebar: always visible on desktop, hidden on mobile */}
-      <div className="w-[280px] bg-surface border-l border-border p-5 overflow-y-auto hidden lg:flex flex-col gap-4">
+      {/* Sidebar: desktop only, hidden once hand is done */}
+      <div className={`w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex-col gap-4 ${handDone ? "hidden" : "hidden lg:flex"}`}>
         {/* Groups section */}
         <div className="flex flex-col gap-2">
           <button

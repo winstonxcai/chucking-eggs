@@ -1,12 +1,13 @@
 """MonteCarloBot — look-ahead agent using rollout simulation.
 
-For each candidate move, simulates n_sims games using StrategicBot rollouts
-and picks the move with the highest average reward. Uses strategic pruning
-to keep candidates to ~6-10 moves, and multiprocessing for parallel rollouts.
+For each candidate move, simulates n_sims games using Rust greedy rollouts
+(via guandan_rs.mc_rollout_batch) and picks the move with the highest average
+reward. Falls back to Python StrategicBot rollouts if the Rust extension is
+not available.
 
-Speed reference (8 cores, n_sims=50):
-  ~10 candidates × 50 rollouts × 10ms/game ÷ 8 cores ≈ 0.6s per decision
-  ~30 decisions/game → ~18s/game → 200 games ≈ 1 hour
+Speed reference with Rust backend (n_sims=20):
+  ~10 candidates × 20 rollouts in one Rust call ≈ 0.02s per decision
+  ~30 decisions/game → ~0.6s/game → 1000 games ≈ 10 min
 """
 
 from __future__ import annotations
@@ -18,6 +19,13 @@ from ..cards import BOMB_TYPES, ComboType, Rank, level_order_key
 from .heuristic_bot import _pass_combo
 from .base import Agent
 from .strategic_bot import StrategicBot
+
+try:
+    import guandan_rs as _rs
+    _RUST_AVAILABLE = True
+except ImportError:
+    _rs = None
+    _RUST_AVAILABLE = False
 
 # Types using level-order key for sorting.
 _LEVEL_ORDER_TYPES = frozenset({
@@ -37,6 +45,32 @@ def _rollout_worker(env, player: int, move, level_rank: int) -> float:
         p = sim.current_player
         sim.step(rollout_agent.act(sim, p))
     return sim.get_rewards()[player]
+
+
+# ─── Rust conversion helpers ─────────────────────────────────────────────────
+
+def _card_to_py(card) -> tuple:
+    return (card.rank, card.suit, card.deck)
+
+
+def _combo_to_py(combo) -> tuple:
+    cards = [_card_to_py(c) for c in combo.cards]
+    return (combo.type.value, combo.key, cards, combo.length, combo.wild_count)
+
+
+def _env_to_rust_args(env, player: int, candidates: list) -> tuple:
+    """Convert Python env + candidates into guandan_rs.mc_rollout_batch args."""
+    hands = [[_card_to_py(c) for c in env.hands[i]] for i in range(4)]
+    trick = _combo_to_py(env.current_trick) if env.current_trick is not None else None
+    trick_winner = env.trick_winner
+    is_out = list(env.is_out)
+    finish_order = list(env.finish_order)
+    rs_candidates = [_combo_to_py(m) for m in candidates]
+    return (
+        hands, env.current_player, env.level_rank,
+        trick, trick_winner, env.consecutive_passes,
+        finish_order, is_out, rs_candidates, player,
+    )
 
 
 # ─── MonteCarloBot ──────────────────────────────────────────────────────────
@@ -86,17 +120,10 @@ class MonteCarloBot(Agent):
         if len(real) == 1:
             return real[0]
 
-        # Evaluate each candidate via rollout
-        best_move = candidates[0]
-        best_score = -float("inf")
-
-        for move in candidates:
-            score = self._evaluate_move(env, player, move)
-            if score > best_score:
-                best_score = score
-                best_move = move
-
-        return best_move
+        # Evaluate all candidates in one batch call
+        scores = self._evaluate_batch(env, player, candidates)
+        best_idx = max(range(len(scores)), key=lambda i: scores[i])
+        return candidates[best_idx]
 
     # ─── Pruning ──────────────────────────────────────────────────────────
 
@@ -178,16 +205,22 @@ class MonteCarloBot(Agent):
 
     # ─── Simulation ───────────────────────────────────────────────────────
 
-    def _evaluate_move(self, env, player: int, move) -> float:
-        """Simulate n_sims rollouts for `move` and return average reward."""
-        args = [(env, player, move, self.level_rank)] * self.n_sims
+    def _evaluate_batch(self, env, player: int, candidates: list) -> list[float]:
+        """Evaluate all candidates in one call. Uses Rust if available."""
+        if _RUST_AVAILABLE:
+            rust_args = _env_to_rust_args(env, player, candidates)
+            return _rs.mc_rollout_batch(*rust_args, self.n_sims)
+        # Python fallback: evaluate each candidate sequentially
+        return [self._evaluate_move_python(env, player, m) for m in candidates]
 
+    def _evaluate_move_python(self, env, player: int, move) -> float:
+        """Python fallback: n_sims StrategicBot rollouts for one move."""
+        args = [(env, player, move, self.level_rank)] * self.n_sims
         if self.n_workers <= 1:
             results = [_rollout_worker(*a) for a in args]
         else:
             with Pool(processes=self.n_workers) as pool:
                 results = pool.starmap(_rollout_worker, args)
-
         return sum(results) / len(results)
 
 

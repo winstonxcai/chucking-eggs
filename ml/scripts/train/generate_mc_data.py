@@ -82,16 +82,10 @@ def _mc_data_worker(
                     env.step(mc.act(env, p))
                     continue
 
-                # Evaluate every pruned candidate (n_sims rollouts each)
-                scores = []
-                best_score = -float("inf")
-                best_action = real[0]
-                for move in candidates:
-                    s = mc._evaluate_move(env, p, move)
-                    scores.append(s)
-                    if s > best_score:
-                        best_score = s
-                        best_action = move
+                # Evaluate every pruned candidate in one batch call
+                scores = mc._evaluate_batch(env, p, candidates)
+                best_idx = max(range(len(scores)), key=lambda i: scores[i])
+                best_action = candidates[best_idx]
 
                 history, hist_len = encode_history(env, p, level_rank)
                 queue.put({

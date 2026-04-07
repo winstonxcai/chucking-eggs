@@ -534,8 +534,8 @@ export default function GameBoard({
           />
         </div>
 
-        {/* Hand toolbar: desktop only */}
-        <div className="hidden lg:flex py-1 items-center justify-center gap-2">
+        {/* Hand toolbar: desktop only, hidden once hand is done */}
+        <div className={`py-1 items-center justify-center gap-2 ${handDone ? "hidden" : "hidden lg:flex"}`}>
           <HandToolbar
             onFlushSelect={handleFlushSelect}
             sfBySuit={sfBySuit}

@@ -1,0 +1,22 @@
+{
+    "lr_start": 3e-5,
+    "lr_end": 3e-6,
+    "epsilon_start": 0.10,
+    "epsilon_end": 0.02,
+    "batch_size": 512,
+    "buffer_capacity": 300000,
+    "prefill_episodes": 314,
+    "team_spirit": 0.0,
+    "aux_weight": 0.1,
+    "train_steps_per_episode": 4,
+    "stage1_opponent": "strategic",
+    "stage1_episodes": 10000,
+    "stage1_gate": 0.90,
+    "stage2_opponent": "jidan",
+    "stage2_episodes": 90000,
+    "eval_interval": 2000,
+    "eval_games": 500,
+    "save_interval": 5000,
+    "lstm_hidden": 256,
+    "mlp_hidden": 1024
+}

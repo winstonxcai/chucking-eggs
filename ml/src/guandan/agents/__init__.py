@@ -75,6 +75,12 @@ try:
 except ImportError:
     GuanZeroBot = None  # type: ignore[assignment,misc]
 
+try:
+    from .impossible_bot import ImpossibleBot
+    AGENT_REGISTRY["impossible"] = ImpossibleBot
+except ImportError:
+    ImpossibleBot = None  # type: ignore[assignment,misc]
+
 
 def make_agent(name: str, level_rank: int = Rank.TWO, **kwargs) -> Agent:
     """Create an agent by name.

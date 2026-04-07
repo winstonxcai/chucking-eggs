@@ -52,6 +52,11 @@ BOT_POOLS = {
     "jidan": [
         {"name": "Jidan", "avatar": "dragon", "elo": 1779},
     ],
+    "impossible": [
+        {"name": "Oracle", "avatar": "crystal_ball", "elo": 1850},
+        {"name": "Seer", "avatar": "crystal_ball", "elo": 1850},
+        {"name": "Prophet", "avatar": "crystal_ball", "elo": 1850},
+    ],
 }
 
 DIFFICULTY_TO_AGENT = {
@@ -65,6 +70,7 @@ DIFFICULTY_TO_AGENT = {
     "hulalala": "hulalala",   # SEU 3rd Prize (2020 NJUPT)
     "liuzha": "liuzha",       # SEU 2nd Prize (2020 NJUPT)
     "master": "noai",         # Fudan 2nd Prize (Chen Yuguan)
+    "impossible": "impossible",  # Tier 1: sees partner's hand
 }
 
 
@@ -80,6 +86,39 @@ class AIService:
                            "lalala", "noai", "wjsd", "yaoji", "jidan",
                            "hulalala", "liuzha"):
             self.agents[agent_name] = make_agent(agent_name, level_rank=Rank.TWO)
+        self._try_load_impossible_agent()
+
+    def _try_load_impossible_agent(self) -> None:
+        """Load Tier 1 (partner-visible) agent if checkpoint exists."""
+        checkpoints_dir = Path(__file__).resolve().parents[3] / "ml" / "checkpoints"
+        tier1_files = sorted(checkpoints_dir.glob("tier1_*.pt"))
+        if not tier1_files:
+            return
+        checkpoint_path = tier1_files[-1]
+        try:
+            import torch
+            from guandan.agents.impossible_bot import ImpossibleBot
+            from guandan.training.q_network import QNetworkLSTM, get_device
+            from guandan.training.visibility.encoding import STATE_DIM_TIER1
+        except ImportError as e:
+            print(f"Tier 1 dependencies unavailable ({e})")
+            return
+        device = get_device()
+        q_lead = QNetworkLSTM(d_state=STATE_DIM_TIER1, lstm_hidden=256, hidden=1024).to(device)
+        q_follow = QNetworkLSTM(d_state=STATE_DIM_TIER1, lstm_hidden=256, hidden=1024).to(device)
+        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        lead_key = "lead_state_dict" if "lead_state_dict" in ckpt else "lead"
+        follow_key = "follow_state_dict" if "follow_state_dict" in ckpt else "follow"
+        try:
+            q_lead.load_state_dict(ckpt[lead_key])
+            q_follow.load_state_dict(ckpt[follow_key])
+        except RuntimeError as e:
+            print(f"Tier 1 checkpoint incompatible ({e})")
+            return
+        q_lead.eval()
+        q_follow.eval()
+        self.agents["impossible"] = ImpossibleBot(q_lead, q_follow, device)
+        print(f"Loaded Tier 1 (impossible) agent from {checkpoint_path}")
 
     def _try_load_rl_agent(self) -> None:
         checkpoints_dir = Path(__file__).resolve().parents[3] / "ml" / "checkpoints"

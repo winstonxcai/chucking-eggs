@@ -22,8 +22,10 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
   const [latestError, setLatestError] = useState<{ message: string; key: number } | null>(null);
   const [rematch, setRematch] = useState<RematchMsg | null>(null);
   const [forfeit, setForfeit] = useState<{ forfeiter_name: string; forfeiter_seat: number } | null>(null);
+  const [autoPlayed, setAutoPlayed] = useState<{ leading: boolean; key: number } | null>(null);
   const [hasPlayedFirstMove, setHasPlayedFirstMove] = useState(false);
   const errorKeyRef = useRef(0);
+  const autoPlayKeyRef = useRef(0);
 
   const retriesRef = useRef(0);
   const intentionalCloseRef = useRef(false);
@@ -143,6 +145,10 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
           sessionStorage.removeItem(STORAGE_KEYS.RECONNECT_TOKEN);
           sessionStorage.removeItem(STORAGE_KEYS.SEAT);
           break;
+        case "auto_played":
+          autoPlayKeyRef.current += 1;
+          setAutoPlayed({ leading: msg.leading, key: autoPlayKeyRef.current });
+          break;
       }
     };
   }, []);
@@ -193,5 +199,5 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
     wsSend({ type: "abort" });
   }, [wsSend]);
 
-  return { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, rematch, forfeit, sendAbort, hasPlayedFirstMove };
+  return { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, autoPlayed, rematch, forfeit, sendAbort, hasPlayedFirstMove };
 }

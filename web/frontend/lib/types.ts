@@ -106,6 +106,11 @@ export interface ForfeitMsg {
   forfeiter_seat: number;
 }
 
+export interface AutoPlayedMsg {
+  type: "auto_played";
+  leading: boolean;
+}
+
 export type ServerMessage =
   | (GameState & { type: "game_state" })
   | MovePlayedMsg
@@ -113,7 +118,8 @@ export type ServerMessage =
   | AIThinkingMsg
   | ErrorMsg
   | RematchMsg
-  | ForfeitMsg;
+  | ForfeitMsg
+  | AutoPlayedMsg;
 
 // Phase 2: room / lobby types
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAnimate } from "framer-motion";
 import { LayoutList, X } from "lucide-react";
 import type { ComboDTO } from "@/lib/types";
@@ -42,30 +42,63 @@ export default function GameControls({
   onCombos,
 }: GameControlsProps) {
   const [urgent, setUrgent] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
   const [scope, animate] = useAnimate();
 
-  useEffect(() => {
+  // Stabilize deadline: ignore jitter (<2s diff) from repeated game_state messages
+  const lockedDeadlineRef = useRef<number | null>(null);
+  const stableDeadline = useMemo(() => {
     if (!isMyTurn || !turnDeadlineMs) {
-      setUrgent(false);
-      return;
+      lockedDeadlineRef.current = null;
+      return null;
     }
-    const remaining = Math.max(0, turnDeadlineMs - Date.now());
-    if (remaining <= 15000) {
-      setUrgent(true);
-      return;
+    const prev = lockedDeadlineRef.current;
+    if (prev === null || Math.abs(turnDeadlineMs - prev) > 2000) {
+      lockedDeadlineRef.current = turnDeadlineMs;
+      return turnDeadlineMs;
     }
-    setUrgent(false);
-    const t = setTimeout(() => setUrgent(true), remaining - 15000);
-    return () => clearTimeout(t);
+    return prev;
   }, [isMyTurn, turnDeadlineMs]);
 
   useEffect(() => {
+    if (!isMyTurn || !stableDeadline) {
+      setUrgent(false);
+      setCountdown(null);
+      return;
+    }
+    const remaining = Math.max(0, stableDeadline - Date.now());
+    if (remaining <= 15000) {
+      setUrgent(true);
+      setCountdown(Math.ceil(remaining / 1000));
+    } else {
+      setUrgent(false);
+      setCountdown(null);
+    }
+    const t = setTimeout(() => {
+      setUrgent(true);
+      setCountdown(15);
+    }, Math.max(0, remaining - 15000));
+    return () => clearTimeout(t);
+  }, [isMyTurn, stableDeadline]);
+
+  // Tick the countdown every second while urgent
+  useEffect(() => {
+    if (!urgent || !stableDeadline) return;
+    const interval = setInterval(() => {
+      const secs = Math.max(0, Math.ceil((stableDeadline - Date.now()) / 1000));
+      setCountdown(secs);
+      if (secs <= 0) clearInterval(interval);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [urgent, stableDeadline]);
+
+  useEffect(() => {
     if (!scope.current) return;
-    if (!isMyTurn || !turnDeadlineMs) {
+    if (!isMyTurn || !stableDeadline) {
       animate(scope.current, { width: "100%" }, { duration: 0 });
       return;
     }
-    const remaining = Math.max(0, turnDeadlineMs - Date.now());
+    const remaining = Math.max(0, stableDeadline - Date.now());
     const initialPct = Math.min(100, Math.max(0, (remaining / (TIMEOUT_S * 1000)) * 100));
     const controls = animate(
       scope.current,
@@ -73,15 +106,21 @@ export default function GameControls({
       { duration: remaining / 1000, ease: "linear" }
     );
     return () => controls.cancel();
-  }, [isMyTurn, turnDeadlineMs]);
+  }, [isMyTurn, stableDeadline]);
 
-  const showRope = isMyTurn && !!turnDeadlineMs;
+  const showRope = isMyTurn && !!stableDeadline;
+  const countdownLabel =
+    urgent && countdown !== null
+      ? isLeading
+        ? `Auto-play in ${countdown}s`
+        : `Auto-pass in ${countdown}s`
+      : null;
 
   if (compact) {
     return (
       <div className="flex flex-col gap-1">
         {/* Thin rope timer — 1/4 width, centered */}
-        <div className={`flex justify-center ${!showRope ? "invisible" : ""}`}>
+        <div className={`flex flex-col items-center ${!showRope ? "invisible" : ""}`}>
           <div
             data-testid="rope-timer"
             className="w-1/4 h-0.5 rounded-full overflow-hidden bg-border"
@@ -91,6 +130,11 @@ export default function GameControls({
               className={`h-full rounded-full ${urgent ? "bg-team-red" : "bg-accent"}`}
             />
           </div>
+          {countdownLabel && (
+            <span className="text-[10px] text-team-red font-medium mt-0.5">
+              {countdownLabel}
+            </span>
+          )}
         </div>
         {/* Single row: Group/Ungroup | Play | × | Pass | Combos */}
         <div className="flex items-center justify-center gap-1.5">
@@ -147,14 +191,21 @@ export default function GameControls({
   return (
     <div className="flex flex-col items-center gap-2">
       {/* Rope timer — always rendered to reserve space, invisible when not your turn */}
-      <div
-        data-testid="rope-timer"
-        className={`w-48 h-1 bg-border rounded-full overflow-hidden ${!showRope ? "invisible" : ""}`}
-      >
+      <div className={`flex flex-col items-center ${!showRope ? "invisible" : ""}`}>
         <div
-          ref={scope}
-          className={`h-full rounded-full ${urgent ? "bg-team-red" : "bg-accent"}`}
-        />
+          data-testid="rope-timer"
+          className="w-48 h-1 bg-border rounded-full overflow-hidden"
+        >
+          <div
+            ref={scope}
+            className={`h-full rounded-full ${urgent ? "bg-team-red" : "bg-accent"}`}
+          />
+        </div>
+        {countdownLabel && (
+          <span className="text-xs text-team-red font-medium mt-1">
+            {countdownLabel}
+          </span>
+        )}
       </div>
 
       <div className={`flex items-center justify-center gap-3 ${!isMyTurn ? "invisible" : ""}`}>

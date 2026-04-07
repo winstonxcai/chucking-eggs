@@ -28,6 +28,7 @@ interface GameBoardProps {
   onCreateGroup: (cardIds: string[], comboType: string, comboName: string) => void;
   onDeleteGroup: (groupId: string) => void;
   latestError?: { message: string; key: number } | null;
+  autoPlayed?: { leading: boolean; key: number } | null;
   onForfeit?: () => void;
   onAbort?: () => void;
 }
@@ -68,6 +69,7 @@ export default function GameBoard({
   onCreateGroup,
   onDeleteGroup,
   latestError,
+  autoPlayed,
   onForfeit,
   onAbort,
 }: GameBoardProps) {
@@ -198,6 +200,20 @@ export default function GameBoard({
     }, 3000);
     return () => clearTimeout(t);
   }, [latestError?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On AFK auto-play: show toast explaining what happened
+  useEffect(() => {
+    if (!autoPlayed) return;
+    const { key, leading } = autoPlayed;
+    const text = leading
+      ? "Time's up — random move played"
+      : "Time's up — auto-passed";
+    setToasts((prev) => [...prev, { id: key, text }]);
+    const t = setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== key));
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [autoPlayed?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePass = useCallback(() => {
     onPass();

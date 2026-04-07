@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import secrets
 import time
 from datetime import datetime, timezone
@@ -83,6 +84,8 @@ class GameRoom:
 
         # AFK rope: absolute monotonic deadline per seat
         self.turn_deadlines: dict[int, float] = {}
+        # Cached wall-clock deadline (Unix ms) — avoids jitter from repeated conversion
+        self.turn_deadline_wallclock_ms: dict[int, int] = {}
 
         # Disconnect takeover tasks
         self._takeover_tasks: dict[int, asyncio.Task] = {}
@@ -243,13 +246,10 @@ class GameRoom:
             groups=self.groups_by_seat.get(seat, []),
             mode=self.mode,
         )
-        # Include AFK deadline when it's this seat's turn.
-        # turn_deadlines stores monotonic time (for asyncio.wait_for); convert to
-        # wall-clock Unix ms so the frontend can compare against Date.now().
-        deadline = self.turn_deadlines.get(seat)
-        if deadline is not None and self.env.current_player == seat:
-            remaining = deadline - asyncio.get_event_loop().time()
-            state["turn_deadline_ms"] = int((time.time() + remaining) * 1000)
+        # Include cached wall-clock AFK deadline when it's this seat's turn.
+        wc_deadline = self.turn_deadline_wallclock_ms.get(seat)
+        if wc_deadline is not None and self.env.current_player == seat:
+            state["turn_deadline_ms"] = wc_deadline
         await self.send_to(seat, {"type": "game_state", **state})
 
     async def broadcast_game_state(self) -> None:
@@ -538,6 +538,7 @@ class GameRoom:
                 else:
                     # Human's turn — set AFK deadline (monotonic for wait_for) and stop
                     self.turn_deadlines[seat] = asyncio.get_event_loop().time() + HUMAN_TURN_TIMEOUT_S
+                    self.turn_deadline_wallclock_ms[seat] = int((time.time() + HUMAN_TURN_TIMEOUT_S) * 1000)
                     break
 
                 next_player, done = self.env.step(combo)
@@ -566,19 +567,23 @@ class GameRoom:
     # ---------------------------------------------------------------------------
 
     async def handle_afk_timeout(self, seat: int) -> None:
-        """Auto-play least disruptive move when a human's turn times out."""
+        """Auto-play when a human's turn times out.
+
+        Leading (must play): random legal move.
+        Not leading (can pass): pass.
+        """
         if self.env.done or self.env.current_player != seat:
             return
         self.turn_deadlines.pop(seat, None)
+        self.turn_deadline_wallclock_ms.pop(seat, None)
         legal = self.env.legal_moves(seat)
-        # Prefer PASS; else smallest single card; else first legal move
-        pass_combo = next((c for c in legal if c.type == ComboType.PASS), None)
-        if pass_combo:
-            combo = pass_combo
+        leading = self.env.is_leading()
+        if leading:
+            combo = random.choice(legal)
         else:
-            singles = [c for c in legal if c.type == ComboType.SINGLE]
-            combo = min(singles, key=lambda c: c.cards[0].rank) if singles else legal[0]
+            combo = next(c for c in legal if c.type == ComboType.PASS)
         await self._do_move(combo, seat)
+        await self.send_to(seat, {"type": "auto_played", "leading": leading})
 
     # ---------------------------------------------------------------------------
     # Message handling
@@ -633,6 +638,7 @@ class GameRoom:
 
     async def _do_move(self, combo: Combo, seat: int) -> None:
         self.turn_deadlines.pop(seat, None)
+        self.turn_deadline_wallclock_ms.pop(seat, None)
         next_player, done = self.env.step(combo)
         self._record_move(seat, combo)
         self.moves_played_by[seat] += 1

@@ -74,7 +74,7 @@ function GameContent() {
     createGame();
   }, [difficulty, searchParams]);
 
-  const { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, rematch, forfeit, sendAbort, hasPlayedFirstMove } =
+  const { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, autoPlayed, rematch, forfeit, sendAbort, hasPlayedFirstMove } =
     useGameSocket(gameId, reconnectToken, seat);
 
   const { updateElo } = usePlayer();
@@ -255,6 +255,7 @@ function GameContent() {
       onCreateGroup={createGroup}
       onDeleteGroup={deleteGroup}
       latestError={latestError}
+      autoPlayed={autoPlayed}
       onForfeit={isMultiplayer ? handleForfeit : undefined}
       onAbort={isMultiplayer && !hasPlayedFirstMove ? handleAbort : undefined}
     />

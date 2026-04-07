@@ -1,8 +1,9 @@
 {
     "selfplay": true,
+    "freeze_backbone_episodes": 5000,
     "lr_start": 3e-5,
     "lr_end": 3e-6,
-    "lr_warmup_episodes": 2000,
+    "lr_warmup_episodes": 1000,
     "lr_warmup_start": 1e-6,
     "epsilon_start": 0.10,
     "epsilon_end": 0.02,

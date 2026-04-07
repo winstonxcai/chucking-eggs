@@ -250,8 +250,37 @@ def run_training(
         d_state=STATE_DIM_TIER1,
     )
 
-    opt_lead = torch.optim.Adam(q_lead.parameters(), lr=config["lr_start"])
-    opt_follow = torch.optim.Adam(q_follow.parameters(), lr=config["lr_start"])
+    # --- Frozen backbone: only train mlp.0 + hand_pred.0 initially ---
+    freeze_episodes = config.get("freeze_backbone_episodes", 0)
+    if freeze_episodes > 0:
+        log.info("Frozen backbone for first %d episodes (only mlp.0 + hand_pred.0 trainable)", freeze_episodes)
+
+    def _set_backbone_frozen(model: QNetworkLSTM, frozen: bool) -> None:
+        """Freeze/unfreeze everything except mlp.0 and hand_pred.0."""
+        for name, param in model.named_parameters():
+            if name.startswith("mlp.0.") or name.startswith("hand_pred.0."):
+                param.requires_grad = True  # always trainable
+            else:
+                param.requires_grad = not frozen
+
+    def _count_trainable(model: QNetworkLSTM) -> int:
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    backbone_frozen = freeze_episodes > 0
+    if backbone_frozen:
+        _set_backbone_frozen(q_lead, True)
+        _set_backbone_frozen(q_follow, True)
+        log.info("Trainable params (frozen): %d / %d",
+                 _count_trainable(q_lead),
+                 sum(p.numel() for p in q_lead.parameters()))
+
+    # Only pass trainable params to optimizer — rebuilt when unfreezing
+    opt_lead = torch.optim.Adam(
+        [p for p in q_lead.parameters() if p.requires_grad], lr=config["lr_start"]
+    )
+    opt_follow = torch.optim.Adam(
+        [p for p in q_follow.parameters() if p.requires_grad], lr=config["lr_start"]
+    )
 
     env = GuanDanEnv()
     t_start = time.time()
@@ -344,6 +373,19 @@ def run_training(
             for opt in (opt_lead, opt_follow):
                 for pg in opt.param_groups:
                     pg["lr"] = lr
+
+            # Unfreeze backbone after freeze_episodes
+            if backbone_frozen and total_ep > freeze_episodes:
+                backbone_frozen = False
+                _set_backbone_frozen(q_lead, False)
+                _set_backbone_frozen(q_follow, False)
+                # Rebuild optimizers with all params
+                opt_lead = torch.optim.Adam(q_lead.parameters(), lr=lr)
+                opt_follow = torch.optim.Adam(q_follow.parameters(), lr=lr)
+                log.info(
+                    "*** Backbone unfrozen at ep %d. Trainable params: %d ***",
+                    total_ep, _count_trainable(q_lead),
+                )
 
             # Collect episode
             q_lead.eval()

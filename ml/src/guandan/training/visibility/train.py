@@ -307,6 +307,12 @@ def run_training(
         total_all = config["stage1_episodes"] + config["stage2_episodes"]
         lr_start = config["lr_start"]
         lr_end = config["lr_end"]
+        warmup_eps = config.get("lr_warmup_episodes", 0)
+        warmup_lr_start = config.get("lr_warmup_start", lr_end)
+
+        if warmup_eps > 0:
+            log.info("LR warmup: %s → %s over %d episodes",
+                     f"{warmup_lr_start:.1e}", f"{lr_start:.1e}", warmup_eps)
 
         pbar = tqdm(range(stage_episodes), desc=f"stage{stage_idx}", file=sys.stderr)
         for ep_in_stage in pbar:
@@ -314,10 +320,18 @@ def run_training(
             frac = min(1.0, total_ep / (0.85 * total_all))
             epsilon = eps_start + (eps_end - eps_start) * frac
 
-            # Cosine LR decay
-            lr = lr_end + 0.5 * (lr_start - lr_end) * (
-                1 + np.cos(np.pi * total_ep / total_all)
-            )
+            # LR schedule: linear warmup → cosine decay
+            if total_ep <= warmup_eps:
+                # Linear warmup from warmup_lr_start to lr_start
+                warmup_frac = total_ep / warmup_eps
+                lr = warmup_lr_start + (lr_start - warmup_lr_start) * warmup_frac
+            else:
+                # Cosine decay from lr_start to lr_end
+                decay_ep = total_ep - warmup_eps
+                decay_total = total_all - warmup_eps
+                lr = lr_end + 0.5 * (lr_start - lr_end) * (
+                    1 + np.cos(np.pi * decay_ep / decay_total)
+                )
             for opt in (opt_lead, opt_follow):
                 for pg in opt.param_groups:
                     pg["lr"] = lr

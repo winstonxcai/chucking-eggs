@@ -1,6 +1,8 @@
 {
     "lr_start": 3e-5,
     "lr_end": 3e-6,
+    "lr_warmup_episodes": 2000,
+    "lr_warmup_start": 1e-7,
     "epsilon_start": 0.10,
     "epsilon_end": 0.02,
     "batch_size": 512,

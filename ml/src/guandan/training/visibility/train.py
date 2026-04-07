@@ -8,13 +8,17 @@ No behavior flags — matching the base checkpoint architecture.
 from __future__ import annotations
 
 import json
+import logging
 import random
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
 import torch
 from tqdm import tqdm
+
+log = logging.getLogger(__name__)
 
 from ...agents import make_agent
 from ...game import GuanDanEnv
@@ -188,6 +192,32 @@ def _append_metrics(run_dir: Path, entry: dict) -> None:
         f.write(json.dumps(entry) + "\n")
 
 
+def _setup_logging(run_dir: Path) -> None:
+    """Configure logging to both stderr and run_dir/train.log."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s | %(message)s", datefmt="%H:%M:%S")
+
+    # File handler — persistent log
+    fh = logging.FileHandler(run_dir / "train.log", mode="a")
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+    # Stream handler (stderr) — only if none exists yet
+    if not any(isinstance(h, logging.StreamHandler) and h.stream is sys.stderr
+               for h in root.handlers):
+        sh = logging.StreamHandler(sys.stderr)
+        sh.setFormatter(fmt)
+        root.addHandler(sh)
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    h, rem = divmod(int(seconds), 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}h{m:02d}m{s:02d}s"
+
+
 def run_training(
     q_lead: QNetworkLSTM,
     q_follow: QNetworkLSTM,
@@ -196,11 +226,19 @@ def run_training(
     device: torch.device,
 ) -> None:
     """Main Tier 1 training loop: prefill → stage 1 (strategic) → stage 2 (jidan)."""
-    run_dir.mkdir(parents=True, exist_ok=True)
+    _setup_logging(run_dir)
 
     # Save config
     with open(run_dir / "config.json", "w") as f:
         json.dump(config, f, indent=2)
+
+    log.info("=" * 60)
+    log.info("Tier 1 Training — Partner Visibility")
+    log.info("=" * 60)
+    log.info("Device: %s", device)
+    log.info("Config: %s", json.dumps(config, indent=2))
+    log.info("Run dir: %s", run_dir)
+    log.info("STATE_DIM_TIER1 = %d", STATE_DIM_TIER1)
 
     buffer = ReplayBuffer(
         capacity=config["buffer_capacity"],
@@ -211,22 +249,34 @@ def run_training(
     opt_follow = torch.optim.Adam(q_follow.parameters(), lr=config["lr_start"])
 
     env = GuanDanEnv()
+    t_start = time.time()
 
     # --- Pre-fill buffer ---
     prefill_eps = config["prefill_episodes"]
-    print(f"Pre-filling buffer with {prefill_eps} on-policy episodes...")
+    log.info("Pre-filling buffer with %d on-policy episodes...", prefill_eps)
+    t_prefill = time.time()
     prefill_opp = make_agent(config["stage1_opponent"], env.level_rank)
     q_lead.eval()
     q_follow.eval()
+    prefill_trans = 0
     for _ in tqdm(range(prefill_eps), desc="prefill", file=sys.stderr):
         trans = play_episode_tier1(
             env, q_lead, q_follow,
             epsilon=config["epsilon_start"], device=device,
             opponent=prefill_opp,
         )
+        prefill_trans += len(trans)
         for s, a, h, hl, r, oc in trans:
             buffer.push(s, a, h, hl, r, oc)
-    print(f"Buffer pre-filled: {len(buffer):,} transitions")
+    prefill_secs = time.time() - t_prefill
+    log.info(
+        "Buffer pre-filled: %d transitions from %d episodes "
+        "(%.1f trans/ep, %.1f ep/s, %s)",
+        len(buffer), prefill_eps,
+        prefill_trans / prefill_eps,
+        prefill_eps / prefill_secs,
+        _fmt_elapsed(prefill_secs),
+    )
 
     # --- Stage loop ---
     stages = [
@@ -236,10 +286,21 @@ def run_training(
 
     total_ep = 0
     best_wr_jidan = 0.0
+    # Running loss accumulators (reset each log interval)
+    loss_q_sum = 0.0
+    loss_aux_sum = 0.0
+    loss_count = 0
+    log_interval = 200  # log loss summary every N episodes
 
     for stage_idx, (opp_name, stage_episodes, gate) in enumerate(stages, 1):
-        print(f"\n=== Stage {stage_idx}: vs {opp_name} ({stage_episodes} episodes) ===")
+        log.info("")
+        log.info("=" * 60)
+        log.info("Stage %d: vs %s (%d episodes, gate=%s)",
+                 stage_idx, opp_name, stage_episodes,
+                 f"{gate:.0%}" if gate else "none")
+        log.info("=" * 60)
         opp = make_agent(opp_name, env.level_rank)
+        t_stage = time.time()
 
         eps_start = config["epsilon_start"]
         eps_end = config["epsilon_end"]
@@ -270,19 +331,56 @@ def run_training(
             for s, a, h, hl, r, oc in trans:
                 buffer.push(s, a, h, hl, r, oc)
 
-            # Train steps
+            # Train steps — capture losses
             q_lead.train()
             q_follow.train()
             bs = config["batch_size"]
             for _ in range(config["train_steps_per_episode"]):
-                train_step(q_lead, buffer, opt_lead, bs, device, config["aux_weight"])
-                train_step(q_follow, buffer, opt_follow, bs, device, config["aux_weight"])
+                res_lead = train_step(
+                    q_lead, buffer, opt_lead, bs, device, config["aux_weight"]
+                )
+                train_step(
+                    q_follow, buffer, opt_follow, bs, device, config["aux_weight"]
+                )
+                if res_lead is not None:
+                    loss_q_sum += res_lead[0]
+                    loss_aux_sum += res_lead[1]
+                    loss_count += 1
+
+            # Update tqdm postfix with running stats
+            if loss_count > 0:
+                elapsed = time.time() - t_start
+                eps_per_sec = total_ep / elapsed
+                pbar.set_postfix_str(
+                    f"q={loss_q_sum/loss_count:.4f} "
+                    f"aux={loss_aux_sum/loss_count:.4f} "
+                    f"e={epsilon:.3f} "
+                    f"{eps_per_sec:.1f}ep/s"
+                )
+
+            # Periodic loss log
+            if total_ep % log_interval == 0 and loss_count > 0:
+                avg_q = loss_q_sum / loss_count
+                avg_aux = loss_aux_sum / loss_count
+                elapsed = time.time() - t_start
+                log.info(
+                    "Ep %6d | q_loss=%.4f aux_loss=%.4f | "
+                    "e=%.3f lr=%.2e | buf=%d | "
+                    "%.1f ep/s | %s elapsed",
+                    total_ep, avg_q, avg_aux,
+                    epsilon, lr, len(buffer),
+                    total_ep / elapsed, _fmt_elapsed(elapsed),
+                )
+                loss_q_sum = 0.0
+                loss_aux_sum = 0.0
+                loss_count = 0
 
             # Eval
             eval_interval = config["eval_interval"]
             if (ep_in_stage + 1) % eval_interval == 0 or ep_in_stage == stage_episodes - 1:
                 q_lead.eval()
                 q_follow.eval()
+                t_eval = time.time()
 
                 result_stage = evaluate_tier1(
                     q_lead, q_follow, device,
@@ -292,31 +390,59 @@ def run_training(
                     q_lead, q_follow, device,
                     n_games=config["eval_games"], opponent="jidan",
                 )
+                eval_secs = time.time() - t_eval
 
-                # Partner column L2 norm
-                partner_norm = torch.norm(
+                # Partner column L2 norm (lead + follow)
+                partner_norm_lead = torch.norm(
                     q_lead.mlp[0].weight[:, 60:120]
+                ).item()
+                partner_norm_follow = torch.norm(
+                    q_follow.mlp[0].weight[:, 60:120]
                 ).item()
 
                 wr_stage = result_stage["winrate"]
                 wr_jidan = result_jidan["winrate"]
+                elapsed = time.time() - t_start
+                remaining_ep = total_all - total_ep
+                eta_secs = remaining_ep / (total_ep / elapsed) if total_ep > 0 else 0
 
-                tqdm.write(
-                    f"Ep {total_ep:>6d} | e={epsilon:.3f} lr={lr:.2e} | "
-                    f"buf={len(buffer):>6d} | "
-                    f"vs_{opp_name}={wr_stage:.1%} "
-                    f"vs_jidan={wr_jidan:.1%} "
-                    f"(1-2: {result_jidan['finish_12']}/{result_jidan['n_games']}) | "
-                    f"partner_norm={partner_norm:.4f}"
+                log.info("-" * 60)
+                log.info(
+                    "EVAL Ep %6d | vs_%s=%.1f%% | vs_jidan=%.1f%% | "
+                    "1-2: %d/%d (%.0f%%) | "
+                    "partner_L2: lead=%.4f follow=%.4f",
+                    total_ep, opp_name, wr_stage * 100, wr_jidan * 100,
+                    result_jidan["finish_12"], result_jidan["n_games"],
+                    result_jidan["finish_12"] / result_jidan["n_games"] * 100,
+                    partner_norm_lead, partner_norm_follow,
                 )
+                log.info(
+                    "     stage_detail: 1-2=%d 1-3=%d 1-4=%d | "
+                    "jidan_detail: 1-2=%d 1-3=%d 1-4=%d | "
+                    "eval took %s | elapsed %s | ETA %s",
+                    result_stage["finish_12"], result_stage["finish_13"],
+                    result_stage["finish_14"],
+                    result_jidan["finish_12"], result_jidan["finish_13"],
+                    result_jidan["finish_14"],
+                    _fmt_elapsed(eval_secs), _fmt_elapsed(elapsed),
+                    _fmt_elapsed(eta_secs),
+                )
+                log.info("-" * 60)
 
                 _append_metrics(run_dir, {
                     "episode": total_ep,
                     "stage": stage_idx,
+                    "timestamp": time.time(),
+                    "elapsed_s": elapsed,
                     f"wr_{opp_name}": wr_stage,
                     "wr_jidan": wr_jidan,
+                    "avg_reward_jidan": result_jidan["avg_reward"],
                     "finish_12_jidan": result_jidan["finish_12"],
-                    "partner_column_l2": partner_norm,
+                    "finish_13_jidan": result_jidan["finish_13"],
+                    "finish_14_jidan": result_jidan["finish_14"],
+                    f"finish_12_{opp_name}": result_stage["finish_12"],
+                    "partner_column_l2_lead": partner_norm_lead,
+                    "partner_column_l2_follow": partner_norm_follow,
                     "epsilon": epsilon,
                     "lr": lr,
                     "buffer_size": len(buffer),
@@ -332,13 +458,16 @@ def run_training(
                         "wr_jidan": wr_jidan,
                         "d_state": STATE_DIM_TIER1,
                     }, best_path)
-                    tqdm.write(f"  New best: {wr_jidan:.1%} vs jidan → {best_path}")
+                    log.info(
+                        "  *** New best: %.1f%% vs jidan → %s ***",
+                        wr_jidan * 100, best_path,
+                    )
 
                 # Stage gate check
                 if gate is not None and wr_stage >= gate:
-                    tqdm.write(
-                        f"  Stage gate reached: {wr_stage:.1%} >= {gate:.0%}. "
-                        f"Advancing."
+                    log.info(
+                        "  Stage gate reached: %.1f%% >= %.0f%%. Advancing.",
+                        wr_stage * 100, gate * 100,
                     )
                     pbar.close()
                     break
@@ -352,11 +481,20 @@ def run_training(
                     "episode": total_ep,
                     "d_state": STATE_DIM_TIER1,
                 }, path)
+                log.info("Saved checkpoint: %s", path)
 
         else:
             pbar.close()
 
+        stage_secs = time.time() - t_stage
+        log.info(
+            "Stage %d complete: %d episodes in %s (%.1f ep/s)",
+            stage_idx, ep_in_stage + 1, _fmt_elapsed(stage_secs),
+            (ep_in_stage + 1) / stage_secs,
+        )
+
     # Final save
+    total_secs = time.time() - t_start
     final_path = run_dir / "model_final.pt"
     torch.save({
         "lead": q_lead.state_dict(),
@@ -365,5 +503,11 @@ def run_training(
         "d_state": STATE_DIM_TIER1,
         "best_wr_jidan": best_wr_jidan,
     }, final_path)
-    print(f"\nTraining complete. Best vs jidan: {best_wr_jidan:.1%}")
-    print(f"Final checkpoint: {final_path}")
+    log.info("")
+    log.info("=" * 60)
+    log.info("Training complete")
+    log.info("  Total episodes: %d", total_ep)
+    log.info("  Best vs jidan: %.1f%%", best_wr_jidan * 100)
+    log.info("  Wall time: %s", _fmt_elapsed(total_secs))
+    log.info("  Final checkpoint: %s", final_path)
+    log.info("=" * 60)

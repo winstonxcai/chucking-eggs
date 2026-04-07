@@ -124,7 +124,7 @@ def main() -> None:
     parser.add_argument("--n-workers", type=int, default=8,
                         help="Parallel game processes (each MC uses n_workers=1 internally)")
     parser.add_argument("--opponent",  type=str, default="strategic",
-                        choices=["random", "greedy", "heuristic", "strategic"])
+                        choices=["random", "greedy", "heuristic", "strategic", "jidan"])
     parser.add_argument("--output",    type=str, required=True)
     args = parser.parse_args()
 

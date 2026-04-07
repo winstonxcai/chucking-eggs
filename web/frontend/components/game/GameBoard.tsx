@@ -400,7 +400,7 @@ export default function GameBoard({
 
         {/* Play area: all players + table in a centered grid */}
         <div className="flex-1 flex items-start lg:items-center justify-center min-h-0">
-          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_minmax(0,768px)_auto] lg:grid-rows-[auto_auto] gap-x-1 gap-y-3 lg:gap-x-4 lg:gap-y-10 items-start lg:items-center justify-items-center w-full h-full lg:h-auto">
+          <div className="grid grid-cols-3 grid-rows-[auto_1fr] lg:grid-cols-[auto_672px_auto] lg:grid-rows-[auto_auto] gap-x-1 gap-y-3 lg:gap-x-10 lg:gap-y-10 items-start lg:items-center justify-items-center w-full h-full lg:h-auto lg:w-auto">
             {/* Partner (top center, spans column 2) */}
             <div className="col-start-2 row-start-1 h-7 lg:h-[82px] relative overflow-visible flex justify-center">
               {partner && (

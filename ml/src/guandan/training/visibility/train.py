@@ -40,21 +40,26 @@ def play_episode_tier1(
     q_follow: QNetworkLSTM,
     epsilon: float,
     device: torch.device,
-    opponent,
+    opponent=None,
 ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float, np.ndarray]]:
-    """Play one game with partner-visible encoding on seats {0,2}.
+    """Play one game with partner-visible encoding.
 
-    Opponent plays seats {1,3} via opponent.act().
-    Returns (state, action, history, hist_len, reward, opp_cards) tuples
-    for RL team only.
+    If opponent is None: symmetric self-play — all 4 seats use Tier 1 encoding.
+      Returns transitions from all 4 seats. Keeps the return distribution
+      similar to base model's self-play, preventing catastrophic forgetting.
+
+    If opponent is provided: seats {0,2} use Tier 1, seats {1,3} use opponent.
+      Returns transitions from seats {0,2} only.
     """
     env.reset()
-    transitions: dict[int, list[tuple]] = {0: [], 2: []}
+    selfplay = opponent is None
+    seats = range(4) if selfplay else (0, 2)
+    transitions: dict[int, list[tuple]] = {p: [] for p in seats}
 
     while not env.done:
         player = env.current_player
 
-        if player in (1, 3):
+        if not selfplay and player in (1, 3):
             env.step(opponent.act(env, player))
             continue
 
@@ -251,11 +256,15 @@ def run_training(
     env = GuanDanEnv()
     t_start = time.time()
 
+    use_selfplay = config.get("selfplay", False)
+    log.info("Training mode: %s", "self-play (symmetric)" if use_selfplay else "vs frozen opponents")
+
     # --- Pre-fill buffer ---
     prefill_eps = config["prefill_episodes"]
-    log.info("Pre-filling buffer with %d on-policy episodes...", prefill_eps)
+    log.info("Pre-filling buffer with %d %s episodes...",
+             prefill_eps, "self-play" if use_selfplay else "on-policy")
     t_prefill = time.time()
-    prefill_opp = make_agent(config["stage1_opponent"], env.level_rank)
+    prefill_opp = None if use_selfplay else make_agent(config["stage1_opponent"], env.level_rank)
     q_lead.eval()
     q_follow.eval()
     prefill_trans = 0
@@ -299,7 +308,7 @@ def run_training(
                  stage_idx, opp_name, stage_episodes,
                  f"{gate:.0%}" if gate else "none")
         log.info("=" * 60)
-        opp = make_agent(opp_name, env.level_rank)
+        opp = None if use_selfplay else make_agent(opp_name, env.level_rank)
         t_stage = time.time()
 
         eps_start = config["epsilon_start"]

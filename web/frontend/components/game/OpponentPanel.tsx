@@ -57,7 +57,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
 
       {revealedHand && revealedHand.length > 0 && (
         <div
-          className="grid gap-0.5 mt-1 w-fit"
+          className="hidden lg:grid gap-0.5 mt-1 w-fit"
           style={{ gridTemplateColumns: `repeat(${Math.min(revealedHand.length, 6)}, auto)` }}
         >
           {revealedHand.map((card) => (

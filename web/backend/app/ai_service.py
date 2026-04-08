@@ -90,7 +90,10 @@ class AIService:
 
     def _try_load_impossible_agent(self) -> None:
         """Load Tier 1 (partner-visible) agent if checkpoint exists."""
-        checkpoints_dir = Path(__file__).resolve().parents[3] / "ml" / "checkpoints"
+        try:
+            checkpoints_dir = Path(__file__).resolve().parents[3] / "ml" / "checkpoints"
+        except IndexError:
+            return
         tier1_files = sorted(checkpoints_dir.glob("tier1_*.pt"))
         if not tier1_files:
             return

@@ -114,7 +114,6 @@ function ProfileContent() {
         </div>
         <div className="flex flex-col items-end">
           <span className="text-2xl font-bold text-accent">{player.elo}</span>
-          <span className="text-xs text-text-secondary">Elo</span>
           <span className="text-xs text-text-secondary mt-1">peak {peakElo}</span>
         </div>
       </div>

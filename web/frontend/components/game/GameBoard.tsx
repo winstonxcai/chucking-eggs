@@ -622,8 +622,8 @@ export default function GameBoard({
         </div>
       </div>
 
-      {/* Sidebar: desktop only, hidden once hand is done or in review mode */}
-      <div className={`w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex-col gap-4 ${handDone || reviewMode ? "hidden" : "hidden lg:flex"}`}>
+      {/* Sidebar: desktop only, hidden once player is out of cards or in review mode */}
+      <div className={`w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex-col gap-4 ${reviewMode || (!flyingCards && gameState.my_hand.length === 0) ? "hidden" : "hidden lg:flex"}`}>
         {/* Groups section */}
         <div className="flex flex-col gap-2">
           <button

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAnimate } from "framer-motion";
+import { animate } from "framer-motion";
 import { LayoutList, X } from "lucide-react";
 import type { ComboDTO } from "@/lib/types";
 
@@ -43,7 +43,7 @@ export default function GameControls({
 }: GameControlsProps) {
   const [urgent, setUrgent] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [scope, animate] = useAnimate();
+  const timerRef = useRef<HTMLDivElement>(null);
 
   // Stabilize deadline: ignore jitter (<2s diff) from repeated game_state messages
   const lockedDeadlineRef = useRef<number | null>(null);
@@ -60,49 +60,41 @@ export default function GameControls({
     return prev;
   }, [isMyTurn, turnDeadlineMs]);
 
+  // Urgency + countdown via rAF — single effect eliminates race with a separate tick interval
   useEffect(() => {
     if (!isMyTurn || !stableDeadline) {
       setUrgent(false);
       setCountdown(null);
       return;
     }
-    const remaining = Math.max(0, stableDeadline - Date.now());
-    if (remaining <= 15000) {
-      setUrgent(true);
-      setCountdown(Math.ceil(remaining / 1000));
-    } else {
-      setUrgent(false);
-      setCountdown(null);
-    }
-    const t = setTimeout(() => {
-      setUrgent(true);
-      setCountdown(15);
-    }, Math.max(0, remaining - 15000));
-    return () => clearTimeout(t);
+    let rafId: number;
+    const tick = () => {
+      const remaining = Math.max(0, stableDeadline - Date.now());
+      if (remaining <= 15000) {
+        setUrgent(true);
+        setCountdown(Math.ceil(remaining / 1000));
+      } else {
+        setUrgent(false);
+        setCountdown(null);
+      }
+      if (remaining > 0) rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
   }, [isMyTurn, stableDeadline]);
 
-  // Tick the countdown every second while urgent
+  // Rope bar animation — scaleX is GPU-composited (no layout reflow), runs at 60 fps
   useEffect(() => {
-    if (!urgent || !stableDeadline) return;
-    const interval = setInterval(() => {
-      const secs = Math.max(0, Math.ceil((stableDeadline - Date.now()) / 1000));
-      setCountdown(secs);
-      if (secs <= 0) clearInterval(interval);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [urgent, stableDeadline]);
-
-  useEffect(() => {
-    if (!scope.current) return;
+    if (!timerRef.current) return;
     if (!isMyTurn || !stableDeadline) {
-      animate(scope.current, { width: "100%" }, { duration: 0 });
+      animate(timerRef.current, { scaleX: 1 }, { duration: 0 });
       return;
     }
     const remaining = Math.max(0, stableDeadline - Date.now());
-    const initialPct = Math.min(100, Math.max(0, (remaining / (TIMEOUT_S * 1000)) * 100));
+    const initialFraction = Math.min(1, Math.max(0, remaining / (TIMEOUT_S * 1000)));
     const controls = animate(
-      scope.current,
-      [{ width: `${initialPct}%` }, { width: "0%" }],
+      timerRef.current,
+      { scaleX: [initialFraction, 0] },
       { duration: remaining / 1000, ease: "linear" }
     );
     return () => controls.cancel();
@@ -126,8 +118,8 @@ export default function GameControls({
             className="w-1/4 h-0.5 rounded-full overflow-hidden bg-border"
           >
             <div
-              ref={scope}
-              className={`h-full rounded-full ${urgent ? "bg-team-red" : "bg-accent"}`}
+              ref={timerRef}
+              className={`h-full rounded-full origin-left ${urgent ? "bg-team-red" : "bg-accent"}`}
             />
           </div>
           {countdownLabel && (
@@ -197,8 +189,8 @@ export default function GameControls({
           className="w-48 h-1 bg-border rounded-full overflow-hidden"
         >
           <div
-            ref={scope}
-            className={`h-full rounded-full ${urgent ? "bg-team-red" : "bg-accent"}`}
+            ref={timerRef}
+            className={`h-full rounded-full origin-left ${urgent ? "bg-team-red" : "bg-accent"}`}
           />
         </div>
         {countdownLabel && (

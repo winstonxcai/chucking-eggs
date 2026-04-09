@@ -17,21 +17,21 @@ interface FinishGridProps {
 }
 
 const WIN_PAIRS = [
-  { key: "1,2", label: "1st · 2nd", color: "#1F5C42" },
-  { key: "1,3", label: "1st · 3rd", color: "#2D7A5A" },
-  { key: "1,4", label: "1st · 4th", color: "#3D8C6F" },
-  { key: "2,1", label: "2nd · 1st", color: "#58A080" },
-  { key: "3,1", label: "3rd · 1st", color: "#7BB89A" },
-  { key: "4,1", label: "4th · 1st", color: "#A2CFBE" },
+  { key: "1,2", label: "1st · 2nd", color: "#09402A" },
+  { key: "1,3", label: "1st · 3rd", color: "#186340" },
+  { key: "1,4", label: "1st · 4th", color: "#2E8A58" },
+  { key: "2,1", label: "2nd · 1st", color: "#52AB7A" },
+  { key: "3,1", label: "3rd · 1st", color: "#82C79E" },
+  { key: "4,1", label: "4th · 1st", color: "#BBE0CC" },
 ];
 
 const LOSS_PAIRS = [
-  { key: "2,3", label: "2nd · 3rd", color: "#E5A99F" },
-  { key: "2,4", label: "2nd · 4th", color: "#D98F82" },
-  { key: "3,2", label: "3rd · 2nd", color: "#C97062" },
-  { key: "3,4", label: "3rd · 4th", color: "#B85848" },
-  { key: "4,2", label: "4th · 2nd", color: "#A4412F" },
-  { key: "4,3", label: "4th · 3rd", color: "#8B2D1D" },
+  { key: "2,3", label: "2nd · 3rd", color: "#F5C8C0" },
+  { key: "2,4", label: "2nd · 4th", color: "#E89080" },
+  { key: "3,2", label: "3rd · 2nd", color: "#CF5840" },
+  { key: "3,4", label: "3rd · 4th", color: "#A83020" },
+  { key: "4,2", label: "4th · 2nd", color: "#7C1810" },
+  { key: "4,3", label: "4th · 3rd", color: "#4E0A06" },
 ];
 
 export default function FinishGrid({ games, username }: FinishGridProps) {
@@ -76,7 +76,7 @@ export default function FinishGrid({ games, username }: FinishGridProps) {
             {WIN_PAIRS.filter((p) => (counts[p.key] ?? 0) > 0).map(({ key, label, color }) => (
               <span key={key} className="flex items-center gap-1.5 text-xs text-text-secondary">
                 <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                {label} {counts[key]}
+                {label} {counts[key]} ({Math.round((counts[key] ?? 0) / winTotal * 100)}%)
               </span>
             ))}
           </div>
@@ -103,7 +103,7 @@ export default function FinishGrid({ games, username }: FinishGridProps) {
             {LOSS_PAIRS.filter((p) => (counts[p.key] ?? 0) > 0).map(({ key, label, color }) => (
               <span key={key} className="flex items-center gap-1.5 text-xs text-text-secondary">
                 <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                {label} {counts[key]}
+                {label} {counts[key]} ({Math.round((counts[key] ?? 0) / lossTotal * 100)}%)
               </span>
             ))}
           </div>

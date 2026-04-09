@@ -10,9 +10,11 @@ interface OpponentPanelProps {
   revealedHand?: CardDTO[];
   isActive?: boolean;
   isReviewMode?: boolean;
+  side?: "left" | "right";
 }
 
-export default function OpponentPanel({ player, thinking, revealedHand, isActive, isReviewMode }: OpponentPanelProps) {
+export default function OpponentPanel({ player, thinking, revealedHand, isActive, isReviewMode, side }: OpponentPanelProps) {
+  const counterRotate = side === "left" ? "lg:-rotate-90" : side === "right" ? "lg:rotate-90" : "";
   const teamColor = player.is_teammate ? "border-l-team-green" : "border-l-team-red";
   const pulseClass = player.is_teammate ? "animate-border-pulse-green" : "animate-border-pulse-red";
   const borderColor = `${teamColor}${isActive ? ` ${pulseClass}` : ""}`;
@@ -65,11 +67,11 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
           <div className="flex gap-x-0.5 gap-y-0">
             {groupByRank(revealedHand).map((rankGroup) => (
               <div key={rankGroup[0].id} className="flex flex-col items-center">
-                <CardComponent card={rankGroup[0]} size="sm" />
+                <div className={counterRotate}><CardComponent card={rankGroup[0]} size="sm" /></div>
                 {rankGroup.slice(1).map((card) => (
                   <div
                     key={card.id}
-                    className="w-9 h-[22px] lg:w-10 lg:h-[26px] flex items-center justify-center rounded -mt-1 bg-surface border-[1.5px] border-border shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                    className={`w-9 h-[22px] lg:w-10 lg:h-[26px] flex items-center justify-center rounded -mt-1 bg-surface border-[1.5px] border-border shadow-[0_1px_2px_rgba(0,0,0,0.06)] ${counterRotate}`}
                   >
                     <span
                       className="text-[13px] font-semibold"

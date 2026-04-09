@@ -455,13 +455,13 @@ export default function GameBoard({
             <div className="col-start-1 row-start-1 lg:row-start-2 h-7 lg:h-[82px] w-[60px] lg:w-[96px] relative overflow-visible">
               {leftOpp && (
                 <div className="absolute top-0 left-0 lg:left-auto lg:right-0 lg:top-1/2 lg:-translate-y-1/2 lg:rotate-90">
-                  <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={reviewMode ? (reviewHands["1"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["1"])} isReviewMode={reviewMode} />
+                  <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={reviewMode ? (reviewHands["1"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["1"])} isReviewMode={reviewMode} side="left" />
                 </div>
               )}
             </div>
 
             {/* Table surface — all trick actions inside */}
-            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[672px] lg:h-[672px] lg:rounded-2xl lg:border-2 lg:border-[#D9CFC2]/25 lg:bg-gradient-to-br lg:from-[#3D3329] lg:to-[#2A221A] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
+            <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[672px] lg:h-[360px] lg:rounded-2xl lg:border-2 lg:border-[#D9CFC2]/25 lg:bg-gradient-to-br lg:from-[#3D3329] lg:to-[#2A221A] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
                 <div className={`relative inline-flex${reviewMode && reviewWinnerSeat === 2 ? " ring-1 ring-green-500/60 rounded" : ""}`} data-review-winner={reviewMode && reviewWinnerSeat === 2 ? "true" : undefined}>
@@ -526,7 +526,7 @@ export default function GameBoard({
             <div className="col-start-3 row-start-1 lg:row-start-2 h-7 lg:h-[82px] w-[60px] lg:w-[96px] relative overflow-visible">
               {rightOpp && (
                 <div className="absolute top-0 right-0 lg:right-auto lg:left-0 lg:top-1/2 lg:-translate-y-1/2 lg:-rotate-90">
-                  <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={reviewMode ? (reviewHands["3"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["3"])} isReviewMode={reviewMode} />
+                  <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={reviewMode ? (reviewHands["3"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["3"])} isReviewMode={reviewMode} side="right" />
                 </div>
               )}
             </div>

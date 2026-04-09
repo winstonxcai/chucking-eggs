@@ -283,6 +283,10 @@ def main():
     parser.add_argument("--distill-weight", type=float, default=0.0,
                         help="Stage 2 KD loss weight: λ * MSE(Q_new, Q_frozen). "
                              "0 = disabled. Recommended: 0.5.")
+    parser.add_argument("--stage2-partner-only", action="store_true", default=False,
+                        help="Stage 2: keep partner_only gradient mask on (Q+aux but only "
+                             "partner columns 60:120 update). Prevents forgetting by "
+                             "construction. No distillation needed.")
     args = parser.parse_args()
 
     from guandan.game import GuanDanEnv
@@ -302,8 +306,10 @@ def main():
     log.info("Device: %s | d_state: %d", device, STATE_DIM_TIER1)
     log.info("Stage 1: %d ep, aux-only, partner cols only, lr=%.1e",
              args.stage1_episodes, args.stage1_lr)
-    log.info("Stage 2: %d ep, Q+aux, all params, lr=%.1e (warmup %d) → %.1e",
-             args.episodes, args.lr, args.lr_warmup, args.lr_end)
+    log.info("Stage 2: %d ep, Q+aux, %s, lr=%.1e (warmup %d) → %.1e",
+             args.episodes,
+             "partner cols only" if args.stage2_partner_only else "all params",
+             args.lr, args.lr_warmup, args.lr_end)
     log.info("Workers: %d", args.n_workers)
 
     with open(run_dir / "config.json", "w") as f:
@@ -482,10 +488,12 @@ def main():
         q_lead.train(); q_follow.train()
         for _ in range(args.train_steps * step):
             r_lead = train_step(q_lead, buffer, opt_lead, args.batch_size, device,
-                                aux_weight=args.aux_weight, q_weight=1.0, partner_only=False,
+                                aux_weight=args.aux_weight, q_weight=1.0,
+                                partner_only=args.stage2_partner_only,
                                 q_frozen=q_lead_frozen, distill_weight=args.distill_weight)
             train_step(q_follow, buffer, opt_follow, args.batch_size, device,
-                       aux_weight=args.aux_weight, q_weight=1.0, partner_only=False,
+                       aux_weight=args.aux_weight, q_weight=1.0,
+                       partner_only=args.stage2_partner_only,
                        q_frozen=q_follow_frozen, distill_weight=args.distill_weight)
             if r_lead is not None:
                 loss_q_sum += r_lead[0]

@@ -166,20 +166,31 @@ def _mask_nonpartner_grads(model) -> None:
 
 
 def train_step(q_net, buf, optimizer, batch_size, device,
-               aux_weight=0.1, q_weight=1.0, partner_only=False):
+               aux_weight=0.1, q_weight=1.0, partner_only=False,
+               q_frozen=None, distill_weight=0.0):
     if len(buf) < batch_size:
         return None
     batch = buf.sample(batch_size, device)
     hist_emb = q_net.encode_history(batch["history"], batch["hist_len"])
 
     total = torch.tensor(0.0, device=device)
-    q_loss_val = 0.0
+    q_loss_val = distill_loss_val = 0.0
 
-    if q_weight > 0:
+    if q_weight > 0 or distill_weight > 0:
         q_pred = q_net.forward_from_embedding(batch["state"], batch["action"], hist_emb)
-        q_loss = torch.nn.functional.mse_loss(q_pred, batch["return"])
-        total = total + q_weight * q_loss
-        q_loss_val = q_loss.item()
+
+        if q_weight > 0:
+            q_loss = torch.nn.functional.mse_loss(q_pred, batch["return"])
+            total = total + q_weight * q_loss
+            q_loss_val = q_loss.item()
+
+        if distill_weight > 0 and q_frozen is not None:
+            with torch.no_grad():
+                h_frozen = q_frozen.encode_history(batch["history"], batch["hist_len"])
+                q_base = q_frozen.forward_from_embedding(batch["state"], batch["action"], h_frozen)
+            distill_loss = torch.nn.functional.mse_loss(q_pred, q_base)
+            total = total + distill_weight * distill_loss
+            distill_loss_val = distill_loss.item()
 
     hand_pred = q_net.predict_opponent_cards(batch["state"], hist_emb)
     aux_loss = torch.nn.functional.binary_cross_entropy(hand_pred, batch["opponent_cards"])
@@ -191,7 +202,7 @@ def train_step(q_net, buf, optimizer, batch_size, device,
         _mask_nonpartner_grads(q_net)
     torch.nn.utils.clip_grad_norm_(q_net.parameters(), max_norm=1.0)
     optimizer.step()
-    return q_loss_val, aux_loss.item()
+    return q_loss_val, aux_loss.item(), distill_loss_val
 
 
 def evaluate(q_lead, q_follow, device, n_games, opponent_name,
@@ -269,6 +280,9 @@ def main():
                         help="LR for Stage 1 (partner column aux training).")
     parser.add_argument("--n-workers", type=int, default=1,
                         help="Parallel episode workers (CPU). 1 = sequential.")
+    parser.add_argument("--distill-weight", type=float, default=0.0,
+                        help="Stage 2 KD loss weight: λ * MSE(Q_new, Q_frozen). "
+                             "0 = disabled. Recommended: 0.5.")
     args = parser.parse_args()
 
     from guandan.game import GuanDanEnv
@@ -314,6 +328,25 @@ def main():
     q_follow.load_state_dict(ckpt["follow"])
     log.info("Loaded expanded weights. All parameters trainable.")
     log.info("Total params per net: %d", sum(p.numel() for p in q_lead.parameters()))
+
+    # Frozen teacher for distillation (Stage 2 only)
+    q_lead_frozen = q_follow_frozen = None
+    if args.distill_weight > 0:
+        q_lead_frozen = QNetworkLSTM(d_state=STATE_DIM_TIER1,
+                                     lstm_hidden=args.lstm_hidden,
+                                     hidden=args.mlp_hidden).to(device)
+        q_follow_frozen = QNetworkLSTM(d_state=STATE_DIM_TIER1,
+                                       lstm_hidden=args.lstm_hidden,
+                                       hidden=args.mlp_hidden).to(device)
+        q_lead_frozen.load_state_dict(ckpt["lead"])
+        q_follow_frozen.load_state_dict(ckpt["follow"])
+        q_lead_frozen.eval()
+        q_follow_frozen.eval()
+        for p in q_lead_frozen.parameters():
+            p.requires_grad_(False)
+        for p in q_follow_frozen.parameters():
+            p.requires_grad_(False)
+        log.info("Distillation enabled: λ=%.2f (frozen teacher loaded)", args.distill_weight)
 
     # Verify starting WR
     q_lead.eval(); q_follow.eval()
@@ -391,7 +424,7 @@ def main():
             train_step(q_follow, buffer, opt_s1_follow, args.batch_size, device,
                        aux_weight=1.0, q_weight=0.0, partner_only=True)
             if r is not None:
-                loss_aux_sum += r[1]; loss_count += 1
+                loss_aux_sum += r[1]; loss_count += 1  # r[0]=q(0), r[1]=aux, r[2]=distill(0)
         ep += step
         pbar1.update(step)
         if ep % 200 < step and loss_count > 0:
@@ -419,7 +452,7 @@ def main():
     opt_follow = torch.optim.Adam(q_follow.parameters(), lr=args.lr)
     t_start = time.time()
     best_wr = result["winrate"]
-    loss_q_sum = loss_aux_sum = 0.0
+    loss_q_sum = loss_aux_sum = loss_distill_sum = 0.0
     loss_count = 0
     metrics = []
 
@@ -449,12 +482,15 @@ def main():
         q_lead.train(); q_follow.train()
         for _ in range(args.train_steps * step):
             r_lead = train_step(q_lead, buffer, opt_lead, args.batch_size, device,
-                                aux_weight=args.aux_weight, q_weight=1.0, partner_only=False)
+                                aux_weight=args.aux_weight, q_weight=1.0, partner_only=False,
+                                q_frozen=q_lead_frozen, distill_weight=args.distill_weight)
             train_step(q_follow, buffer, opt_follow, args.batch_size, device,
-                       aux_weight=args.aux_weight, q_weight=1.0, partner_only=False)
+                       aux_weight=args.aux_weight, q_weight=1.0, partner_only=False,
+                       q_frozen=q_follow_frozen, distill_weight=args.distill_weight)
             if r_lead is not None:
                 loss_q_sum += r_lead[0]
                 loss_aux_sum += r_lead[1]
+                loss_distill_sum += r_lead[2]
                 loss_count += 1
 
         ep += step
@@ -464,16 +500,17 @@ def main():
             elapsed = time.time() - t_start
             pbar.set_postfix_str(
                 f"q={loss_q_sum/loss_count:.3f} aux={loss_aux_sum/loss_count:.3f} "
-                f"lr={lr:.1e} {ep/elapsed:.1f}ep/s"
+                f"d={loss_distill_sum/loss_count:.3f} lr={lr:.1e} {ep/elapsed:.1f}ep/s"
             )
 
         # Periodic log
         if ep % 200 < step and loss_count > 0:
             elapsed = time.time() - t_start
-            log.info("Ep %6d | q=%.4f aux=%.4f | lr=%.2e e=%.3f | buf=%d | %.1f ep/s | %s",
+            log.info("Ep %6d | q=%.4f aux=%.4f distill=%.4f | lr=%.2e e=%.3f | buf=%d | %.1f ep/s | %s",
                      ep, loss_q_sum / loss_count, loss_aux_sum / loss_count,
+                     loss_distill_sum / loss_count,
                      lr, epsilon, len(buffer), ep / elapsed, _fmt(elapsed))
-            loss_q_sum = loss_aux_sum = 0.0
+            loss_q_sum = loss_aux_sum = loss_distill_sum = 0.0
             loss_count = 0
 
         # Eval

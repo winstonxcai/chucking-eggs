@@ -76,12 +76,18 @@ export interface MovePlayedMsg {
   done: boolean;
 }
 
+export interface TrickPlay {
+  seat: string;
+  type: "play" | "pass";
+  combo?: ComboDTO;
+}
+
 export interface TrickSnapshot {
   trick_num: number;
   /** Viewer-relative seat (string key) -> cards held before this trick */
   hands_before: Record<string, CardDTO[]>;
-  /** Viewer-relative seat (string key) -> what the player did */
-  plays: Record<string, TrickAction>;
+  /** Ordered sequence of every action taken during the trick */
+  plays: TrickPlay[];
   winner_seat: number | null;
 }
 

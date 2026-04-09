@@ -16,6 +16,15 @@ from guandan.cards import ComboType
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _plays_by_seat(snap: dict) -> dict:
+    """Return last non-pass per seat (or pass if only passed) from ordered plays list."""
+    result: dict = {}
+    for p in snap["plays"]:
+        if p["type"] == "play" or p["seat"] not in result:
+            result[p["seat"]] = p
+    return result
+
+
 async def _create_room(client: AsyncClient):
     """POST /api/game/create and return the room object."""
     from app.main import game_manager
@@ -151,10 +160,11 @@ class TestTrickHistoryRecording:
         passers = _pass_until_trick_ends(room)
 
         snap = room.trick_history[0]
+        by_seat = _plays_by_seat(snap)
         for passer in passers:
             key = str(passer)
-            assert key in snap["plays"], f"seat {passer} pass not recorded"
-            assert snap["plays"][key]["type"] == "pass"
+            assert key in by_seat, f"seat {passer} pass not recorded"
+            assert by_seat[key]["type"] == "pass"
 
     @pytest.mark.asyncio
     async def test_lead_play_recorded_with_combo(self, client: AsyncClient):
@@ -166,7 +176,8 @@ class TestTrickHistoryRecording:
         _pass_until_trick_ends(room)
 
         snap = room.trick_history[0]
-        lead_entry = snap["plays"].get(str(leader))
+        by_seat = _plays_by_seat(snap)
+        lead_entry = by_seat.get(str(leader))
         assert lead_entry is not None
         assert lead_entry["type"] == "play"
         assert "combo" in lead_entry
@@ -198,13 +209,13 @@ class TestTrickHistoryRotation:
         snap = {
             "trick_num": 1,
             "hands_before": {"0": [], "1": [], "2": [], "3": []},
-            "plays": {"0": {"type": "play", "combo": {}}, "2": {"type": "pass"}},
+            "plays": [{"seat": "0", "type": "play", "combo": {}}, {"seat": "2", "type": "pass"}],
             "winner_seat": 0,
         }
         rotated = room._rotate_trick_snapshot(snap, viewer=0)
         assert rotated["winner_seat"] == 0
         assert set(rotated["hands_before"].keys()) == {"0", "1", "2", "3"}
-        assert "0" in rotated["plays"]
+        assert any(p["seat"] == "0" for p in rotated["plays"])
 
     @pytest.mark.asyncio
     async def test_rotation_shifts_seats(self, client: AsyncClient):
@@ -213,7 +224,7 @@ class TestTrickHistoryRotation:
         snap = {
             "trick_num": 1,
             "hands_before": {"0": [{"id": "a"}], "1": [{"id": "b"}], "2": [], "3": []},
-            "plays": {"1": {"type": "play", "combo": {}}},
+            "plays": [{"seat": "1", "type": "play", "combo": {}}],
             "winner_seat": 1,
         }
         rotated = room._rotate_trick_snapshot(snap, viewer=1)
@@ -221,7 +232,7 @@ class TestTrickHistoryRotation:
         assert rotated["winner_seat"] == 0
         assert rotated["hands_before"]["0"][0]["id"] == "b"   # was seat 1
         assert rotated["hands_before"]["3"][0]["id"] == "a"   # was seat 0
-        assert "0" in rotated["plays"]
+        assert any(p["seat"] == "0" for p in rotated["plays"])
 
     @pytest.mark.asyncio
     async def test_rotation_none_winner(self, client: AsyncClient):
@@ -230,7 +241,7 @@ class TestTrickHistoryRotation:
         snap = {
             "trick_num": 1,
             "hands_before": {"0": [], "1": [], "2": [], "3": []},
-            "plays": {},
+            "plays": [],
             "winner_seat": None,
         }
         rotated = room._rotate_trick_snapshot(snap, viewer=2)

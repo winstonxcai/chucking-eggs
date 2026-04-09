@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Crown, Flag, Hand, HelpCircle, LogOut, MoreVertical } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction } from "@/lib/types";
+import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction, TrickPlay } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
 import PlayerHand from "./PlayerHand";
 import OpponentPanel from "./OpponentPanel";
@@ -54,6 +54,19 @@ function TrickActionDisplay({ action, size = "sm" }: { action: TrickAction | nul
     );
   }
   return null;
+}
+
+/** Derive per-seat display action from ordered plays list.
+ * Uses each seat's last non-pass action (their played combo), falling back to
+ * pass if they only passed, so all combos played in the trick are visible. */
+function lastPlayBySeat(plays: TrickPlay[]): Record<string, TrickAction> {
+  const result: Record<string, TrickAction> = {};
+  for (const p of plays) {
+    if (p.type === "play" || !(p.seat in result)) {
+      result[p.seat] = { type: p.type, combo: p.combo };
+    }
+  }
+  return result;
 }
 
 export default function GameBoard({
@@ -301,7 +314,7 @@ export default function GameBoard({
   // In review mode: Crown marks the trick winner; live: Crown marks trick lead
   const trickLeadOrWinner = reviewMode ? reviewWinnerSeat : gameState.trick_lead_seat;
   // In review mode: use snapshot plays and suppress finish-order badges
-  const ta = reviewMode && snapshot ? snapshot.plays : gameState.trick_actions;
+  const ta = reviewMode && snapshot ? lastPlayBySeat(snapshot.plays) : gameState.trick_actions;
   const fo = reviewMode ? [] : gameState.finish_order;
   const finishPos = (seat: number) => {
     const idx = fo.indexOf(seat);

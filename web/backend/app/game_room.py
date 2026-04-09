@@ -76,7 +76,7 @@ class GameRoom:
         # Trick history — accumulated during game, sent with game_over
         self.trick_history: list[dict] = []
         self.current_trick_num: int = 0
-        self.current_trick_plays: dict[int, dict] = {}   # seat -> {type, combo?}
+        self.current_trick_plays: list[dict] = []   # ordered sequence of {seat, type, combo?}
         self.current_trick_hands_before: dict[str, list] = {}  # str(seat) -> [card DTOs]
 
         # AI lock — prevents concurrent AI run coroutines
@@ -287,43 +287,48 @@ class GameRoom:
                 str(s): [card_to_dto(c) for c in sort_hand(self.env.hands[s], self.env.level_rank)]
                 for s in range(4)
             }
-            self.current_trick_plays = {}
+            self.current_trick_plays = []
 
         next_player, done = self.env.step(combo)
 
         if combo.type == ComboType.PASS:
-            self.current_trick_plays[str(seat)] = {"type": "pass"}
+            self.current_trick_plays.append({"seat": str(seat), "type": "pass"})
         else:
-            self.current_trick_plays[str(seat)] = {
+            self.current_trick_plays.append({
+                "seat": str(seat),
                 "type": "play",
                 "combo": combo_to_dto(combo, self.env.level_rank),
-            }
+            })
 
         trick_just_ended = (self.env.current_trick is None and not starting_new_trick) or done
         if trick_just_ended and self.current_trick_plays:
             self.trick_history.append({
                 "trick_num": self.current_trick_num,
                 "hands_before": self.current_trick_hands_before,
-                "plays": dict(self.current_trick_plays),
+                "plays": list(self.current_trick_plays),
                 "winner_seat": self.env.trick_winner,
             })
-            self.current_trick_plays = {}
+            self.current_trick_plays = []
 
         return next_player, done
 
     def _rotate_trick_snapshot(self, trick: dict, viewer: int) -> dict:
         """Rotate absolute seats in a trick snapshot to viewer-relative."""
-        def r(s: int) -> int:
-            return (s - viewer + 4) % 4
+        def r(s) -> int | None:
+            return None if s is None else (int(s) - viewer + 4) % 4
+        rotated_plays = []
+        for p in trick["plays"]:
+            entry: dict = {"seat": str(r(int(p["seat"]))), "type": p["type"]}
+            if "combo" in p:
+                entry["combo"] = p["combo"]
+            rotated_plays.append(entry)
         return {
             "trick_num": trick["trick_num"],
             "hands_before": {
                 str(r(int(s))): cards for s, cards in trick["hands_before"].items()
             },
-            "plays": {
-                str(r(int(s))): action for s, action in trick["plays"].items()
-            },
-            "winner_seat": r(trick["winner_seat"]) if trick.get("winner_seat") is not None else None,
+            "plays": rotated_plays,
+            "winner_seat": r(trick["winner_seat"]),
         }
 
     # ---------------------------------------------------------------------------

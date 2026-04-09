@@ -18,11 +18,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
   const roleLabel = player.is_out ? "Out" : player.is_teammate ? "Partner" : "Opp";
   const statusLabel = player.is_out
     ? "Out"
-    : player.card_count <= 10
-      ? `${player.card_count} card${player.card_count === 1 ? "" : "s"}`
-      : player.is_teammate
-        ? "Partner"
-        : "Opponent";
+    : `${player.card_count} card${player.card_count === 1 ? "" : "s"}`;
 
   return (
     <div
@@ -59,30 +55,32 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       {revealedHand && revealedHand.length > 0 && (
         <div
           data-testid={`opponent-hand-${player.seat}`}
-          className="hidden lg:flex flex-wrap gap-x-0.5 gap-y-0 mt-1"
+          className="hidden lg:block mt-1"
         >
-          {groupByRank(revealedHand).map((rankGroup) => (
-            <div key={rankGroup[0].id} className="flex flex-col items-center">
-              <CardComponent card={rankGroup[0]} size="sm" />
-              {rankGroup.slice(1).map((card) => (
-                <div
-                  key={card.id}
-                  className="w-9 h-[22px] lg:w-10 lg:h-[26px] flex items-center justify-center rounded -mt-1 bg-surface border-[1.5px] border-border shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
-                >
-                  <span
-                    className="text-[13px] font-semibold"
-                    style={{
-                      color: card.rank >= 16
-                        ? card.rank === 17 ? "#C75D4A" : "#1A1612"
-                        : card.suit === 1 || card.suit === 2 ? "#C75D4A" : "#1A1612",
-                    }}
+          <div className="flex gap-x-0.5 gap-y-0">
+            {groupByRank(revealedHand).map((rankGroup) => (
+              <div key={rankGroup[0].id} className="flex flex-col items-center">
+                <CardComponent card={rankGroup[0]} size="sm" />
+                {rankGroup.slice(1).map((card) => (
+                  <div
+                    key={card.id}
+                    className="w-9 h-[22px] lg:w-10 lg:h-[26px] flex items-center justify-center rounded -mt-1 bg-surface border-[1.5px] border-border shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
                   >
-                    {card.rank >= 16 ? card.rank_display : card.suit_symbol}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ))}
+                    <span
+                      className="text-[13px] font-semibold"
+                      style={{
+                        color: card.rank >= 16
+                          ? card.rank === 17 ? "#C75D4A" : "#1A1612"
+                          : card.suit === 1 || card.suit === 2 ? "#C75D4A" : "#1A1612",
+                      }}
+                    >
+                      {card.rank >= 16 ? card.rank_display : card.suit_symbol}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

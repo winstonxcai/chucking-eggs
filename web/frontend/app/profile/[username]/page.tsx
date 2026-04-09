@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import EloChart from "@/components/profile/EloChart";
 import GameFeed from "@/components/profile/GameFeed";
 import StatsGrid from "@/components/profile/StatsGrid";
+import FinishGrid from "@/components/profile/FinishGrid";
 import StatusScreen from "@/components/layout/StatusScreen";
 
 function ProfileSkeleton() {
@@ -97,13 +98,6 @@ function ProfileContent() {
 
   const { player, games, elo_history = [], peak_elo } = data;
 
-  // Compute win rate
-  const wins = (games as { players: { display_name: string; is_bot: boolean; team_result: string }[] }[])
-    .filter((g) => g.players.find((p) => !p.is_bot && p.display_name === username)?.team_result === "win")
-    .length;
-  const total = games.length;
-  const winPct = total > 0 ? Math.round((wins / total) * 100) : 0;
-
   const peakElo = peak_elo ?? player.elo;
 
   return (
@@ -112,9 +106,6 @@ function ProfileContent() {
       <div className="bg-surface border border-border rounded-xl px-6 py-5 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">{player.username}</h1>
-          <p className="text-sm text-text-secondary mt-0.5">
-            {total} game{total === 1 ? "" : "s"} · {winPct}% win rate
-          </p>
           {player.created_at && (
             <p className="text-xs text-text-secondary mt-1">
               Joined {new Date(player.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
@@ -138,6 +129,13 @@ function ProfileContent() {
       <div className="bg-surface border border-border rounded-xl px-6 py-5">
         <h2 className="text-sm font-semibold text-foreground mb-4">Win Rate by Difficulty</h2>
         <StatsGrid games={games as Parameters<typeof StatsGrid>[0]["games"]} username={username} />
+      </div>
+
+      {/* Finish Pairs */}
+      <div className="bg-surface border border-border rounded-xl px-6 py-5">
+        <h2 className="text-sm font-semibold text-foreground mb-1">Finish Pairs</h2>
+        <p className="text-xs text-text-secondary mb-4">your position · partner&apos;s position</p>
+        <FinishGrid games={games as Parameters<typeof FinishGrid>[0]["games"]} username={username} />
       </div>
 
       {/* Recent Games */}

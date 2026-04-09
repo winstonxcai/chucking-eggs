@@ -83,6 +83,8 @@ export default function GameBoard({
   } | null>(null);
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [gameOverDismissed, setGameOverDismissed] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [reviewIdx, setReviewIdx] = useState(0);
   const tableSeat0Ref = useRef<HTMLDivElement>(null);
   const flyingStartRef = useRef<number | null>(null);
 
@@ -282,15 +284,25 @@ export default function GameBoard({
   }, []);
 
   // Gate layout changes behind animation to prevent shifts that move tableSeat0Ref mid-flight
-  const handDone = compactHand && gameState.my_hand.length === 0 && !flyingCards;
+  // In review mode always show hand + controls (game is over but we display historical hands)
+  const handDone = !reviewMode && compactHand && gameState.my_hand.length === 0 && !flyingCards;
 
   // --- Layout data ---
   const partner = gameState.players.find((p) => p.seat === 2);
   const leftOpp = gameState.players.find((p) => p.seat === 1);
   const rightOpp = gameState.players.find((p) => p.seat === 3);
 
-  const ta = gameState.trick_actions;
-  const fo = gameState.finish_order;
+  // Review mode: derive snapshot data
+  const trickHistory = gameOver?.trick_history;
+  const reviewTotal = trickHistory?.length ?? 0;
+  const snapshot = reviewMode && trickHistory ? trickHistory[reviewIdx] : null;
+  const reviewHands = snapshot?.hands_before ?? {};
+  const reviewWinnerSeat = snapshot?.winner_seat ?? null;
+  // In review mode: Crown marks the trick winner; live: Crown marks trick lead
+  const trickLeadOrWinner = reviewMode ? reviewWinnerSeat : gameState.trick_lead_seat;
+  // In review mode: use snapshot plays and suppress finish-order badges
+  const ta = reviewMode && snapshot ? snapshot.plays : gameState.trick_actions;
+  const fo = reviewMode ? [] : gameState.finish_order;
   const finishPos = (seat: number) => {
     const idx = fo.indexOf(seat);
     return idx >= 0 ? idx + 1 : null;
@@ -303,7 +315,7 @@ export default function GameBoard({
       <div className="flex-1 flex flex-col p-[5px] lg:px-6 lg:pt-2 lg:pb-1 gap-0 relative lg:justify-center">
         {/* Top-right buttons */}
         <div className="absolute top-2 right-2 lg:top-4 lg:right-4 z-20 flex items-center gap-2">
-          {gameOver && gameOverDismissed && (
+          {gameOver && gameOverDismissed && !reviewMode && (
             <button
               onClick={() => setGameOverDismissed(false)}
               className="text-text-secondary hover:text-foreground transition-colors text-xs font-medium"
@@ -421,7 +433,7 @@ export default function GameBoard({
             <div className="col-start-2 row-start-1 h-7 lg:h-[82px] relative overflow-visible flex justify-center">
               {partner && (
                 <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
-                  <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={handDone ? undefined : gameState.partner_hand} />
+                  <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={reviewMode ? (reviewHands["2"] ?? []) : (handDone ? undefined : gameState.partner_hand)} />
                 </div>
               )}
             </div>
@@ -430,7 +442,7 @@ export default function GameBoard({
             <div className="col-start-1 row-start-1 lg:row-start-2 h-7 lg:h-[82px] w-[60px] lg:w-[96px] relative overflow-visible">
               {leftOpp && (
                 <div className="absolute top-0 left-0 lg:left-auto lg:right-0 lg:top-1/2 lg:-translate-y-1/2">
-                  <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={handDone ? undefined : gameState.opponent_hands?.["1"]} />
+                  <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={reviewMode ? (reviewHands["1"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["1"])} />
                 </div>
               )}
             </div>
@@ -439,58 +451,58 @@ export default function GameBoard({
             <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[672px] lg:h-[360px] lg:rounded-2xl lg:border-2 lg:border-[#D9CFC2]/25 lg:bg-gradient-to-br lg:from-[#3D3329] lg:to-[#2A221A] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
-                <div className="relative inline-flex">
+                <div className={`relative inline-flex${reviewMode && reviewWinnerSeat === 2 ? " ring-1 ring-green-500/60 rounded" : ""}`} data-review-winner={reviewMode && reviewWinnerSeat === 2 ? "true" : undefined}>
                   {finishPos(2) && !ta?.["2"] ? (
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(2)!]}</span>
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["2"] ?? null} size="sm" />
-                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${gameState.trick_lead_seat === 2 ? "" : " invisible"}`} />
+                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 2 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
               </div>
               {/* Left opp — mobile: centered under col 1 (1/6 from left); desktop: left edge */}
               <div data-testid="trick-seat-1" className="absolute left-[16.67%] -translate-x-1/2 top-0 bottom-0 flex items-center lg:left-3 lg:translate-x-0">
-                <div className="relative inline-flex">
+                <div className={`relative inline-flex${reviewMode && reviewWinnerSeat === 1 ? " ring-1 ring-green-500/60 rounded" : ""}`} data-review-winner={reviewMode && reviewWinnerSeat === 1 ? "true" : undefined}>
                   {finishPos(1) && !ta?.["1"] ? (
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(1)!]}</span>
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["1"] ?? null} size="sm" />
-                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${gameState.trick_lead_seat === 1 ? "" : " invisible"}`} />
+                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 1 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
               </div>
               {/* Right opp — mobile: centered under col 3 (5/6 from left); desktop: right edge */}
               <div data-testid="trick-seat-3" className="absolute left-[83.33%] -translate-x-1/2 top-0 bottom-0 flex items-center lg:left-auto lg:right-3 lg:translate-x-0">
-                <div className="relative inline-flex">
+                <div className={`relative inline-flex${reviewMode && reviewWinnerSeat === 3 ? " ring-1 ring-green-500/60 rounded" : ""}`} data-review-winner={reviewMode && reviewWinnerSeat === 3 ? "true" : undefined}>
                   {finishPos(3) && !ta?.["3"] ? (
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(3)!]}</span>
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["3"] ?? null} size="sm" />
-                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${gameState.trick_lead_seat === 3 ? "" : " invisible"}`} />
+                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 3 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
               </div>
               {/* You (bottom edge) */}
               <div ref={tableSeat0Ref} data-testid="trick-seat-0" className="absolute bottom-3 left-0 right-0 flex justify-center">
-                <div className="relative inline-flex">
+                <div className={`relative inline-flex${reviewMode && reviewWinnerSeat === 0 ? " ring-1 ring-green-500/60 rounded" : ""}`} data-review-winner={reviewMode && reviewWinnerSeat === 0 ? "true" : undefined}>
                   {finishPos(gameState.my_seat) && !ta?.["0"] ? (
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(gameState.my_seat)!]}</span>
                   ) : (
                     <>
                       {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} size="sm" />}
-                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${gameState.trick_lead_seat === 0 ? "" : " invisible"}`} />
+                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 0 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
               </div>
               {/* New trick label */}
-              {gameState.is_leading && !ta?.["0"] && !ta?.["1"] && !ta?.["2"] && !ta?.["3"] && (
+              {!reviewMode && gameState.is_leading && !ta?.["0"] && !ta?.["1"] && !ta?.["2"] && !ta?.["3"] && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <span className="text-sm text-text-secondary lg:text-white/40">New trick</span>
                 </div>
@@ -501,51 +513,83 @@ export default function GameBoard({
             <div className="col-start-3 row-start-1 lg:row-start-2 h-7 lg:h-[82px] w-[60px] lg:w-[96px] relative overflow-visible">
               {rightOpp && (
                 <div className="absolute top-0 right-0 lg:right-auto lg:left-0 lg:top-1/2 lg:-translate-y-1/2">
-                  <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={handDone ? undefined : gameState.opponent_hands?.["3"]} />
+                  <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={reviewMode ? (reviewHands["3"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["3"])} />
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* Your turn indicator + Controls — hidden on mobile once player is finished */}
+        {/* Your turn indicator + Controls — or Review nav bar */}
         <div className={`mt-auto lg:mt-0 py-0.5 lg:py-0 ${handDone ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
-          {/* Desktop-only turn label */}
-          <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-1 ${!gameState.is_my_turn ? "invisible" : ""}`}>
-            <div className="w-1.5 h-1.5 rounded-full bg-accent" />
-            <span className="text-[13px] font-medium text-accent">
-              {gameState.is_leading ? "Your turn to lead" : "Your turn to play"}
-            </span>
-          </div>
-          <GameControls
-            matchingCombo={matchingCombo}
-            isLeading={gameState.is_leading}
-            isMyTurn={gameState.is_my_turn}
-            hasSelection={selectedIds.size > 0}
-            turnDeadlineMs={gameState.turn_deadline_ms}
-            onPlay={handlePlay}
-            onPass={handlePass}
-            onUnselect={() => setSelectedIds(new Set())}
-            compact={compactHand}
-            canGroup={selectedIds.size > 0 && !Array.from(selectedIds).some((id) => groupedCardIds.has(id))}
-            canUngroup={localGroups.some((g) => g.cardIds.some((cid) => selectedIds.has(cid)))}
-            onGroup={handleGroup}
-            onUngroup={handleUngroup}
-            onCombos={() => setMobileComboOpen(true)}
-          />
+          {reviewMode ? (
+            <div data-testid="review-nav" className="flex items-center justify-center gap-3 py-2.5">
+              <button
+                data-testid="review-prev"
+                disabled={reviewIdx === 0}
+                onClick={() => setReviewIdx((i) => Math.max(0, i - 1))}
+                className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
+              >
+                ←
+              </button>
+              <span data-testid="review-trick-counter" className="text-sm text-text-secondary tabular-nums w-28 text-center">
+                Trick {reviewIdx + 1} of {reviewTotal}
+              </span>
+              <button
+                data-testid="review-next"
+                disabled={reviewIdx === reviewTotal - 1}
+                onClick={() => setReviewIdx((i) => Math.min(reviewTotal - 1, i + 1))}
+                className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
+              >
+                →
+              </button>
+              <button
+                onClick={() => { setReviewMode(false); setGameOverDismissed(false); }}
+                className="ml-2 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border rounded-lg hover:text-foreground hover:border-foreground/30 transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Desktop-only turn label */}
+              <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-1 ${!gameState.is_my_turn ? "invisible" : ""}`}>
+                <div className="w-1.5 h-1.5 rounded-full bg-accent" />
+                <span className="text-[13px] font-medium text-accent">
+                  {gameState.is_leading ? "Your turn to lead" : "Your turn to play"}
+                </span>
+              </div>
+              <GameControls
+                matchingCombo={matchingCombo}
+                isLeading={gameState.is_leading}
+                isMyTurn={gameState.is_my_turn}
+                hasSelection={selectedIds.size > 0}
+                turnDeadlineMs={gameState.turn_deadline_ms}
+                onPlay={handlePlay}
+                onPass={handlePass}
+                onUnselect={() => setSelectedIds(new Set())}
+                compact={compactHand}
+                canGroup={selectedIds.size > 0 && !Array.from(selectedIds).some((id) => groupedCardIds.has(id))}
+                canUngroup={localGroups.some((g) => g.cardIds.some((cid) => selectedIds.has(cid)))}
+                onGroup={handleGroup}
+                onUngroup={handleUngroup}
+                onCombos={() => setMobileComboOpen(true)}
+              />
+            </>
+          )}
         </div>
 
         {/* Player hand with groups — hidden on mobile once player is finished */}
         <div className={`py-0 lg:py-1 ${handDone ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
           <PlayerHand
-            cards={gameState.my_hand}
-            selectedIds={selectedIds}
-            onToggleCard={toggleCard}
-            onToggleCards={toggleCards}
-            groups={localGroups}
-            groupedCardIds={groupedCardIds}
-            onGroupClick={handleGroupClick}
-            hiddenIds={flyingCards ? new Set(flyingCards.cards.map((c) => c.id)) : undefined}
+            cards={reviewMode ? (reviewHands["0"] ?? []) : gameState.my_hand}
+            selectedIds={reviewMode ? new Set<string>() : selectedIds}
+            onToggleCard={reviewMode ? () => {} : toggleCard}
+            onToggleCards={reviewMode ? () => {} : toggleCards}
+            groups={reviewMode ? [] : localGroups}
+            groupedCardIds={reviewMode ? new Set<string>() : groupedCardIds}
+            onGroupClick={reviewMode ? () => {} : handleGroupClick}
+            hiddenIds={reviewMode ? undefined : (flyingCards ? new Set(flyingCards.cards.map((c) => c.id)) : undefined)}
             compact={compactHand}
           />
         </div>
@@ -565,8 +609,8 @@ export default function GameBoard({
         </div>
       </div>
 
-      {/* Sidebar: desktop only, hidden once hand is done */}
-      <div className={`w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex-col gap-4 ${handDone ? "hidden" : "hidden lg:flex"}`}>
+      {/* Sidebar: desktop only, hidden once hand is done or in review mode */}
+      <div className={`w-[280px] bg-surface border-l border-border p-5 overflow-y-auto flex-col gap-4 ${handDone || reviewMode ? "hidden" : "hidden lg:flex"}`}>
         {/* Groups section */}
         <div className="flex flex-col gap-2">
           <button
@@ -716,6 +760,11 @@ export default function GameBoard({
           }}
           isMultiplayer={isMultiplayer}
           onDismiss={() => setGameOverDismissed(true)}
+          onReview={() => {
+            setReviewMode(true);
+            setReviewIdx(0);
+            setGameOverDismissed(true);
+          }}
         />
       )}
     </div>

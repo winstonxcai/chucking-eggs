@@ -76,12 +76,22 @@ export interface MovePlayedMsg {
   done: boolean;
 }
 
+export interface TrickSnapshot {
+  trick_num: number;
+  /** Viewer-relative seat (string key) -> cards held before this trick */
+  hands_before: Record<string, CardDTO[]>;
+  /** Viewer-relative seat (string key) -> what the player did */
+  plays: Record<string, TrickAction>;
+  winner_seat: number | null;
+}
+
 export interface GameOverMsg {
   type: "game_over";
   finish_order: number[];
   rewards: Record<number, number>;
   players: { seat: number; name: string }[];
   elo_changes?: Record<string, { delta: number; before: number; after: number }>;
+  trick_history?: TrickSnapshot[];
 }
 
 export interface AIThinkingMsg {

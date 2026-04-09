@@ -22,7 +22,7 @@ from guandan.game import GuanDanEnv
 
 from .ai_service import AIService
 from .card_matcher import find_matching_combo
-from .serializer import combo_to_dto, serialize_game_state
+from .serializer import card_to_dto, combo_to_dto, serialize_game_state, sort_hand
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,12 @@ class GameRoom:
         # stay on the board even after opponents respond (not cleared on new trick)
         self.trick_plays: dict[int, Combo] = {}
         self._start_time = time.time()
+
+        # Trick history — accumulated during game, sent with game_over
+        self.trick_history: list[dict] = []
+        self.current_trick_num: int = 0
+        self.current_trick_plays: dict[int, dict] = {}   # seat -> {type, combo?}
+        self.current_trick_hands_before: dict[str, list] = {}  # str(seat) -> [card DTOs]
 
         # AI lock — prevents concurrent AI run coroutines
         self._ai_lock = asyncio.Lock()
@@ -265,7 +271,60 @@ class GameRoom:
     # ---------------------------------------------------------------------------
 
     def _record_move(self, seat: int, combo: Combo) -> None:
+        """Update display state (used by serialize_game_state)."""
         self.trick_plays[seat] = combo
+
+    def _advance(self, combo: Combo, seat: int) -> tuple[int, bool]:
+        """Execute env.step() and record into trick history.
+
+        Detects trick boundaries by watching env.current_trick go None→set (new
+        trick starting) and set→None (trick ending via passes) or done=True.
+        """
+        starting_new_trick = self.env.current_trick is None
+        if starting_new_trick:
+            self.current_trick_num += 1
+            self.current_trick_hands_before = {
+                str(s): [card_to_dto(c) for c in sort_hand(self.env.hands[s], self.env.level_rank)]
+                for s in range(4)
+            }
+            self.current_trick_plays = {}
+
+        next_player, done = self.env.step(combo)
+
+        if combo.type == ComboType.PASS:
+            self.current_trick_plays[str(seat)] = {"type": "pass"}
+        else:
+            self.current_trick_plays[str(seat)] = {
+                "type": "play",
+                "combo": combo_to_dto(combo, self.env.level_rank),
+            }
+
+        trick_just_ended = (self.env.current_trick is None and not starting_new_trick) or done
+        if trick_just_ended and self.current_trick_plays:
+            self.trick_history.append({
+                "trick_num": self.current_trick_num,
+                "hands_before": self.current_trick_hands_before,
+                "plays": dict(self.current_trick_plays),
+                "winner_seat": self.env.trick_winner,
+            })
+            self.current_trick_plays = {}
+
+        return next_player, done
+
+    def _rotate_trick_snapshot(self, trick: dict, viewer: int) -> dict:
+        """Rotate absolute seats in a trick snapshot to viewer-relative."""
+        def r(s: int) -> int:
+            return (s - viewer + 4) % 4
+        return {
+            "trick_num": trick["trick_num"],
+            "hands_before": {
+                str(r(int(s))): cards for s, cards in trick["hands_before"].items()
+            },
+            "plays": {
+                str(r(int(s))): action for s, action in trick["plays"].items()
+            },
+            "winner_seat": r(trick["winner_seat"]) if trick.get("winner_seat") is not None else None,
+        }
 
     # ---------------------------------------------------------------------------
     # Game result persistence (DB + Elo)
@@ -369,6 +428,7 @@ class GameRoom:
                 "difficulty": self.difficulty,
                 "duration_seconds": int(time.time() - self._start_time),
                 "played_at": datetime.now(timezone.utc),
+                "trick_history": self.trick_history,  # absolute seats (unrotated)
                 "players": [
                     {
                         "player_id": self.player_ids.get(seat) if seat in self.human_seats else None,
@@ -422,6 +482,9 @@ class GameRoom:
                     str(r(seat)): {"delta": v["delta"], "before": v["before"], "after": v["after"]}
                     for seat, v in elo_changes.items()
                 },
+                "trick_history": [
+                    self._rotate_trick_snapshot(t, viewer) for t in self.trick_history
+                ],
             })
 
     # ---------------------------------------------------------------------------
@@ -541,7 +604,7 @@ class GameRoom:
                     self.turn_deadline_wallclock_ms[seat] = int((time.time() + HUMAN_TURN_TIMEOUT_S) * 1000)
                     break
 
-                next_player, done = self.env.step(combo)
+                next_player, done = self._advance(combo, seat)
                 self._record_move(seat, combo)
                 self.moves_played_by[seat] += 1
 
@@ -639,7 +702,7 @@ class GameRoom:
     async def _do_move(self, combo: Combo, seat: int) -> None:
         self.turn_deadlines.pop(seat, None)
         self.turn_deadline_wallclock_ms.pop(seat, None)
-        next_player, done = self.env.step(combo)
+        next_player, done = self._advance(combo, seat)
         self._record_move(seat, combo)
         self.moves_played_by[seat] += 1
 

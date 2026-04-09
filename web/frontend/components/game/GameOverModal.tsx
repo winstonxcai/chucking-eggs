@@ -9,6 +9,7 @@ interface GameOverModalProps {
   onPlayAgain: () => void;
   isMultiplayer?: boolean;
   onDismiss: () => void;
+  onReview?: () => void;
 }
 
 const ORDINALS = ["1st", "2nd", "3rd", "4th"];
@@ -19,7 +20,7 @@ const ORDINAL_COLORS = [
   "text-text-secondary",
 ];
 
-export default function GameOverModal({ data, humanSeat, onPlayAgain, isMultiplayer, onDismiss }: GameOverModalProps) {
+export default function GameOverModal({ data, humanSeat, onPlayAgain, isMultiplayer, onDismiss, onReview }: GameOverModalProps) {
   const humanReward = data.rewards[humanSeat] ?? 0;
   const won = humanReward > 0;
   const myElo = data.elo_changes?.[String(humanSeat)];
@@ -117,6 +118,15 @@ export default function GameOverModal({ data, humanSeat, onPlayAgain, isMultipla
         >
           {isMultiplayer ? "Rematch" : "Play Again"}
         </button>
+        {onReview && data.trick_history && data.trick_history.length > 0 && (
+          <button
+            data-testid="review-game-btn"
+            className="w-full py-2 border border-border text-text-secondary hover:text-foreground hover:border-foreground/30 rounded-lg text-sm font-medium transition-colors duration-150 cursor-pointer"
+            onClick={onReview}
+          >
+            Review Game
+          </button>
+        )}
       </div>
     </div>
   );

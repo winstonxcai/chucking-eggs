@@ -28,47 +28,69 @@ from tqdm import tqdm
 log = logging.getLogger(__name__)
 
 
+# ─── Persistent worker state ────────────────────────────────────────────
+# Workers construct networks once via pool initializer, then reuse them
+# across all episodes (only load_state_dict for weight updates).
+_WORKER_QLEAD = None
+_WORKER_QFOLLOW = None
+_WORKER_ENV = None
+
+
+def _init_worker(lstm_hidden: int, mlp_hidden: int, d_state: int, aux_output_dim: int):
+    """Called once per worker process at pool startup."""
+    global _WORKER_QLEAD, _WORKER_QFOLLOW, _WORKER_ENV
+    import torch as _torch
+    from guandan.game import GuanDanEnv
+    from guandan.training.q_network import QNetworkLSTM
+
+    device = _torch.device("cpu")
+    _WORKER_QLEAD = QNetworkLSTM(
+        d_state=d_state, lstm_hidden=lstm_hidden,
+        hidden=mlp_hidden, aux_output_dim=aux_output_dim,
+    ).to(device)
+    _WORKER_QFOLLOW = QNetworkLSTM(
+        d_state=d_state, lstm_hidden=lstm_hidden,
+        hidden=mlp_hidden, aux_output_dim=aux_output_dim,
+    ).to(device)
+    _WORKER_QLEAD.eval()
+    _WORKER_QFOLLOW.eval()
+    _WORKER_ENV = GuanDanEnv()
+
+
 def _episode_worker(
     lead_sd: dict,
     follow_sd: dict,
-    lstm_hidden: int,
-    mlp_hidden: int,
     epsilon: float,
     opponent_name: str | None,
-    d_state: int,
-    aux_output_dim: int,
 ) -> list:
-    """Run one episode in a subprocess (CPU only)."""
+    """Run one episode using the persistent worker networks.
+
+    Only does load_state_dict (cheap copy into pre-allocated nets) and
+    play_episode — no network construction.
+    """
+    global _WORKER_QLEAD, _WORKER_QFOLLOW, _WORKER_ENV
+    import torch as _torch
     from guandan.agents import make_agent
-    from guandan.game import GuanDanEnv
     from guandan.training.encoding import (
         encode_action,
         encode_history,
         encode_opponent_cards_split_team,
     )
     from guandan.training.guanzero_encoding import compute_behavior_flags
-    from guandan.training.q_network import QNetworkLSTM
     from guandan.training.visibility.encoding import encode_state_tier1_team
 
-    device = torch.device("cpu")
-    q_lead = QNetworkLSTM(d_state=d_state, lstm_hidden=lstm_hidden, hidden=mlp_hidden,
-                          aux_output_dim=aux_output_dim).to(device)
-    q_follow = QNetworkLSTM(d_state=d_state, lstm_hidden=lstm_hidden, hidden=mlp_hidden,
-                            aux_output_dim=aux_output_dim).to(device)
-    q_lead.load_state_dict(lead_sd)
-    q_follow.load_state_dict(follow_sd)
-    q_lead.eval(); q_follow.eval()
+    _WORKER_QLEAD.load_state_dict(lead_sd)
+    _WORKER_QFOLLOW.load_state_dict(follow_sd)
 
-    # Player-ignoring adapter for team-invariant aux target
     def _opp_adapter(env, player):
         return encode_opponent_cards_split_team(env)
 
-    env = GuanDanEnv()
-    opp = make_agent(opponent_name, env.level_rank) if opponent_name else None
-    return play_episode(env, q_lead, q_follow, epsilon, device,
+    device = _torch.device("cpu")
+    opp = make_agent(opponent_name, _WORKER_ENV.level_rank) if opponent_name else None
+    return play_episode(_WORKER_ENV, _WORKER_QLEAD, _WORKER_QFOLLOW, epsilon, device,
                         encode_state_tier1_team, encode_action, encode_history,
                         _opp_adapter, compute_behavior_flags,
-                        env.level_rank, opponent=opp)
+                        _WORKER_ENV.level_rank, opponent=opp)
 
 
 def _setup_logging(run_dir: Path) -> None:
@@ -322,17 +344,32 @@ def main():
     log.info("Total params per net: %d", sum(p.numel() for p in q_lead.parameters()))
 
     use_parallel = args.n_workers > 1
-    pool = ProcessPoolExecutor(max_workers=args.n_workers) if use_parallel else None
+    pool = None
+    if use_parallel:
+        pool = ProcessPoolExecutor(
+            max_workers=args.n_workers,
+            initializer=_init_worker,
+            initargs=(args.lstm_hidden, args.mlp_hidden, D_STATE, AUX_DIM),
+        )
     step = args.n_workers if use_parallel else 1
 
+    def _snapshot_weights():
+        """CPU copy of current weights, ready to ship to workers."""
+        return (
+            {k: v.cpu() for k, v in q_lead.state_dict().items()},
+            {k: v.cpu() for k, v in q_follow.state_dict().items()},
+        )
+
+    def _submit_batch(epsilon: float, opponent_name: str | None = None):
+        """Submit one batch of `step` episodes. Returns list of futures."""
+        lead_sd, follow_sd = _snapshot_weights()
+        return [pool.submit(_episode_worker, lead_sd, follow_sd, epsilon, opponent_name)
+                for _ in range(step)]
+
     def _collect_batch(epsilon: float, n: int, opponent_name: str | None = None) -> list:
+        """Synchronous collect (used for prefill / non-parallel path)."""
         if use_parallel:
-            lead_sd = {k: v.cpu() for k, v in q_lead.state_dict().items()}
-            follow_sd = {k: v.cpu() for k, v in q_follow.state_dict().items()}
-            futs = [pool.submit(_episode_worker, lead_sd, follow_sd,
-                                args.lstm_hidden, args.mlp_hidden, epsilon,
-                                opponent_name, D_STATE, AUX_DIM)
-                    for _ in range(n)]
+            futs = _submit_batch(epsilon, opponent_name)
             return [t for fut in futs for t in fut.result()]
         else:
             from guandan.agents import make_agent
@@ -428,17 +465,39 @@ def main():
 
     pbar = tqdm(total=args.episodes, desc="self-play", file=sys.stderr)
     ep = 0
-    while ep < args.episodes:
-        frac = min(1.0, ep / eps_decay)
-        epsilon = args.epsilon_start + (args.epsilon_end - args.epsilon_start) * frac
 
-        # Collect (self-play: opponent=None)
+    def _epsilon_at(ep_count: int) -> float:
+        frac = min(1.0, ep_count / eps_decay)
+        return args.epsilon_start + (args.epsilon_end - args.epsilon_start) * frac
+
+    # Prime the pipeline: submit first collection batch before main loop.
+    # Subsequent iterations submit the NEXT batch before training on the
+    # CURRENT batch, so collection runs in parallel with gradient steps.
+    pending_futures = None
+    if use_parallel:
         q_lead.eval(); q_follow.eval()
-        trans = _collect_batch(epsilon, step, opponent_name=None)
+        pending_futures = _submit_batch(_epsilon_at(ep), opponent_name=None)
+
+    while ep < args.episodes:
+        epsilon = _epsilon_at(ep)
+
+        # Wait for the current batch to finish collecting
+        if use_parallel:
+            trans = [t for fut in pending_futures for t in fut.result()]
+            # Immediately submit the NEXT batch (runs in background while we train)
+            if ep + step < args.episodes:
+                q_lead.eval(); q_follow.eval()
+                pending_futures = _submit_batch(_epsilon_at(ep + step), opponent_name=None)
+            else:
+                pending_futures = None
+        else:
+            q_lead.eval(); q_follow.eval()
+            trans = _collect_batch(epsilon, step, opponent_name=None)
+
         for t in trans:
             buffer.push(*t)
 
-        # Train
+        # Train (runs concurrently with next batch collection when parallel)
         q_lead.train(); q_follow.train()
         for _ in range(args.train_steps * step):
             r = train_step(q_lead, buffer, opt_lead, args.batch_size, device,

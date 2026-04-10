@@ -41,6 +41,7 @@ def _episode_worker(
     from guandan.agents import make_agent
     from guandan.game import GuanDanEnv
     from guandan.training.encoding import encode_action, encode_history, encode_opponent_cards
+    from guandan.training.guanzero_encoding import compute_behavior_flags
     from guandan.training.q_network import QNetworkLSTM
     from guandan.training.visibility.encoding import encode_state_tier1
 
@@ -55,7 +56,8 @@ def _episode_worker(
     opp = make_agent(opponent_name, env.level_rank) if opponent_name else None
     return play_episode(env, q_lead, q_follow, epsilon, device,
                         encode_state_tier1, encode_action, encode_history,
-                        encode_opponent_cards, env.level_rank, opponent=opp)
+                        encode_opponent_cards, compute_behavior_flags,
+                        env.level_rank, opponent=opp)
 
 
 def _setup_logging(run_dir: Path) -> None:
@@ -81,8 +83,8 @@ def _fmt(seconds: float) -> str:
 
 def play_episode(env, q_lead, q_follow, epsilon, device,
                  encode_fn, encode_action_fn, encode_history_fn,
-                 encode_opp_fn, level_rank, opponent=None):
-    """Play one episode. Self-play if opponent is None."""
+                 encode_opp_fn, compute_flags_fn, level_rank, opponent=None):
+    """Play one episode with per-action behavior flags. Self-play if opponent is None."""
     env.reset()
     our_seats = (0, 1, 2, 3) if opponent is None else (0, 2)
     transitions: dict[int, list] = {p: [] for p in our_seats}
@@ -98,24 +100,30 @@ def play_episode(env, q_lead, q_follow, epsilon, device,
         is_leading = env.current_trick is None
         q_net = q_lead if is_leading else q_follow
 
-        state_enc = encode_fn(env, player)
+        base_state = encode_fn(env, player)  # [477]
         hand = env.hands[player]
         action_encs = np.array([encode_action_fn(m, hand, level_rank) for m in legal])
         history, hist_len = encode_history_fn(env, player, level_rank)
+
+        # Per-action states: base_state + behavior flags (9 dims each)
+        state_encs = np.array([
+            np.concatenate([base_state, compute_flags_fn(env, player, m, legal)])
+            for m in legal
+        ])  # [B, 486]
 
         if random.random() < epsilon:
             idx = random.randint(0, len(legal) - 1)
         else:
             with torch.no_grad():
                 B = len(legal)
-                s = torch.tensor(state_enc, device=device).unsqueeze(0).expand(B, -1)
+                s = torch.tensor(state_encs, device=device)  # [B, 486]
                 a = torch.tensor(action_encs, device=device)
                 h = torch.tensor(history, device=device).unsqueeze(0).expand(B, -1, -1)
                 hl = torch.tensor([hist_len], dtype=torch.long, device=device).expand(B)
                 idx = q_net(s, a, h, hl).argmax().item()
 
         opp_cards = encode_opp_fn(env, player)
-        transitions[player].append((state_enc, action_encs[idx], history, hist_len, opp_cards))
+        transitions[player].append((state_encs[idx], action_encs[idx], history, hist_len, opp_cards))
         env.step(legal[idx])
 
     rewards = env.get_rewards()
@@ -128,16 +136,19 @@ def play_episode(env, q_lead, q_follow, epsilon, device,
 
 
 def play_heuristic_episode(env, encode_fn, encode_action_fn, encode_history_fn,
-                           encode_opp_fn, level_rank, heuristic):
+                           encode_opp_fn, compute_flags_fn, level_rank, heuristic):
     """Collect transitions from heuristic play for imitation pretraining."""
     env.reset()
     transitions: dict[int, list] = {p: [] for p in range(4)}
 
     while not env.done:
         player = env.current_player
+        legal = env.legal_moves()
         action = heuristic.act(env, player)
 
-        state_enc = encode_fn(env, player)
+        base_state = encode_fn(env, player)
+        flags = compute_flags_fn(env, player, action, legal)
+        state_enc = np.concatenate([base_state, flags])  # [486]
         action_enc = encode_action_fn(action, env.hands[player], level_rank)
         history, hist_len = encode_history_fn(env, player, level_rank)
         opp_cards = encode_opp_fn(env, player)
@@ -173,7 +184,8 @@ def train_step(q_net, buf, optimizer, batch_size, device, aux_weight=0.1):
 
 
 def evaluate(q_lead, q_follow, device, n_games, opponent_name,
-             encode_fn, encode_action_fn, encode_history_fn, level_rank):
+             encode_fn, encode_action_fn, encode_history_fn,
+             compute_flags_fn, level_rank):
     from guandan.agents import make_agent
     from guandan.game import GuanDanEnv
     env = GuanDanEnv()
@@ -191,13 +203,17 @@ def evaluate(q_lead, q_follow, device, n_games, opponent_name,
             legal = env.legal_moves()
             is_leading = env.current_trick is None
             q_net = q_lead if is_leading else q_follow
-            state_enc = encode_fn(env, player)
+            base_state = encode_fn(env, player)
             hand = env.hands[player]
             action_encs = np.array([encode_action_fn(m, hand, level_rank) for m in legal])
+            state_encs = np.array([
+                np.concatenate([base_state, compute_flags_fn(env, player, m, legal)])
+                for m in legal
+            ])
             history, hist_len = encode_history_fn(env, player, level_rank)
             with torch.no_grad():
                 B = len(legal)
-                s = torch.tensor(state_enc, device=device).unsqueeze(0).expand(B, -1)
+                s = torch.tensor(state_encs, device=device)
                 a = torch.tensor(action_encs, device=device)
                 h = torch.tensor(history, device=device).unsqueeze(0).expand(B, -1, -1)
                 hl = torch.tensor([hist_len], dtype=torch.long, device=device).expand(B)
@@ -222,7 +238,7 @@ def main():
     parser.add_argument("--episodes", type=int, default=50000)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--batch-size", type=int, default=1024)
-    parser.add_argument("--buffer-capacity", type=int, default=500000)
+    parser.add_argument("--buffer-capacity", type=int, default=300000)
     parser.add_argument("--train-steps", type=int, default=4)
     parser.add_argument("--aux-weight", type=float, default=0.1)
     parser.add_argument("--epsilon-start", type=float, default=0.10)
@@ -242,33 +258,36 @@ def main():
     from guandan.agents.heuristic_bot import HeuristicBot
     from guandan.game import GuanDanEnv
     from guandan.training.encoding import encode_action, encode_history, encode_opponent_cards
+    from guandan.training.guanzero_encoding import compute_behavior_flags
     from guandan.training.q_network import QNetworkLSTM, get_device
     from guandan.training.replay import ReplayBuffer
     from guandan.training.visibility.encoding import STATE_DIM_TIER1, encode_state_tier1
+
+    D_STATE = STATE_DIM_TIER1 + 9  # 477 + 9 behavior flags = 486
 
     device = get_device()
     run_dir = Path("ml/runs") / args.run_name
     _setup_logging(run_dir)
 
     log.info("=" * 60)
-    log.info("From-Scratch Tier 1 Training — 477-dim")
+    log.info("From-Scratch Tier 1 Training — %d-dim (477 + 9 flags)", D_STATE)
     log.info("=" * 60)
-    log.info("Device: %s | d_state: %d | workers: %d", device, STATE_DIM_TIER1, args.n_workers)
+    log.info("Device: %s | d_state: %d | workers: %d", device, D_STATE, args.n_workers)
 
     with open(run_dir / "config.json", "w") as f:
         json.dump(vars(args), f, indent=2)
 
-    q_lead = QNetworkLSTM(d_state=STATE_DIM_TIER1,
+    q_lead = QNetworkLSTM(d_state=D_STATE,
                           lstm_hidden=args.lstm_hidden,
                           hidden=args.mlp_hidden).to(device)
-    q_follow = QNetworkLSTM(d_state=STATE_DIM_TIER1,
+    q_follow = QNetworkLSTM(d_state=D_STATE,
                             lstm_hidden=args.lstm_hidden,
                             hidden=args.mlp_hidden).to(device)
 
     opt_lead = torch.optim.Adam(q_lead.parameters(), lr=args.lr)
     opt_follow = torch.optim.Adam(q_follow.parameters(), lr=args.lr)
 
-    buffer = ReplayBuffer(capacity=args.buffer_capacity, d_state=STATE_DIM_TIER1)
+    buffer = ReplayBuffer(capacity=args.buffer_capacity, d_state=D_STATE)
     env = GuanDanEnv()
     level_rank = env.level_rank
     log.info("Total params per net: %d", sum(p.numel() for p in q_lead.parameters()))
@@ -283,7 +302,7 @@ def main():
             follow_sd = {k: v.cpu() for k, v in q_follow.state_dict().items()}
             futs = [pool.submit(_episode_worker, lead_sd, follow_sd,
                                 args.lstm_hidden, args.mlp_hidden, epsilon,
-                                opponent_name, STATE_DIM_TIER1)
+                                opponent_name, D_STATE)
                     for _ in range(n)]
             return [t for fut in futs for t in fut.result()]
         else:
@@ -294,7 +313,8 @@ def main():
                 all_trans.extend(play_episode(
                     env, q_lead, q_follow, epsilon, device,
                     encode_state_tier1, encode_action, encode_history,
-                    encode_opponent_cards, level_rank, opponent=opp))
+                    encode_opponent_cards, compute_behavior_flags,
+                    level_rank, opponent=opp))
             return all_trans
 
     t0 = time.time()
@@ -320,7 +340,7 @@ def main():
         for game in pbar:
             trans = play_heuristic_episode(env, encode_state_tier1, encode_action,
                                           encode_history, encode_opponent_cards,
-                                          level_rank, heuristic)
+                                          compute_behavior_flags, level_rank, heuristic)
             for t in trans:
                 buffer.push(*t)
 
@@ -340,7 +360,8 @@ def main():
             if game % 2000 == 0:
                 q_lead.eval(); q_follow.eval()
                 res = evaluate(q_lead, q_follow, device, 200, "heuristic",
-                               encode_state_tier1, encode_action, encode_history, level_rank)
+                               encode_state_tier1, encode_action, encode_history,
+                               compute_behavior_flags, level_rank)
                 log.info("Pretrain EVAL %5d | vs_heuristic=%.1f%%",
                          game, res["winrate"] * 100)
 
@@ -348,16 +369,18 @@ def main():
         # Save pretrain checkpoint
         pt_path = run_dir / "checkpoint_pretrain.pt"
         torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                    "pretrain_games": args.pretrain_games, "d_state": STATE_DIM_TIER1},
+                    "pretrain_games": args.pretrain_games, "d_state": D_STATE},
                    pt_path)
         log.info("Pretrain complete. Saved %s", pt_path)
 
     # Baseline eval
     q_lead.eval(); q_follow.eval()
     res_h = evaluate(q_lead, q_follow, device, 200, "heuristic",
-                     encode_state_tier1, encode_action, encode_history, level_rank)
+                     encode_state_tier1, encode_action, encode_history,
+                     compute_behavior_flags, level_rank)
     res_j = evaluate(q_lead, q_follow, device, 200, "jidan",
-                     encode_state_tier1, encode_action, encode_history, level_rank)
+                     encode_state_tier1, encode_action, encode_history,
+                     compute_behavior_flags, level_rank)
     log.info("Baseline | vs_heuristic=%.1f%% | vs_jidan=%.1f%%",
              res_h["winrate"] * 100, res_j["winrate"] * 100)
 
@@ -418,9 +441,11 @@ def main():
             q_lead.eval(); q_follow.eval()
             elapsed = time.time() - t_start
             res_h = evaluate(q_lead, q_follow, device, args.eval_games, "heuristic",
-                             encode_state_tier1, encode_action, encode_history, level_rank)
+                             encode_state_tier1, encode_action, encode_history,
+                             compute_behavior_flags, level_rank)
             res_j = evaluate(q_lead, q_follow, device, args.eval_games, "jidan",
-                             encode_state_tier1, encode_action, encode_history, level_rank)
+                             encode_state_tier1, encode_action, encode_history,
+                             compute_behavior_flags, level_rank)
             wr = res_j["winrate"]
             log.info("-" * 60)
             log.info("EVAL Ep %6d | vs_heur=%.1f%% vs_jidan=%.1f%% (1-2: %.0f%%) | "
@@ -441,7 +466,7 @@ def main():
                 evals_without_improvement = 0
                 best_path = run_dir / "checkpoint_best.pt"
                 torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                            "episode": ep, "wr_jidan": wr, "d_state": STATE_DIM_TIER1},
+                            "episode": ep, "wr_jidan": wr, "d_state": D_STATE},
                            best_path)
                 log.info("  *** New best: %.1f%% → %s ***", wr * 100, best_path)
             else:
@@ -455,7 +480,7 @@ def main():
         if ep % args.save_interval < step:
             path = run_dir / f"checkpoint_ep{ep}.pt"
             torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                        "episode": ep, "d_state": STATE_DIM_TIER1}, path)
+                        "episode": ep, "d_state": D_STATE}, path)
             log.info("Saved: %s", path)
 
     pbar.close()
@@ -465,7 +490,7 @@ def main():
     total = time.time() - t0
     final_path = run_dir / "model_final.pt"
     torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                "episode": ep, "d_state": STATE_DIM_TIER1,
+                "episode": ep, "d_state": D_STATE,
                 "best_wr_jidan": best_wr}, final_path)
     log.info("=" * 60)
     log.info("Done. Best vs jidan: %.1f%%. Wall time: %s", best_wr * 100, _fmt(total))

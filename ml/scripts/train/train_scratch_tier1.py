@@ -36,27 +36,38 @@ def _episode_worker(
     epsilon: float,
     opponent_name: str | None,
     d_state: int,
+    aux_output_dim: int,
 ) -> list:
     """Run one episode in a subprocess (CPU only)."""
     from guandan.agents import make_agent
     from guandan.game import GuanDanEnv
-    from guandan.training.encoding import encode_action, encode_history, encode_opponent_cards
+    from guandan.training.encoding import (
+        encode_action,
+        encode_history,
+        encode_opponent_cards_split_team,
+    )
     from guandan.training.guanzero_encoding import compute_behavior_flags
     from guandan.training.q_network import QNetworkLSTM
-    from guandan.training.visibility.encoding import encode_state_tier1
+    from guandan.training.visibility.encoding import encode_state_tier1_team
 
     device = torch.device("cpu")
-    q_lead = QNetworkLSTM(d_state=d_state, lstm_hidden=lstm_hidden, hidden=mlp_hidden).to(device)
-    q_follow = QNetworkLSTM(d_state=d_state, lstm_hidden=lstm_hidden, hidden=mlp_hidden).to(device)
+    q_lead = QNetworkLSTM(d_state=d_state, lstm_hidden=lstm_hidden, hidden=mlp_hidden,
+                          aux_output_dim=aux_output_dim).to(device)
+    q_follow = QNetworkLSTM(d_state=d_state, lstm_hidden=lstm_hidden, hidden=mlp_hidden,
+                            aux_output_dim=aux_output_dim).to(device)
     q_lead.load_state_dict(lead_sd)
     q_follow.load_state_dict(follow_sd)
     q_lead.eval(); q_follow.eval()
 
+    # Player-ignoring adapter for team-invariant aux target
+    def _opp_adapter(env, player):
+        return encode_opponent_cards_split_team(env)
+
     env = GuanDanEnv()
     opp = make_agent(opponent_name, env.level_rank) if opponent_name else None
     return play_episode(env, q_lead, q_follow, epsilon, device,
-                        encode_state_tier1, encode_action, encode_history,
-                        encode_opponent_cards, compute_behavior_flags,
+                        encode_state_tier1_team, encode_action, encode_history,
+                        _opp_adapter, compute_behavior_flags,
                         env.level_rank, opponent=opp)
 
 
@@ -257,20 +268,35 @@ def main():
 
     from guandan.agents.heuristic_bot import HeuristicBot
     from guandan.game import GuanDanEnv
-    from guandan.training.encoding import encode_action, encode_history, encode_opponent_cards
+    from guandan.training.encoding import (
+        OPP_CARDS_DIM_SPLIT,
+        encode_action,
+        encode_history,
+        encode_opponent_cards_split_team,
+    )
     from guandan.training.guanzero_encoding import compute_behavior_flags
     from guandan.training.q_network import QNetworkLSTM, get_device
     from guandan.training.replay import ReplayBuffer
-    from guandan.training.visibility.encoding import STATE_DIM_TIER1, encode_state_tier1
+    from guandan.training.visibility.encoding import (
+        STATE_DIM_TIER1_TEAM,
+        encode_state_tier1_team,
+    )
 
-    D_STATE = STATE_DIM_TIER1 + 9  # 477 + 9 behavior flags = 486
+    D_STATE = STATE_DIM_TIER1_TEAM + 9  # 480 + 9 behavior flags = 489
+    AUX_DIM = OPP_CARDS_DIM_SPLIT       # 120
+
+    # Player-ignoring adapter so the existing encode_opp_fn(env, player) signature
+    # keeps working with the team-invariant target.
+    def _opp_adapter(env, player):
+        return encode_opponent_cards_split_team(env)
 
     device = get_device()
     run_dir = Path("ml/runs") / args.run_name
     _setup_logging(run_dir)
 
     log.info("=" * 60)
-    log.info("From-Scratch Tier 1 Training — %d-dim (477 + 9 flags)", D_STATE)
+    log.info("From-Scratch Tier 1 Training — %d-dim team-centric (480 + 9 flags) | aux=%d split",
+             D_STATE, AUX_DIM)
     log.info("=" * 60)
     log.info("Device: %s | d_state: %d | workers: %d", device, D_STATE, args.n_workers)
 
@@ -279,15 +305,18 @@ def main():
 
     q_lead = QNetworkLSTM(d_state=D_STATE,
                           lstm_hidden=args.lstm_hidden,
-                          hidden=args.mlp_hidden).to(device)
+                          hidden=args.mlp_hidden,
+                          aux_output_dim=AUX_DIM).to(device)
     q_follow = QNetworkLSTM(d_state=D_STATE,
                             lstm_hidden=args.lstm_hidden,
-                            hidden=args.mlp_hidden).to(device)
+                            hidden=args.mlp_hidden,
+                            aux_output_dim=AUX_DIM).to(device)
 
     opt_lead = torch.optim.Adam(q_lead.parameters(), lr=args.lr)
     opt_follow = torch.optim.Adam(q_follow.parameters(), lr=args.lr)
 
-    buffer = ReplayBuffer(capacity=args.buffer_capacity, d_state=D_STATE)
+    buffer = ReplayBuffer(capacity=args.buffer_capacity, d_state=D_STATE,
+                          d_opp_cards=AUX_DIM)
     env = GuanDanEnv()
     level_rank = env.level_rank
     log.info("Total params per net: %d", sum(p.numel() for p in q_lead.parameters()))
@@ -302,7 +331,7 @@ def main():
             follow_sd = {k: v.cpu() for k, v in q_follow.state_dict().items()}
             futs = [pool.submit(_episode_worker, lead_sd, follow_sd,
                                 args.lstm_hidden, args.mlp_hidden, epsilon,
-                                opponent_name, D_STATE)
+                                opponent_name, D_STATE, AUX_DIM)
                     for _ in range(n)]
             return [t for fut in futs for t in fut.result()]
         else:
@@ -312,8 +341,8 @@ def main():
             for _ in range(n):
                 all_trans.extend(play_episode(
                     env, q_lead, q_follow, epsilon, device,
-                    encode_state_tier1, encode_action, encode_history,
-                    encode_opponent_cards, compute_behavior_flags,
+                    encode_state_tier1_team, encode_action, encode_history,
+                    _opp_adapter, compute_behavior_flags,
                     level_rank, opponent=opp))
             return all_trans
 
@@ -338,8 +367,8 @@ def main():
 
         pbar = tqdm(range(1, args.pretrain_games + 1), desc="pretrain", file=sys.stderr)
         for game in pbar:
-            trans = play_heuristic_episode(env, encode_state_tier1, encode_action,
-                                          encode_history, encode_opponent_cards,
+            trans = play_heuristic_episode(env, encode_state_tier1_team, encode_action,
+                                          encode_history, _opp_adapter,
                                           compute_behavior_flags, level_rank, heuristic)
             for t in trans:
                 buffer.push(*t)
@@ -360,7 +389,7 @@ def main():
             if game % 2000 == 0:
                 q_lead.eval(); q_follow.eval()
                 res = evaluate(q_lead, q_follow, device, 200, "heuristic",
-                               encode_state_tier1, encode_action, encode_history,
+                               encode_state_tier1_team, encode_action, encode_history,
                                compute_behavior_flags, level_rank)
                 log.info("Pretrain EVAL %5d | vs_heuristic=%.1f%%",
                          game, res["winrate"] * 100)
@@ -376,10 +405,10 @@ def main():
     # Baseline eval
     q_lead.eval(); q_follow.eval()
     res_h = evaluate(q_lead, q_follow, device, 200, "heuristic",
-                     encode_state_tier1, encode_action, encode_history,
+                     encode_state_tier1_team, encode_action, encode_history,
                      compute_behavior_flags, level_rank)
     res_j = evaluate(q_lead, q_follow, device, 200, "jidan",
-                     encode_state_tier1, encode_action, encode_history,
+                     encode_state_tier1_team, encode_action, encode_history,
                      compute_behavior_flags, level_rank)
     log.info("Baseline | vs_heuristic=%.1f%% | vs_jidan=%.1f%%",
              res_h["winrate"] * 100, res_j["winrate"] * 100)
@@ -441,10 +470,10 @@ def main():
             q_lead.eval(); q_follow.eval()
             elapsed = time.time() - t_start
             res_h = evaluate(q_lead, q_follow, device, args.eval_games, "heuristic",
-                             encode_state_tier1, encode_action, encode_history,
+                             encode_state_tier1_team, encode_action, encode_history,
                              compute_behavior_flags, level_rank)
             res_j = evaluate(q_lead, q_follow, device, args.eval_games, "jidan",
-                             encode_state_tier1, encode_action, encode_history,
+                             encode_state_tier1_team, encode_action, encode_history,
                              compute_behavior_flags, level_rank)
             wr = res_j["winrate"]
             log.info("-" * 60)

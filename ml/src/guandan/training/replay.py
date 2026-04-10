@@ -18,6 +18,7 @@ class ReplayBuffer:
         d_action: int = ACTION_DIM,
         d_move: int = D_MOVE,
         max_history: int = MAX_HISTORY,
+        d_opp_cards: int = OPP_CARDS_DIM,
     ):
         self.capacity = capacity
         self.idx = 0
@@ -31,7 +32,7 @@ class ReplayBuffer:
         self.hist_lens = np.zeros(capacity, dtype=np.int64)
         self.returns = np.zeros(capacity, dtype=np.float32)
         self.opponent_cards = np.zeros(
-            (capacity, OPP_CARDS_DIM), dtype=np.float32
+            (capacity, d_opp_cards), dtype=np.float32
         )
 
     def push(

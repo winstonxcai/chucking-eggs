@@ -125,6 +125,26 @@ def encode_opponent_cards(env: GuanDanEnv, player: int) -> np.ndarray:
     )
 
 
+OPP_CARDS_DIM_SPLIT = 120  # 60 (opp seat 1) + 60 (opp seat 3)
+
+
+def encode_opponent_cards_split_team(env: GuanDanEnv) -> np.ndarray:
+    """Oracle target: per-opponent cards, team-centric. [120] binary vector.
+
+    Returns [opp_seat1 | opp_seat3] concatenation. Used as tier 1 aux target
+    alongside encode_state_tier1_team. Unlike encode_opponent_cards (the
+    60-dim union), this is not recoverable algebraically from state + partner
+    hand — the network must attribute each unknown card to a specific
+    opponent using move history.
+
+    Team-centric: opp_L = seat 1, opp_R = seat 3 (fixed). Invariant to
+    which teammate is currently acting.
+    """
+    l = np.clip(cards_to_matrix(env.hands[1]).flatten(), 0, 1)  # 60
+    r = np.clip(cards_to_matrix(env.hands[3]).flatten(), 0, 1)  # 60
+    return np.concatenate([l, r])  # 120
+
+
 def encode_action(combo: Combo, hand: set, level_rank: int) -> np.ndarray:
     """Action features WITH remaining_after_play. 160 dims."""
     cards_played = cards_to_matrix(combo.cards).flatten()              # 60

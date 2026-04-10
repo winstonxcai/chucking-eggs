@@ -68,11 +68,13 @@ class QNetworkLSTM(nn.Module):
         n_layers: int = 3,
         use_gnn: bool = False,
         gnn_out: int = 128,
+        aux_output_dim: int = OPP_CARDS_DIM,
     ):
         super().__init__()
         self.lstm_hidden = lstm_hidden
         self.use_gnn = use_gnn
         self.gnn_out = gnn_out
+        self.aux_output_dim = aux_output_dim
 
         self.lstm = nn.LSTM(
             input_size=d_move,
@@ -102,7 +104,7 @@ class QNetworkLSTM(nn.Module):
         self.hand_pred = nn.Sequential(
             nn.Linear(d_state + lstm_hidden, hidden // 2),
             nn.ReLU(),
-            nn.Linear(hidden // 2, OPP_CARDS_DIM),
+            nn.Linear(hidden // 2, aux_output_dim),
         )
 
         # Initialize LSTM forget gate bias to 1 (helps learning)
@@ -228,8 +230,29 @@ class QNetworkLSTM(nn.Module):
 
 
 def load_compat(model: nn.Module, state_dict: dict) -> None:
-    """Load state_dict with backward compatibility (strict=False)."""
-    missing, _ = model.load_state_dict(state_dict, strict=False)
+    """Load state_dict with backward compatibility.
+
+    Handles state dimension expansion (e.g. 417→426 when adding behavior flags):
+    copies old weights to the first N columns and zero-inits the new ones,
+    so the model starts at exactly the old checkpoint's behavior.
+    """
+    current_sd = model.state_dict()
+    adapted: dict = {}
+    for key, old_w in state_dict.items():
+        if key not in current_sd:
+            continue
+        new_w = current_sd[key]
+        if old_w.shape == new_w.shape:
+            adapted[key] = old_w
+        elif key == "mlp.0.weight" and old_w.shape[0] == new_w.shape[0]:
+            # Input dimension expanded (e.g. state 417→426): pad new cols with 0
+            padded = new_w.clone().zero_()
+            padded[:, :old_w.shape[1]] = old_w
+            adapted[key] = padded
+            log.info("Expanded %s: %s → %s (new cols zero-init)",
+                     key, tuple(old_w.shape), tuple(new_w.shape))
+        # Size mismatch on other layers: leave at random init (skip)
+    missing, unexpected = model.load_state_dict(adapted, strict=False)
     if missing:
         log.info("New params (random init): %s",
                  list({k.split(".")[0] for k in missing}))

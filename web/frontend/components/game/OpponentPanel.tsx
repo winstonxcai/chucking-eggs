@@ -63,7 +63,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
           className="hidden lg:grid grid-cols-6 gap-x-0.5 gap-y-0.5 mt-1"
         >
           {groupByRank(revealedHand).map((rankGroup) => (
-            <div key={rankGroup[0].id} className="relative">
+            <div key={rankGroup[0].id} className="relative w-fit">
               <CardComponent card={rankGroup[0]} size="sm" />
               {rankGroup.length > 1 && (
                 <span className="absolute bottom-0.5 right-0.5 text-[9px] font-bold bg-foreground/70 text-surface rounded px-0.5 leading-tight">

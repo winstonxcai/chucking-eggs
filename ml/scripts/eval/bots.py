@@ -3,6 +3,8 @@
 Usage:
     PYTHONPATH=ml/src python ml/scripts/eval/bots.py --agent1 strategic --agent2 jidan --games 200
     PYTHONPATH=ml/src python ml/scripts/eval/bots.py --agent1 partner_pimc --agent2 jidan --games 100 --n-det 10
+    PYTHONPATH=ml/src python ml/scripts/eval/bots.py --agent1 partner_oracle --agent2 jidan --games 200 --checkpoint ml/checkpoints/jidan_policy.pt --no-search
+    PYTHONPATH=ml/src python ml/scripts/eval/bots.py --agent1 partner_oracle --agent2 jidan --games 200 --checkpoint ml/checkpoints/jidan_policy.pt --seat-rotate
 """
 
 from __future__ import annotations
@@ -16,14 +18,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from tqdm import tqdm
 
-from guandan.agents import PartnerPIMCBot, make_agent
+from guandan.agents import PartnerOracleBot, PartnerPIMCBot, make_agent
 from guandan.cards import Rank
 from guandan.game import GuanDanEnv
 
 
-def build_agent(name: str, n_det: int, n_cands: int):
+def build_agent(name: str, n_det: int, n_cands: int, checkpoint: str | None, no_search: bool):
     if name == "partner_pimc":
         return PartnerPIMCBot(level_rank=Rank.TWO, n_det=n_det, n_cands=n_cands)
+    if name == "partner_oracle":
+        if checkpoint is None:
+            raise ValueError("--checkpoint is required for partner_oracle")
+        return PartnerOracleBot(
+            checkpoint_path=checkpoint,
+            level_rank=Rank.TWO,
+            use_search=not no_search,
+            n_det=n_det,
+        )
     return make_agent(name, level_rank=Rank.TWO)
 
 
@@ -33,15 +44,19 @@ def main() -> None:
     parser.add_argument("--agent2", required=True, help="Team {1,3} agent name")
     parser.add_argument("--games", type=int, default=200)
     parser.add_argument("--n-det", type=int, default=20,
-                        help="PartnerPIMCBot: determinizations per move (default 20)")
+                        help="PartnerPIMCBot/PartnerOracleBot: determinizations per move (default 20)")
     parser.add_argument("--n-cands", type=int, default=10,
                         help="PartnerPIMCBot: max candidates pre-filter (default 10)")
+    parser.add_argument("--checkpoint", default=None,
+                        help="Checkpoint path for partner_oracle agent")
+    parser.add_argument("--no-search", action="store_true",
+                        help="partner_oracle: disable PIMC search, use pure policy argmax")
     parser.add_argument("--seat-rotate", action="store_true",
                         help="Alternate agent1 between seats {0,2} and {1,3} each game")
     args = parser.parse_args()
 
-    a1 = build_agent(args.agent1, args.n_det, args.n_cands)
-    a2 = build_agent(args.agent2, args.n_det, args.n_cands)
+    a1 = build_agent(args.agent1, args.n_det, args.n_cands, args.checkpoint, args.no_search)
+    a2 = build_agent(args.agent2, args.n_det, args.n_cands, args.checkpoint, args.no_search)
     env = GuanDanEnv()
     wins = 0
 

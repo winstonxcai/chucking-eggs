@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import random
 import sys
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -36,6 +37,16 @@ from ..combos import Combo
 from ..game import GuanDanEnv
 from .base import Agent
 from .greedy_bot import GreedyBot
+from .heuristic_bot import HeuristicBot
+from .jidan_bot import JidanBot
+
+# Registry of rollout-policy factories. Workers receive a string name
+# (picklable) and instantiate the agent in-process.
+ROLLOUT_FACTORIES: dict[str, type[Agent]] = {
+    "greedy": GreedyBot,
+    "heuristic": HeuristicBot,
+    "jidan": JidanBot,
+}
 
 # Full 108-card deck built once at module load.
 _FULL_DECK: frozenset = frozenset(make_deck())
@@ -115,9 +126,9 @@ def _rollout_limited(
     depth_limit: int,
     player: int,
 ) -> float:
-    """Run env for up to depth_limit steps, then score with leaf value."""
+    """Run env for up to depth_limit steps (0 = unlimited), then score with leaf value."""
     steps = 0
-    while not env.done and steps < depth_limit:
+    while not env.done and (depth_limit <= 0 or steps < depth_limit):
         p = env.current_player
         env.step(agents[p].act(env, p))
         steps += 1
@@ -141,9 +152,9 @@ def _pimc_worker(
 
     Must be a module-level function so pickle can locate it across spawn.
     """
-    det_env, candidates, player, depth_limit, level_rank = args
-    # GreedyBot instances are cheap to create; build once per worker call.
-    rollout_agents = [GreedyBot(level_rank) for _ in range(4)]
+    det_env, candidates, player, depth_limit, level_rank, rollout_policy = args
+    cls = ROLLOUT_FACTORIES[rollout_policy]
+    rollout_agents = [cls(level_rank) for _ in range(4)]
     scores = []
     for move in candidates:
         sim = _clone_env(det_env)
@@ -177,12 +188,16 @@ class PartnerPIMCBot(Agent):
         depth_limit: int = 30,
         n_workers: int = _N_WORKERS,
         seed: int | None = None,
+        pre_filter: Callable | None = None,
+        rollout_policy: str = "greedy",
     ):
         self.level_rank = level_rank
         self.n_det = n_det
         self.n_cands = n_cands
         self.depth_limit = depth_limit
         self.n_workers = n_workers
+        self.pre_filter = pre_filter
+        self.rollout_policy = rollout_policy
         self._rng = random.Random(seed)
         self._pool: ProcessPoolExecutor | None = None
         if n_workers > 1:
@@ -214,7 +229,7 @@ class PartnerPIMCBot(Agent):
         if self._pool is not None:
             # Parallel: one task per determinization.
             worker_args = [
-                (det, candidates, player, self.depth_limit, self.level_rank)
+                (det, candidates, player, self.depth_limit, self.level_rank, self.rollout_policy)
                 for det in dets
             ]
             for det_scores in self._pool.map(_pimc_worker, worker_args):
@@ -222,7 +237,8 @@ class PartnerPIMCBot(Agent):
                     scores[i] += s
         else:
             # Single-process fallback.
-            rollout_agents = [GreedyBot(self.level_rank) for _ in range(4)]
+            cls = ROLLOUT_FACTORIES[self.rollout_policy]
+            rollout_agents = [cls(self.level_rank) for _ in range(4)]
             for det in dets:
                 for i, move in enumerate(candidates):
                     sim = _clone_env(det)
@@ -243,6 +259,8 @@ class PartnerPIMCBot(Agent):
         self, env: GuanDanEnv, player: int, candidates: list[Combo]
     ) -> list[Combo]:
         """Rank candidates by cheap heuristic and return the top-K."""
+        if self.pre_filter is not None:
+            return self.pre_filter(env, player, candidates)
         if len(candidates) <= self.n_cands:
             return candidates
 

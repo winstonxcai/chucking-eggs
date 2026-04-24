@@ -56,15 +56,12 @@ function TrickActionDisplay({ action, size = "sm" }: { action: TrickAction | nul
   return null;
 }
 
-/** Derive per-seat display action from ordered plays list.
- * Uses each seat's last non-pass action (their played combo), falling back to
- * pass if they only passed, so all combos played in the trick are visible. */
+/** Derive per-seat display action from ordered plays list. Always uses the
+ * latest action per seat so passes correctly overwrite earlier plays. */
 function lastPlayBySeat(plays: TrickPlay[]): Record<string, TrickAction> {
   const result: Record<string, TrickAction> = {};
   for (const p of plays) {
-    if (p.type === "play" || !(p.seat in result)) {
-      result[p.seat] = { type: p.type, combo: p.combo };
-    }
+    result[p.seat] = { type: p.type, combo: p.combo };
   }
   return result;
 }
@@ -322,10 +319,26 @@ export default function GameBoard({
   const snapshot = currentStep?.snapshot ?? null;
   const reviewHands = snapshot?.hands_before ?? {};
   const reviewWinnerSeat = snapshot?.winner_seat ?? null;
-  // In review mode: Crown marks the trick winner; live: Crown marks trick lead
-  const trickLeadOrWinner = reviewMode ? reviewWinnerSeat : gameState.trick_lead_seat;
+  // Crown only appears at the last play of a trick in review (not prematurely on earlier steps)
+  const isLastPlayOfTrick = !reviewMode ? false :
+    reviewPlayIdx === reviewTotal - 1 ||
+    reviewSteps[reviewPlayIdx + 1]?.snapshot !== snapshot;
+  // In review mode: Crown marks the trick winner (only at trick's last step); live: Crown marks trick lead
+  const trickLeadOrWinner = reviewMode ? (isLastPlayOfTrick ? reviewWinnerSeat : null) : gameState.trick_lead_seat;
   // In review mode: use plays up to current step only
   const ta = reviewMode && currentStep ? lastPlayBySeat(currentStep.playsSlice) : gameState.trick_actions;
+  // In review mode: remove cards the user has already played within the current trick
+  const reviewMyHand = useMemo(() => {
+    if (!reviewMode || !currentStep) return reviewHands["0"] ?? [];
+    const base = reviewHands["0"] ?? [];
+    const playedIds = new Set<string>();
+    for (const p of currentStep.playsSlice) {
+      if (p.seat === "0" && p.type === "play" && p.combo) {
+        for (const card of p.combo.cards) playedIds.add(card.id);
+      }
+    }
+    return base.filter((c) => !playedIds.has(c.id));
+  }, [reviewMode, currentStep, reviewHands]);
   const fo = reviewMode ? [] : gameState.finish_order;
   const finishPos = (seat: number) => {
     const idx = fo.indexOf(seat);
@@ -457,7 +470,7 @@ export default function GameBoard({
             <div className="col-start-2 row-start-1 h-7 lg:h-[82px] relative overflow-visible flex justify-center">
               {partner && (
                 <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
-                  <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={gameState.current_player === 2} revealedHand={reviewMode ? (reviewHands["2"] ?? []) : (handDone ? undefined : gameState.partner_hand)} isReviewMode={reviewMode} />
+                  <OpponentPanel player={partner} thinking={aiThinking === 2} isActive={!reviewMode && gameState.current_player === 2} revealedHand={reviewMode ? (reviewHands["2"] ?? []) : (handDone ? undefined : gameState.partner_hand)} isReviewMode={reviewMode} />
                 </div>
               )}
             </div>
@@ -466,7 +479,7 @@ export default function GameBoard({
             <div className="col-start-1 row-start-1 lg:row-start-2 h-7 lg:h-[82px] w-[60px] lg:w-[96px] relative overflow-visible">
               {leftOpp && (
                 <div className="absolute top-0 left-0 lg:left-auto lg:right-0 lg:top-1/2 lg:-translate-y-1/2">
-                  <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={gameState.current_player === 1} revealedHand={reviewMode ? (reviewHands["1"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["1"])} isReviewMode={reviewMode} />
+                  <OpponentPanel player={leftOpp} thinking={aiThinking === 1} isActive={!reviewMode && gameState.current_player === 1} revealedHand={reviewMode ? (reviewHands["1"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["1"])} isReviewMode={reviewMode} />
                 </div>
               )}
             </div>
@@ -475,7 +488,7 @@ export default function GameBoard({
             <div className="col-start-1 col-span-3 row-start-2 lg:col-start-2 lg:col-span-1 relative w-full h-full lg:w-[672px] lg:h-[360px] lg:rounded-2xl lg:border-2 lg:border-[#D9CFC2]/25 lg:bg-gradient-to-br lg:from-[#3D3329] lg:to-[#2A221A] lg:shadow-[inset_0_2px_24px_rgba(0,0,0,0.4),0_6px_20px_rgba(0,0,0,0.15)]">
               {/* Partner (top edge) */}
               <div data-testid="trick-seat-2" className="absolute top-3 left-0 right-0 flex justify-center">
-                <div className={`relative inline-flex${reviewMode && reviewWinnerSeat === 2 ? " ring-1 ring-green-500/60 rounded" : ""}`} data-review-winner={reviewMode && reviewWinnerSeat === 2 ? "true" : undefined}>
+                <div className="relative inline-flex">
                   {finishPos(2) && !ta?.["2"] ? (
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(2)!]}</span>
                   ) : (
@@ -488,7 +501,7 @@ export default function GameBoard({
               </div>
               {/* Left opp — mobile: centered under col 1 (1/6 from left); desktop: left edge */}
               <div data-testid="trick-seat-1" className="absolute left-[16.67%] -translate-x-1/2 top-0 bottom-0 flex items-center lg:left-3 lg:translate-x-0">
-                <div className={`relative inline-flex${reviewMode && reviewWinnerSeat === 1 ? " ring-1 ring-green-500/60 rounded" : ""}`} data-review-winner={reviewMode && reviewWinnerSeat === 1 ? "true" : undefined}>
+                <div className="relative inline-flex">
                   {finishPos(1) && !ta?.["1"] ? (
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(1)!]}</span>
                   ) : (
@@ -501,7 +514,7 @@ export default function GameBoard({
               </div>
               {/* Right opp — mobile: centered under col 3 (5/6 from left); desktop: right edge */}
               <div data-testid="trick-seat-3" className="absolute left-[83.33%] -translate-x-1/2 top-0 bottom-0 flex items-center lg:left-auto lg:right-3 lg:translate-x-0">
-                <div className={`relative inline-flex${reviewMode && reviewWinnerSeat === 3 ? " ring-1 ring-green-500/60 rounded" : ""}`} data-review-winner={reviewMode && reviewWinnerSeat === 3 ? "true" : undefined}>
+                <div className="relative inline-flex">
                   {finishPos(3) && !ta?.["3"] ? (
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(3)!]}</span>
                   ) : (
@@ -514,7 +527,7 @@ export default function GameBoard({
               </div>
               {/* You (bottom edge) */}
               <div ref={tableSeat0Ref} data-testid="trick-seat-0" className="absolute bottom-3 left-0 right-0 flex justify-center">
-                <div className={`relative inline-flex${reviewMode && reviewWinnerSeat === 0 ? " ring-1 ring-green-500/60 rounded" : ""}`} data-review-winner={reviewMode && reviewWinnerSeat === 0 ? "true" : undefined}>
+                <div className="relative inline-flex">
                   {finishPos(gameState.my_seat) && !ta?.["0"] ? (
                     <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-text-secondary lg:text-white/60">{ORDINAL[finishPos(gameState.my_seat)!]}</span>
                   ) : (
@@ -537,7 +550,7 @@ export default function GameBoard({
             <div className="col-start-3 row-start-1 lg:row-start-2 h-7 lg:h-[82px] w-[60px] lg:w-[96px] relative overflow-visible">
               {rightOpp && (
                 <div className="absolute top-0 right-0 lg:right-auto lg:left-0 lg:top-1/2 lg:-translate-y-1/2">
-                  <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={gameState.current_player === 3} revealedHand={reviewMode ? (reviewHands["3"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["3"])} isReviewMode={reviewMode} />
+                  <OpponentPanel player={rightOpp} thinking={aiThinking === 3} isActive={!reviewMode && gameState.current_player === 3} revealedHand={reviewMode ? (reviewHands["3"] ?? []) : (handDone ? undefined : gameState.opponent_hands?.["3"])} isReviewMode={reviewMode} />
                 </div>
               )}
             </div>
@@ -556,8 +569,8 @@ export default function GameBoard({
               >
                 ←
               </button>
-              <span data-testid="review-trick-counter" className="text-sm text-text-secondary tabular-nums w-28 text-center">
-                Play {reviewPlayIdx + 1} of {reviewTotal}
+              <span data-testid="review-trick-counter" className="text-sm text-text-secondary tabular-nums w-44 text-center">
+                Trick {snapshot?.trick_num ?? "—"} · Play {reviewPlayIdx + 1} of {reviewTotal}
               </span>
               <button
                 data-testid="review-next"
@@ -606,7 +619,7 @@ export default function GameBoard({
         {/* Player hand with groups — hidden on mobile once player is finished */}
         <div className={`py-0 lg:py-1 ${handDone ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
           <PlayerHand
-            cards={reviewMode ? (reviewHands["0"] ?? []) : gameState.my_hand}
+            cards={reviewMode ? reviewMyHand : gameState.my_hand}
             selectedIds={reviewMode ? new Set<string>() : selectedIds}
             onToggleCard={reviewMode ? () => {} : toggleCard}
             onToggleCards={reviewMode ? () => {} : toggleCards}

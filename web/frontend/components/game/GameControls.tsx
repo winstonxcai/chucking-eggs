@@ -5,7 +5,7 @@ import { animate } from "framer-motion";
 import { LayoutList, X } from "lucide-react";
 import type { ComboDTO } from "@/lib/types";
 
-const TIMEOUT_S = 90;
+const TIMEOUT_S = 30;
 
 interface GameControlsProps {
   matchingCombo: ComboDTO | null;

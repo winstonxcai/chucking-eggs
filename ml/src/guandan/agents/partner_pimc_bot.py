@@ -36,6 +36,7 @@ from ..cards import BOMB_TYPES, ComboType, make_deck
 from ..combos import Combo
 from ..game import GuanDanEnv
 from .base import Agent
+from .belief import BeliefModel
 from .greedy_bot import GreedyBot
 from .heuristic_bot import HeuristicBot
 from .jidan_bot import JidanBot
@@ -82,8 +83,15 @@ def _determinize(
     player: int,
     partner: int,
     rng: random.Random,
+    belief: BeliefModel | None = None,
+    max_retries: int = 50,
 ) -> GuanDanEnv:
-    """Return a cloned env with opponent hands randomly re-dealt."""
+    """Return a cloned env with opponent hands re-dealt.
+
+    If `belief` is provided, apply pass-derived hard constraints and retry
+    up to `max_retries` times until a constraint-satisfying split is found.
+    Falls back to uniform sampling if no feasible split is found in time.
+    """
     opp1 = (player + 1) % 4
     opp2 = (player + 3) % 4
     known: set = (
@@ -95,11 +103,29 @@ def _determinize(
         | env.played[opp2]
     )
     hidden = list(_FULL_DECK - known)
-    rng.shuffle(hidden)
     opp1_size = len(env.hands[opp1])
+    opp2_size = len(env.hands[opp2])
+
+    if belief is not None:
+        constraints = belief.constraints(env)
+        c1 = constraints[opp1]
+        c2 = constraints[opp2]
+        level_rank = env.level_rank
+        for _ in range(max_retries):
+            rng.shuffle(hidden)
+            h1 = set(hidden[:opp1_size])
+            h2 = set(hidden[opp1_size : opp1_size + opp2_size])
+            if not c1.violates(h1, level_rank) and not c2.violates(h2, level_rank):
+                det = _clone_env(env)
+                det.hands[opp1] = h1
+                det.hands[opp2] = h2
+                return det
+        # Fallback: uniform after retries exhausted (rare)
+
+    rng.shuffle(hidden)
     det = _clone_env(env)
     det.hands[opp1] = set(hidden[:opp1_size])
-    det.hands[opp2] = set(hidden[opp1_size : opp1_size + len(env.hands[opp2])])
+    det.hands[opp2] = set(hidden[opp1_size : opp1_size + opp2_size])
     return det
 
 
@@ -190,6 +216,7 @@ class PartnerPIMCBot(Agent):
         seed: int | None = None,
         pre_filter: Callable | None = None,
         rollout_policy: str = "greedy",
+        belief: BeliefModel | None = None,
     ):
         self.level_rank = level_rank
         self.n_det = n_det
@@ -198,6 +225,7 @@ class PartnerPIMCBot(Agent):
         self.n_workers = n_workers
         self.pre_filter = pre_filter
         self.rollout_policy = rollout_policy
+        self.belief = belief
         self._rng = random.Random(seed)
         self._pool: ProcessPoolExecutor | None = None
         if n_workers > 1:
@@ -220,7 +248,7 @@ class PartnerPIMCBot(Agent):
 
         # Build determinizations
         dets = [
-            _determinize(env, player, partner, self._rng)
+            _determinize(env, player, partner, self._rng, belief=self.belief)
             for _ in range(self.n_det)
         ]
 

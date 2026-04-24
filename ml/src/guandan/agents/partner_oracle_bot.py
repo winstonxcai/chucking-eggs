@@ -21,6 +21,7 @@ from ..game import GuanDanEnv
 from ..training import ACTION_DIM, QNetwork, encode_action, get_device
 from ..training.visibility import STATE_DIM_TIER1_TEAM, encode_state_tier1_team
 from .base import Agent
+from .belief import BeliefModel
 from .partner_pimc_bot import PartnerPIMCBot, _clone_env
 
 
@@ -50,6 +51,8 @@ class PartnerOracleBot(Agent):
         use_search: if True, run PartnerPIMCBot on top-K candidates.
         top_k: number of candidates to pass to search (default 3).
         n_det: PIMC determinizations (only if use_search).
+        use_belief: if True and use_search, pass a BeliefModel into PartnerPIMC
+                    so determinizations respect pass-derived hard constraints.
         device: torch device override (default auto-detect).
     """
 
@@ -60,6 +63,7 @@ class PartnerOracleBot(Agent):
         use_search: bool = True,
         top_k: int = 3,
         n_det: int = 30,
+        use_belief: bool = True,
         device: torch.device | None = None,
     ):
         self.level_rank = level_rank
@@ -85,6 +89,7 @@ class PartnerOracleBot(Agent):
                 depth_limit=0,          # 0 = full-game rollouts
                 pre_filter=self._policy_top_k,
                 rollout_policy="jidan",
+                belief=BeliefModel() if use_belief else None,
             )
         else:
             self._search = None

@@ -478,6 +478,18 @@ These fixes were implemented during the gen-2-v2 investigation and remain in the
 
 **AZ loop working:** one proper generation (Jidan rollouts + ranking loss) moved 68% → 75%. Strategy confirmed. Proceeding to gen-4 with az_gen3_bestwr.pt policy + Jidan rollouts.
 
+### Gen-4 (2026-04-25)
+
+**Data (selfplay_gen4.npz):** 30K decisions in 4899s (6.1 dec/s, slightly slower — gen-3 policy making harder decisions). z mean=+0.105, std=2.163.
+
+**Training (az_gen4.pt):** init from az_gen3_bestwr.pt. Best policy-only WR=44% at epoch 8 (az_gen4_bestwr.pt), H=0.696 (more entropy collapse than gen-3's 0.850). Best val epoch 4 (val=1.206). Early stop epoch 9.
+
+**With-search WR: 72.5% (145/200, CI [65.9%, 78.2%])** — within CI of gen-3's 75.0%. Statistically indistinguishable. AZ loop has plateau at ~73–75%.
+
+**Plateau diagnosis:** Policy-only WR improving (38→40→44% across gens) but translating to noise-level with-search gains. Two likely causes: (1) bestwr checkpoint selection is noisy (100-game eval → high variance; epoch 8 44% might be lucky), (2) entropy collapse at epoch 8 (H=0.696 vs gen-3's 0.850) → more peaked Q-values → Q-drift re-emerging at late epochs. The ranking loss slows but doesn't stop entropy collapse.
+
+**Proceeding to gen-5** using az_gen4_bestwr.pt (latest generation). If gen-5 also plateaus, consider: larger data (50K decisions), stronger ranking loss margin, or implementing Phase 1a belief-aware determinization.
+
 ---
 
 ## 24. What this logbook is for

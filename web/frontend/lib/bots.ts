@@ -2,7 +2,7 @@
 // WR matrix (200 games/matchup, 31,200 total games). See runs/wr_matrix_v2/.
 
 // Two groups shown as separate sections in the UI.
-export const OUR_BOTS = ["easy", "casual", "hard", "impossible"] as const;
+export const OUR_BOTS = ["easy", "casual", "hard"] as const;
 // liuzha and hulalala hidden — port bugs cause them to lose to random
 export const COMPETITION_BOTS = ["wjsd", "competition", "master", "yaoji", "jidan"] as const;
 
@@ -75,11 +75,5 @@ export const DIFFICULTY_INFO: Record<
     description: "NUAA 2nd Prize \u00b7 2020 NJUPT entry.",
     emoji: "🚀",
     elo: 1779,
-  },
-  impossible: {
-    label: "Impossible",
-    description: "Sees its partner's cards. Can you beat an oracle?",
-    emoji: "\ud83d\udd2e",
-    elo: 1850,
   },
 };

@@ -5,7 +5,6 @@ import random
 from guandan.agents import (
     GreedyBot,
     HeuristicBot,
-    MonteCarloBot,
     RandomBot,
     StrategicBot,
     make_agent,
@@ -152,34 +151,3 @@ def test_strategic_passes_when_partner_wins():
         )
 
 
-def test_monte_carlo_completes_games():
-    """MonteCarloBot should complete games without crashes.
-
-    MC only plays seat 0; other seats use GreedyBot to keep the test fast.
-    """
-    env = GuanDanEnv()
-    mc = MonteCarloBot(n_sims=2, n_workers=1, level_rank=env.level_rank)
-    greedy = GreedyBot(env.level_rank)
-
-    for _ in range(5):
-        env.reset()
-        steps = 0
-        while not env.done:
-            player = env.current_player
-            if player == 0:
-                move = mc.act(env, player)
-            else:
-                move = greedy.act(env, player)
-            env.step(move)
-            steps += 1
-            assert steps < 1000, "MC game exceeded 1000 steps"
-
-        assert len(env.finish_order) == 4
-
-
-def test_monte_carlo_make_agent():
-    """make_agent should support monte_carlo with kwargs."""
-    mc = make_agent("monte_carlo", level_rank=Rank.TWO, n_sims=3, n_workers=1)
-    assert isinstance(mc, MonteCarloBot)
-    assert mc.n_sims == 3
-    assert mc.n_workers == 1

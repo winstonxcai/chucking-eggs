@@ -47,7 +47,7 @@ K_NEG = 5       # hard negative non-candidates to store (for ranking loss)
 
 def _worker(args: tuple) -> list[dict]:
     """Run games in one worker process, return list of decision dicts."""
-    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint = args
+    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint, pi_temp = args
 
     import random
     import numpy as np_w
@@ -124,7 +124,8 @@ def _worker(args: tuple) -> list[dict]:
             scores = oracle._search._score_candidates(env, player, candidates)
             scores_arr = np_w.array(scores, dtype=np_w.float32)
 
-            # Softmax → pi_search
+            # Softmax → pi_search (with optional temperature for softer targets)
+            scores_arr = scores_arr / pi_temp
             scores_arr -= scores_arr.max()
             exp_s = np_w.exp(scores_arr)
             pi_search = (exp_s / exp_s.sum()).astype(np_w.float32)
@@ -191,15 +192,16 @@ def generate(
     seed: int,
     use_value_leaf: bool = False,
     policy_checkpoint: str | None = None,
+    pi_temp: float = 1.0,
 ) -> dict[str, np.ndarray]:
     per_worker = math.ceil(n_decisions / workers)
     args_list = [
-        (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf, policy_checkpoint)
+        (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf, policy_checkpoint, pi_temp)
         for w in range(workers)
     ]
     print(
         f"  self-play: {workers} workers × {per_worker} decisions each "
-        f"(target {n_decisions}, n_det={n_det}, K={top_k})",
+        f"(target {n_decisions}, n_det={n_det}, K={top_k}, pi_temp={pi_temp})",
         flush=True,
     )
 
@@ -268,6 +270,9 @@ def main() -> None:
     p.add_argument("--policy-checkpoint", default=None,
                    help="Separate policy checkpoint for top-K candidate selection "
                         "(hybrid oracle: clean policy filter + value-leaf from --checkpoint).")
+    p.add_argument("--pi-temp", type=float, default=1.0,
+                   help="Temperature for PIMC score softmax (>1 = softer π_search targets). "
+                        "Use 2.0-3.0 with V-at-leaf to prevent training target collapse.")
     args = p.parse_args()
 
     print(f"AZ self-play data generation")
@@ -286,6 +291,7 @@ def main() -> None:
         seed=args.seed,
         use_value_leaf=args.use_value_leaf,
         policy_checkpoint=args.policy_checkpoint,
+        pi_temp=args.pi_temp,
     )
 
     out = Path(args.out)

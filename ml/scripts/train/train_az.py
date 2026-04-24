@@ -1,9 +1,10 @@
 """Train QValueNet (policy + value heads) on AZ self-play data (Direction D, Phase 2).
 
 Loss:
-  policy_loss = soft cross-entropy(softmax(Q[legal]), pi_search target)
+  policy_loss = soft cross-entropy(softmax(Q[legal]), pi_smooth target)
   value_loss  = MSE(V(state), z)
   total       = policy_loss + 0.5 * value_loss
+  where pi_smooth = (1-ε)*pi_search + ε/n_cands  (label smoothing, default ε=0.1)
 
 Per-epoch diagnostics:
   • train/val total/policy/value losses
@@ -54,6 +55,14 @@ def load_data(path: str) -> dict[str, np.ndarray]:
 
 RANK_MARGIN = 1.0   # Q(top-K min) must exceed Q(neg max) by this margin
 RANK_WEIGHT = 0.5   # weight of ranking loss in total
+LABEL_SMOOTH = 0.1  # label smoothing ε: prevents policy collapse from peaked V-at-leaf targets
+
+
+def _smooth_targets(pi: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Apply label smoothing: π_smooth = (1-ε)*π + ε/n_cands over valid candidates."""
+    n_cands = mask.sum(dim=-1, keepdim=True).float().clamp(min=1)
+    uniform = mask.float() / n_cands
+    return (1 - LABEL_SMOOTH) * pi + LABEL_SMOOTH * uniform
 
 
 def _train_step(
@@ -74,7 +83,8 @@ def _train_step(
     q_flat = net(states_exp, actions.reshape(B * K, -1)).reshape(B, K)
     q_flat = q_flat.masked_fill(~mask, -1e9)
     log_probs = F.log_softmax(q_flat, dim=-1)
-    policy_loss = -(pi_search * log_probs).sum(dim=-1).mean()
+    pi_smooth = _smooth_targets(pi_search, mask)
+    policy_loss = -(pi_smooth * log_probs).sum(dim=-1).mean()
 
     v_pred = net.value(states)
     value_loss = F.mse_loss(v_pred, z)
@@ -267,7 +277,9 @@ def train(
     metrics = {"epochs": []}
     t0 = time.time()
     best_val_loss = float("inf")
+    best_wr = -1.0
     best_state = None
+    best_wr_state = None
     patience_count = 0
 
     # Initial eval (epoch 0): how good is the prior?
@@ -318,6 +330,9 @@ def train(
         if eval_games > 0 and (epoch + 1) % eval_every == 0:
             wr_jidan, t_eval = _eval_vs_jidan(net, device, eval_games, seed=seed + epoch + 1)
             eval_str = f"  WR_jidan={wr_jidan:.1%} ({t_eval:.0f}s)"
+            if wr_jidan > best_wr:
+                best_wr = wr_jidan
+                best_wr_state = deepcopy(net.state_dict())
 
         cur_lr = opt.param_groups[0]["lr"]
         sched.step()
@@ -369,9 +384,20 @@ def train(
     if best_state is not None:
         net.load_state_dict(best_state)
 
+    # Save best-WR checkpoint separately if it differs from best-val
+    if best_wr_state is not None and out_path:
+        wr_path = Path(out_path).with_name(Path(out_path).stem + "_bestwr.pt")
+        torch.save({
+            "state_dict": best_wr_state,
+            "config": {"d_state": STATE_DIM_TIER1_TEAM, "d_action": ACTION_DIM, "hidden": hidden},
+            "metrics": metrics,
+        }, wr_path)
+        print(f"  Best-WR checkpoint saved → {wr_path}  (WR={best_wr:.1%})")
+
     metrics["n_train"] = len(train_idx)
     metrics["n_val"] = len(val_idx)
     metrics["best_val_loss"] = best_val_loss
+    metrics["best_wr"] = best_wr
     metrics["total_train_time_s"] = time.time() - t0
     return net, metrics
 

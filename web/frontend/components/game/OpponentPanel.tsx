@@ -57,23 +57,32 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
         <span className="text-xs text-text-secondary">{statusLabel}</span>
       </div>
 
-      {revealedHand && revealedHand.length > 0 && (
-        <div
-          data-testid={`opponent-hand-${player.seat}`}
-          className="hidden lg:flex flex-row items-start self-start gap-x-2 mt-1"
-        >
-          {groupByRank(revealedHand).map((rankGroup) => (
-            <div key={rankGroup[0].id} className="relative w-fit">
-              <CardComponent card={rankGroup[0]} size="sm" />
-              {rankGroup.length > 1 && (
-                <span className="absolute bottom-0.5 right-0.5 text-[9px] font-bold bg-foreground/70 text-surface rounded px-0.5 leading-tight">
-                  ×{rankGroup.length}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      {revealedHand && revealedHand.length > 0 && (() => {
+        const groups = groupByRank(revealedHand);
+        const rows: typeof groups[] = [];
+        for (let i = 0; i < groups.length; i += 6) rows.push(groups.slice(i, i + 6));
+        return (
+          <div
+            data-testid={`opponent-hand-${player.seat}`}
+            className="hidden lg:flex flex-col gap-y-1 mt-1"
+          >
+            {rows.map((row, ri) => (
+              <div key={ri} className="flex flex-row items-start gap-x-2">
+                {row.map((rankGroup) => (
+                  <div key={rankGroup[0].id} className="relative w-fit">
+                    <CardComponent card={rankGroup[0]} size="sm" />
+                    {rankGroup.length > 1 && (
+                      <span className="absolute bottom-0.5 right-0.5 text-[9px] font-bold bg-foreground/70 text-surface rounded px-0.5 leading-tight">
+                        ×{rankGroup.length}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 }

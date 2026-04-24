@@ -97,7 +97,7 @@ export default function GameBoard({
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [gameOverDismissed, setGameOverDismissed] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
-  const [reviewIdx, setReviewIdx] = useState(0);
+  const [reviewPlayIdx, setReviewPlayIdx] = useState(0);
   const tableSeat0Ref = useRef<HTMLDivElement>(null);
   const flyingStartRef = useRef<number | null>(null);
 
@@ -305,16 +305,27 @@ export default function GameBoard({
   const leftOpp = gameState.players.find((p) => p.seat === 1);
   const rightOpp = gameState.players.find((p) => p.seat === 3);
 
-  // Review mode: derive snapshot data
+  // Review mode: flatten all plays across all tricks into a single navigable list
   const trickHistory = gameOver?.trick_history;
-  const reviewTotal = trickHistory?.length ?? 0;
-  const snapshot = reviewMode && trickHistory ? trickHistory[reviewIdx] : null;
+  const reviewSteps = useMemo(() => {
+    if (!trickHistory) return [];
+    const steps: { snapshot: typeof trickHistory[0]; playsSlice: typeof trickHistory[0]["plays"] }[] = [];
+    for (const snap of trickHistory) {
+      for (let i = 0; i < snap.plays.length; i++) {
+        steps.push({ snapshot: snap, playsSlice: snap.plays.slice(0, i + 1) });
+      }
+    }
+    return steps;
+  }, [trickHistory]);
+  const reviewTotal = reviewSteps.length;
+  const currentStep = reviewMode && reviewSteps.length > 0 ? reviewSteps[reviewPlayIdx] : null;
+  const snapshot = currentStep?.snapshot ?? null;
   const reviewHands = snapshot?.hands_before ?? {};
   const reviewWinnerSeat = snapshot?.winner_seat ?? null;
   // In review mode: Crown marks the trick winner; live: Crown marks trick lead
   const trickLeadOrWinner = reviewMode ? reviewWinnerSeat : gameState.trick_lead_seat;
-  // In review mode: use snapshot plays and suppress finish-order badges
-  const ta = reviewMode && snapshot ? lastPlayBySeat(snapshot.plays) : gameState.trick_actions;
+  // In review mode: use plays up to current step only
+  const ta = reviewMode && currentStep ? lastPlayBySeat(currentStep.playsSlice) : gameState.trick_actions;
   const fo = reviewMode ? [] : gameState.finish_order;
   const finishPos = (seat: number) => {
     const idx = fo.indexOf(seat);
@@ -539,19 +550,19 @@ export default function GameBoard({
             <div data-testid="review-nav" className="flex items-center justify-center gap-3 py-2.5">
               <button
                 data-testid="review-prev"
-                disabled={reviewIdx === 0}
-                onClick={() => setReviewIdx((i) => Math.max(0, i - 1))}
+                disabled={reviewPlayIdx === 0}
+                onClick={() => setReviewPlayIdx((i) => Math.max(0, i - 1))}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
               >
                 ←
               </button>
               <span data-testid="review-trick-counter" className="text-sm text-text-secondary tabular-nums w-28 text-center">
-                Trick {reviewIdx + 1} of {reviewTotal}
+                Play {reviewPlayIdx + 1} of {reviewTotal}
               </span>
               <button
                 data-testid="review-next"
-                disabled={reviewIdx === reviewTotal - 1}
-                onClick={() => setReviewIdx((i) => Math.min(reviewTotal - 1, i + 1))}
+                disabled={reviewPlayIdx === reviewTotal - 1}
+                onClick={() => setReviewPlayIdx((i) => Math.min(reviewTotal - 1, i + 1))}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
               >
                 →
@@ -775,7 +786,7 @@ export default function GameBoard({
           onDismiss={() => setGameOverDismissed(true)}
           onReview={() => {
             setReviewMode(true);
-            setReviewIdx(0);
+            setReviewPlayIdx(0);
             setGameOverDismissed(true);
           }}
         />

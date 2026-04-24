@@ -235,27 +235,17 @@ class PartnerPIMCBot(Agent):
                 initargs=(_SRC_PATH,),
             )
 
-    def act(self, env: GuanDanEnv, player: int) -> Combo:
+    def _score_candidates(
+        self, env: GuanDanEnv, player: int, candidates: list[Combo]
+    ) -> list[float]:
+        """Return raw MC score sums for each candidate over all determinizations."""
         partner = (player + 2) % 4
-        candidates = env.legal_moves(player)
-
-        if len(candidates) == 1:
-            return candidates[0]
-
-        candidates = self._prefilter(env, player, candidates)
-        if len(candidates) == 1:
-            return candidates[0]
-
-        # Build determinizations
         dets = [
             _determinize(env, player, partner, self._rng, belief=self.belief)
             for _ in range(self.n_det)
         ]
-
         scores = [0.0] * len(candidates)
-
         if self._pool is not None:
-            # Parallel: one task per determinization.
             worker_args = [
                 (det, candidates, player, self.depth_limit, self.level_rank, self.rollout_policy)
                 for det in dets
@@ -264,7 +254,6 @@ class PartnerPIMCBot(Agent):
                 for i, s in enumerate(det_scores):
                     scores[i] += s
         else:
-            # Single-process fallback.
             cls = ROLLOUT_FACTORIES[self.rollout_policy]
             rollout_agents = [cls(self.level_rank) for _ in range(4)]
             for det in dets:
@@ -274,7 +263,16 @@ class PartnerPIMCBot(Agent):
                     scores[i] += _rollout_limited(
                         sim, rollout_agents, self.depth_limit, player
                     )
+        return scores
 
+    def act(self, env: GuanDanEnv, player: int) -> Combo:
+        candidates = env.legal_moves(player)
+        if len(candidates) == 1:
+            return candidates[0]
+        candidates = self._prefilter(env, player, candidates)
+        if len(candidates) == 1:
+            return candidates[0]
+        scores = self._score_candidates(env, player, candidates)
         return candidates[max(range(len(candidates)), key=lambda i: scores[i])]
 
     def __del__(self) -> None:

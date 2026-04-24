@@ -18,11 +18,11 @@ import torch
 from ..cards import Rank
 from ..combos import Combo
 from ..game import GuanDanEnv
-from ..training import ACTION_DIM, QNetwork, encode_action, get_device
+from ..training import ACTION_DIM, QValueNet, encode_action, get_device
 from ..training.visibility import STATE_DIM_TIER1_TEAM, encode_state_tier1_team
 from .base import Agent
 from .belief import BeliefModel
-from .partner_pimc_bot import PartnerPIMCBot, _clone_env
+from .partner_pimc_bot import _N_WORKERS, PartnerPIMCBot, _clone_env
 
 
 def _reflect_env(env: GuanDanEnv) -> GuanDanEnv:
@@ -64,6 +64,7 @@ class PartnerOracleBot(Agent):
         top_k: int = 3,
         n_det: int = 30,
         use_belief: bool = False,
+        n_workers: int = _N_WORKERS,
         device: torch.device | None = None,
     ):
         self.level_rank = level_rank
@@ -73,12 +74,14 @@ class PartnerOracleBot(Agent):
 
         ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
         cfg = ckpt["config"]
-        self.net = QNetwork(
+        self.net = QValueNet(
             d_state=cfg["d_state"],
             d_action=cfg["d_action"],
             hidden=cfg["hidden"],
         ).to(self.device)
-        self.net.load_state_dict(ckpt["state_dict"])
+        # strict=False: gen-0 checkpoints (jidan_policy.pt) lack v_net weights;
+        # those stay zero-init until AZ training fills them in.
+        self.net.load_state_dict(ckpt["state_dict"], strict=False)
         self.net.eval()
 
         if use_search:
@@ -86,10 +89,11 @@ class PartnerOracleBot(Agent):
                 level_rank=level_rank,
                 n_det=n_det,
                 n_cands=top_k,
-                depth_limit=0,          # 0 = full-game rollouts
+                depth_limit=0,
                 pre_filter=self._policy_top_k,
                 rollout_policy="jidan",
                 belief=BeliefModel() if use_belief else None,
+                n_workers=n_workers,
             )
         else:
             self._search = None

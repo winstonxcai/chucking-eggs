@@ -45,20 +45,7 @@ export default function GameControls({
   const [countdown, setCountdown] = useState<number | null>(null);
   const timerRef = useRef<HTMLDivElement>(null);
 
-  // Stabilize deadline: ignore jitter (<2s diff) from repeated game_state messages
-  const lockedDeadlineRef = useRef<number | null>(null);
-  const stableDeadline = useMemo(() => {
-    if (!isMyTurn || !turnDeadlineMs) {
-      lockedDeadlineRef.current = null;
-      return null;
-    }
-    const prev = lockedDeadlineRef.current;
-    if (prev === null || Math.abs(turnDeadlineMs - prev) > 2000) {
-      lockedDeadlineRef.current = turnDeadlineMs;
-      return turnDeadlineMs;
-    }
-    return prev;
-  }, [isMyTurn, turnDeadlineMs]);
+  const stableDeadline = isMyTurn ? turnDeadlineMs ?? null : null;
 
   // Urgency + countdown via setInterval — runs even in background tabs (rAF pauses there)
   useEffect(() => {

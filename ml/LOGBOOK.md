@@ -375,6 +375,52 @@ Direction B stays archived unless A and C both flatline.
 
 ---
 
+## 27. Direction D Phase 2 — AlphaZero self-play, gen-1 and gen-2 (2026-04-25)
+
+### Architecture: QValueNet + AZ iteration
+
+**QValueNet** extends QNetwork with a state-only value trunk V(s): separate 3-layer MLP(d_state→hidden→hidden/2→1). Q-trunk unchanged for backward compat. V zero-init (final layer only) so old checkpoints load with `strict=False`.
+
+**selfplay_data.py:** records `(state[480], actions[K,160], pi_search[K], z)` per PIMC decision. pi_search = softmax(PIMC raw scores). Workers use CPU (avoid MPS contention across spawn processes).
+
+**train_az.py:** `L = soft_CE(Q, pi_search) + 0.5·MSE(V, z)`. Per-epoch val metrics, inline policy-only eval vs Jidan, early-stop on val loss.
+
+### Gen-1 (2026-04-25)
+
+**Data:** 30K decisions from PartnerOracleBot(jidan_policy.pt) with Jidan rollouts (n_det=30, K=3). z stats: mean=+0.129, std=2.188. 52.4% of samples have H<0.1 (search mostly agrees with policy prior).
+
+**Training (az_gen1.pt):** init from jidan_policy.pt. Best epoch 4/10, val=1.176. Policy-only WR: 38% (limited metric due to Q-drift). **With-search WR: 68% (136/200, CI [61.2%, 74.1%])** — matches baseline ± noise. Expected for one AZ iteration.
+
+**Critical diagnosis:** Policy-only WR (38%) is 31pp below with-search WR (68%). Root cause: training constrains only top-K Q-values; legal moves never in training (not in any top-K) drift to arbitrary Q-values. At policy-only eval, these drifted values contaminate argmax → wrong picks. With-search eval masks this by re-applying the policy's top-K filter before PIMC.
+
+### V-at-leaf speedup (2026-04-25)
+
+Replaced Jidan rollouts with V(s) forward pass at PIMC leaf. Speed: 1.0 → 22.9 dec/s/worker (23× speedup). Gen-2 self-play: 30K decisions in 950s (31.6 dec/s total). Forces CPU (MPS can't share torch modules across spawn).
+
+### Gen-2 (2026-04-25) — Mode collapse
+
+**Data:** 30K decisions from az_gen1_latest.pt with V-at-leaf (n_det=50, K=3). z mean=-0.013, std=2.319.
+
+**Training (az_gen2.pt):** init from az_gen1_latest.pt. Early stop at epoch 6, best val=0.949 (epoch 3). WR_jidan policy-only: **0%** throughout training — policy completely broken.
+
+**With-search WR: 2.0% (4/200, CI [0.8%, 5.0%])** — catastrophic collapse vs 68% gen-1 baseline.
+
+**Root cause: AZ mode collapse from Q-drift.** Gen-1's Q-drifted policy proposed bad top-K candidates in gen-2 self-play. PIMC scored bad candidates and returned bad π_search targets. Training gen-2 on these targets amplified Q-drift → gen-2 policy completely broken. Even with-search (n_det=50, V-at-leaf) couldn't rescue 3 uniformly-bad candidates.
+
+**Key insight: Q-drift is self-amplifying across AZ iterations.** Each generation inherits and worsens the previous generation's Q-drift. Standard AZ (AlphaGo Zero style) avoids this because its policy is a softmax over ALL legal moves, updated every step. Our Q-net architecture trains only K=3 actions per sample → non-top-K actions drift unconstrained.
+
+### Fix (2026-04-25)
+
+Two-part fix to prevent Q-drift and AZ mode collapse:
+
+1. **Ranking loss in train_az.py:** Store K_NEG=5 random non-candidate legal moves as "hard negatives" in self-play data. Add hinge loss: `relu(Q_neg_max - Q_pos_min + margin=1.0)` with weight 0.5. Prevents Q-drift by explicitly training non-top-K actions toward low Q-values.
+
+2. **Hybrid oracle for gen-2-v2 self-play:** Use jidan_policy.pt for top-K candidate selection (clean, no Q-drift) + az_gen1_latest.pt V-head for leaf scoring (fast, better than Jidan rollouts). The `--policy-checkpoint` flag in selfplay_data.py decouples the two. After PartnerOracleBot is constructed, `oracle.net` is replaced with the gen-0 net; `oracle._search.value_net` retains the gen-1 reference (Python bound the reference at init time).
+
+**Next steps:** Train gen-2-v2 on selfplay_gen2_v2.npz with ranking loss. Expect policy-only WR ≥ 38% and with-search ≥ 68%. If confirmed, gen-3 uses gen-2-v2 + ranking loss + hybrid oracle for continued AZ improvement.
+
+---
+
 ## 24. What this logbook is for
 
 When designing the next training run:

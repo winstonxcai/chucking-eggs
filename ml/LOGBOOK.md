@@ -417,7 +417,34 @@ Two-part fix to prevent Q-drift and AZ mode collapse:
 
 2. **Hybrid oracle for gen-2-v2 self-play:** Use jidan_policy.pt for top-K candidate selection (clean, no Q-drift) + az_gen1_latest.pt V-head for leaf scoring (fast, better than Jidan rollouts). The `--policy-checkpoint` flag in selfplay_data.py decouples the two. After PartnerOracleBot is constructed, `oracle.net` is replaced with the gen-0 net; `oracle._search.value_net` retains the gen-1 reference (Python bound the reference at init time).
 
-**Next steps:** Train gen-2-v2 on selfplay_gen2_v2.npz with ranking loss. Expect policy-only WR ≥ 38% and with-search ≥ 68%. If confirmed, gen-3 uses gen-2-v2 + ranking loss + hybrid oracle for continued AZ improvement.
+### Gen-2-v2 (2026-04-25) — Ranking loss working, V-at-leaf target collapse discovered
+
+**Data (selfplay_gen2_v2.npz):** 30K decisions, hybrid oracle (jidan_policy.pt for K + az_gen1_latest.pt V-at-leaf for scoring, n_det=50, K=3). 30K in 872s (34.4 dec/s). z mean=-0.040, std=2.378.
+
+**Critical data quality issue:** π_search targets from V-at-leaf are far more peaked than gen-1 (Jidan rollouts):
+- gen-1: mean entropy H=0.348, max pi mean=0.798
+- gen-2-v2: mean entropy H=0.142, **median H=0.009**, max pi mean=0.941. 68.8% of decisions are near-one-hot.
+- Cause: V(s) is a deterministic single forward pass per determinization → very consistent scores across n_det=50 → softmax(avg V) is much more peaked than softmax(avg Jidan rollout).
+
+**Training (az_gen2_v2.pt):** init from az_gen1_latest.pt, ranking loss included. Ranking loss correcting Q-drift (r: 0.937→0.624 at epoch 4→0.366 at epoch 7). Early stop at epoch 7, best val=1.019 (epoch 4).
+
+**Policy-only WR:** 2% at epoch 4 (saved checkpoint), 12% at epoch 7. Very poor. Root cause: near-one-hot π_search targets cause policy entropy collapse (H: 0.892→0.688). The model memorizes "always pick candidate 0" rather than learning to discriminate.
+
+**Val loss ≠ WR proxy:** epoch 4 has best val=1.019 but WR=2%; epoch 7 has val=1.130 but WR=12%. Early stopping saves the wrong checkpoint.
+
+**With-search WR:** eval running (az_gen2_v2.pt epoch 4 and epoch 7 _latest in parallel).
+
+### Additional fixes (2026-04-25)
+
+Beyond ranking loss + hybrid oracle, two more fixes for the peaked target problem:
+
+1. **Label smoothing in train_az.py (ε=0.1):** `π_smooth = 0.9·π_search + 0.1·(1/n_cands)`. Prevents policy collapse from near-one-hot V-at-leaf targets. Applied in `_train_step` only; val loss measured on raw targets for calibration.
+
+2. **Best-WR checkpoint saving:** train_az.py now saves both best-val checkpoint (original) and `_bestwr.pt` at the epoch with highest WR_jidan. Addresses the val-loss ≠ WR proxy problem.
+
+3. **PIMC temperature (--pi-temp) in selfplay_data.py:** Applies temperature τ to PIMC scores before softmax: `pi_search = softmax(scores/τ)`. Recommended τ=2.0 for V-at-leaf data generation to prevent near-one-hot targets. Default 1.0 for backward compat.
+
+**Next:** With-search eval results → if ≥ 68%, proceed to gen-3 with pi_temp=2.0 + label smoothing. If < 68%, retrain gen-2-v2 with label smoothing (existing data) before gen-3.
 
 ---
 

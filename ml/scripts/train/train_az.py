@@ -52,15 +52,21 @@ def load_data(path: str) -> dict[str, np.ndarray]:
 
 # ── Training step ──────────────────────────────────────────────────────────────
 
+RANK_MARGIN = 1.0   # Q(top-K min) must exceed Q(neg max) by this margin
+RANK_WEIGHT = 0.5   # weight of ranking loss in total
+
+
 def _train_step(
     net: QValueNet,
-    states: torch.Tensor,      # [B, 480]
-    actions: torch.Tensor,     # [B, K, 160]
-    pi_search: torch.Tensor,   # [B, K] soft target
-    n_cands: torch.Tensor,     # [B] int
-    z: torch.Tensor,           # [B]
+    states: torch.Tensor,        # [B, 480]
+    actions: torch.Tensor,       # [B, K, 160]
+    pi_search: torch.Tensor,     # [B, K] soft target
+    n_cands: torch.Tensor,       # [B] int
+    z: torch.Tensor,             # [B]
     opt: torch.optim.Optimizer,
-) -> tuple[float, float, float]:
+    neg_actions: torch.Tensor | None = None,  # [B, K_neg, 160]
+    n_neg: torch.Tensor | None = None,        # [B] int
+) -> tuple[float, float, float, float]:
     B, K, _ = actions.shape
     mask = torch.arange(K, device=states.device).unsqueeze(0) < n_cands.unsqueeze(1)
 
@@ -73,12 +79,30 @@ def _train_step(
     v_pred = net.value(states)
     value_loss = F.mse_loss(v_pred, z)
 
-    total = policy_loss + 0.5 * value_loss
+    # Ranking loss: enforce Q(top-K) > Q(non-candidates) + margin.
+    rank_loss = torch.tensor(0.0, device=states.device)
+    if neg_actions is not None and n_neg is not None:
+        K_neg = neg_actions.shape[1]
+        neg_mask = torch.arange(K_neg, device=states.device).unsqueeze(0) < n_neg.unsqueeze(1)
+        has_neg = neg_mask.any(dim=1)  # [B] which samples have negatives
+        if has_neg.any():
+            states_exp_neg = states.unsqueeze(1).expand(B, K_neg, -1).reshape(B * K_neg, -1)
+            q_neg = net(states_exp_neg, neg_actions.reshape(B * K_neg, -1)).reshape(B, K_neg)
+            q_neg = q_neg.masked_fill(~neg_mask, -1e9)
+            q_neg_max = q_neg.max(dim=-1).values          # [B] max over valid negs
+
+            q_pos = q_flat.masked_fill(~mask, 1e9)
+            q_pos_min = q_pos.min(dim=-1).values           # [B] min over valid candidates
+
+            margin_loss = F.relu(q_neg_max - q_pos_min + RANK_MARGIN)
+            rank_loss = margin_loss[has_neg].mean()
+
+    total = policy_loss + 0.5 * value_loss + RANK_WEIGHT * rank_loss
     opt.zero_grad()
     total.backward()
     torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
     opt.step()
-    return total.item(), policy_loss.item(), value_loss.item()
+    return total.item(), policy_loss.item(), value_loss.item(), rank_loss.item()
 
 
 @torch.no_grad()
@@ -200,6 +224,8 @@ def train(
     pi_np = data["pi_search"]
     n_cands_np = data["n_cands"]
     z_np = data["z"]
+    neg_actions_np = data.get("neg_actions")  # None for legacy data without negatives
+    n_neg_np = data.get("n_neg")
     N = len(states_np)
 
     net = QValueNet(d_state=STATE_DIM_TIER1_TEAM, d_action=ACTION_DIM, hidden=hidden).to(device)
@@ -223,14 +249,20 @@ def train(
     print(f"  z stats: mean={z_np.mean():+.3f}  std={z_np.std():.3f}  "
           f"  baseline_value_loss={(z_np**2).mean():.3f} (V≡0)")
 
+    has_negatives = neg_actions_np is not None and n_neg_np is not None
+
     def to_tensors(idx_list):
-        return (
-            torch.from_numpy(states_np[idx_list]).to(device),
-            torch.from_numpy(actions_np[idx_list]).to(device),
-            torch.from_numpy(pi_np[idx_list]).to(device),
-            torch.from_numpy(n_cands_np[idx_list].astype(np.int64)).to(device),
-            torch.from_numpy(z_np[idx_list]).to(device),
-        )
+        st = torch.from_numpy(states_np[idx_list]).to(device)
+        ac = torch.from_numpy(actions_np[idx_list]).to(device)
+        pi = torch.from_numpy(pi_np[idx_list]).to(device)
+        nc = torch.from_numpy(n_cands_np[idx_list].astype(np.int64)).to(device)
+        zb = torch.from_numpy(z_np[idx_list]).to(device)
+        if has_negatives:
+            na = torch.from_numpy(neg_actions_np[idx_list]).to(device)
+            nn_ = torch.from_numpy(n_neg_np[idx_list].astype(np.int64)).to(device)
+        else:
+            na, nn_ = None, None
+        return st, ac, pi, nc, zb, na, nn_
 
     metrics = {"epochs": []}
     t0 = time.time()
@@ -248,25 +280,27 @@ def train(
     for epoch in range(epochs):
         rng.shuffle(train_idx)
         net.train()
-        ep_total = ep_policy = ep_value = 0.0
+        ep_total = ep_policy = ep_value = ep_rank = 0.0
         n_batches = 0
         for bs in range(0, len(train_idx), batch_size):
-            st, ac, pi, nc, zb = to_tensors(train_idx[bs: bs + batch_size])
-            tl, pl, vl = _train_step(net, st, ac, pi, nc, zb, opt)
+            st, ac, pi, nc, zb, na, nn_ = to_tensors(train_idx[bs: bs + batch_size])
+            tl, pl, vl, rl = _train_step(net, st, ac, pi, nc, zb, opt, na, nn_)
             ep_total += tl
             ep_policy += pl
             ep_value += vl
+            ep_rank += rl
             n_batches += 1
         train_total = ep_total / max(1, n_batches)
         train_policy = ep_policy / max(1, n_batches)
         train_value = ep_value / max(1, n_batches)
+        train_rank = ep_rank / max(1, n_batches)
 
         # Val
         net.eval()
         agg = {"policy_loss_sum": 0, "value_loss_sum": 0, "value_mae_sum": 0,
                "entropy_sum": 0, "correct": 0, "n": 0}
         for bs in range(0, len(val_idx), batch_size):
-            st, ac, pi, nc, zb = to_tensors(val_idx[bs: bs + batch_size])
+            st, ac, pi, nc, zb, _na, _nn = to_tensors(val_idx[bs: bs + batch_size])
             m = _eval_step(net, st, ac, pi, nc, zb)
             for k in agg:
                 agg[k] += m[k]
@@ -299,9 +333,10 @@ def train(
             patience_count += 1
             tag = f"  (no-improve {patience_count}/{early_stop_patience})"
 
+        rank_str = f" r={train_rank:.3f}" if has_negatives else ""
         print(
             f"  ep {epoch+1:2d}/{epochs}  "
-            f"tr={train_total:.3f}(p={train_policy:.3f} v={train_value:.3f})  "
+            f"tr={train_total:.3f}(p={train_policy:.3f} v={train_value:.3f}{rank_str})  "
             f"val={val_total:.3f}(p={val_policy:.3f} v={val_value:.3f})  "
             f"H={val_entropy:.3f} acc={val_acc:.2f} v_mae={val_mae:.2f}  "
             f"lr={cur_lr:.1e}  ({elapsed:.0f}s){eval_str}{tag}",
@@ -310,7 +345,8 @@ def train(
 
         metrics["epochs"].append({
             "epoch": epoch + 1,
-            "train_total": train_total, "train_policy": train_policy, "train_value": train_value,
+            "train_total": train_total, "train_policy": train_policy,
+            "train_value": train_value, "train_rank": train_rank,
             "val_total": val_total, "val_policy": val_policy, "val_value": val_value,
             "val_entropy": val_entropy, "val_acc": val_acc, "val_mae": val_mae,
             "wr_jidan": wr_jidan,

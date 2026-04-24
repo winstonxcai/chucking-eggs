@@ -40,13 +40,14 @@ from guandan.training import ACTION_DIM
 from guandan.training.visibility import STATE_DIM_TIER1_TEAM
 
 TOP_K_MAX = 10  # maximum top_k supported (for padding)
+K_NEG = 5       # hard negative non-candidates to store (for ranking loss)
 
 
 # ── Worker ─────────────────────────────────────────────────────────────────────
 
 def _worker(args: tuple) -> list[dict]:
     """Run games in one worker process, return list of decision dicts."""
-    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf = args
+    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint = args
 
     import random
     import numpy as np_w
@@ -59,8 +60,8 @@ def _worker(args: tuple) -> list[dict]:
     from guandan.agents.partner_oracle_bot import PartnerOracleBot, _reflect_env
     from guandan.cards import Rank
     from guandan.game import GuanDanEnv
-    from guandan.training import encode_action
-    from guandan.training.visibility import encode_state_tier1_team
+    from guandan.training import ACTION_DIM, QValueNet, encode_action
+    from guandan.training.visibility import STATE_DIM_TIER1_TEAM, encode_state_tier1_team
 
     oracle = PartnerOracleBot(
         checkpoint_path=checkpoint_path,
@@ -73,6 +74,25 @@ def _worker(args: tuple) -> list[dict]:
         use_value_leaf=use_value_leaf,
         device=torch.device("cpu"),  # avoid GPU contention across self-play workers
     )
+
+    if policy_checkpoint is not None:
+        # Hybrid oracle: use a separate (clean) policy net for top-K candidate
+        # selection while the value head from checkpoint_path handles V-at-leaf.
+        # This decouples policy filtering from value estimation, preventing
+        # Q-drift in the value checkpoint from contaminating candidate quality.
+        pol_ckpt = torch.load(policy_checkpoint, map_location="cpu", weights_only=True)
+        pol_cfg = pol_ckpt["config"]
+        pol_net = QValueNet(
+            d_state=pol_cfg["d_state"],
+            d_action=pol_cfg["d_action"],
+            hidden=pol_cfg["hidden"],
+        )
+        pol_net.load_state_dict(pol_ckpt["state_dict"], strict=False)
+        pol_net.eval()
+        # oracle._search.value_net still references the original net (gen-1 V head)
+        # because Python bound the reference at PartnerPIMCBot.__init__ time.
+        # Replacing oracle.net only affects _policy_top_k / _score_actions.
+        oracle.net = pol_net
 
     env = GuanDanEnv(level_rank=Rank.TWO)
     all_decisions: list[dict] = []
@@ -124,11 +144,26 @@ def _worker(args: tuple) -> list[dict]:
                 for a in candidates
             ]).astype(np_w.float32)
 
+            # Sample non-candidate legal moves as hard negatives for ranking loss.
+            cand_ids = {id(c) for c in candidates}
+            non_cands = [a for a in legal if id(a) not in cand_ids]
+            n_neg = min(len(non_cands), K_NEG)
+            if n_neg > 0:
+                neg_sample = random.sample(non_cands, n_neg)
+                neg_actions = np_w.stack([
+                    encode_action(a, enc_env.hands[enc_player], env.level_rank)
+                    for a in neg_sample
+                ]).astype(np_w.float32)
+            else:
+                neg_actions = np_w.zeros((0, actions.shape[1]), dtype=np_w.float32)
+
             game_buf.append({
-                "state": state,          # [480]
-                "actions": actions,      # [K, 160]
-                "pi_search": pi_search,  # [K]
+                "state": state,           # [480]
+                "actions": actions,       # [K, 160]
+                "pi_search": pi_search,   # [K]
                 "n_cands": len(candidates),
+                "neg_actions": neg_actions,  # [n_neg, 160]
+                "n_neg": n_neg,
                 "player": player,
             })
 
@@ -155,10 +190,11 @@ def generate(
     workers: int,
     seed: int,
     use_value_leaf: bool = False,
+    policy_checkpoint: str | None = None,
 ) -> dict[str, np.ndarray]:
     per_worker = math.ceil(n_decisions / workers)
     args_list = [
-        (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf)
+        (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf, policy_checkpoint)
         for w in range(workers)
     ]
     print(
@@ -183,13 +219,15 @@ def generate(
         flush=True,
     )
 
-    # Pack into numpy arrays (zero-pad to top_k)
+    # Pack into numpy arrays (zero-pad to top_k / K_NEG)
     N = len(all_decisions)
     K = top_k
     states = np.zeros((N, STATE_DIM_TIER1_TEAM), dtype=np.float32)
     actions = np.zeros((N, K, ACTION_DIM), dtype=np.float32)
     pi_search = np.zeros((N, K), dtype=np.float32)
     n_cands = np.zeros(N, dtype=np.int32)
+    neg_actions = np.zeros((N, K_NEG, ACTION_DIM), dtype=np.float32)
+    n_neg = np.zeros(N, dtype=np.int32)
     z = np.zeros(N, dtype=np.float32)
 
     for i, d in enumerate(all_decisions):
@@ -198,6 +236,10 @@ def generate(
         actions[i, :k] = d["actions"][:k]
         pi_search[i, :k] = d["pi_search"][:k]
         n_cands[i] = k
+        kn = min(d.get("n_neg", 0), K_NEG)
+        if kn > 0:
+            neg_actions[i, :kn] = d["neg_actions"][:kn]
+        n_neg[i] = kn
         z[i] = d["z"]
 
     return {
@@ -205,6 +247,8 @@ def generate(
         "actions": actions,
         "pi_search": pi_search,
         "n_cands": n_cands,
+        "neg_actions": neg_actions,
+        "n_neg": n_neg,
         "z": z,
         "config": np.array([STATE_DIM_TIER1_TEAM, ACTION_DIM, K], dtype=np.int32),
     }
@@ -221,10 +265,15 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--use-value-leaf", action="store_true",
                    help="Use V(s) at leaf instead of Jidan rollouts (AZ gen-2+).")
+    p.add_argument("--policy-checkpoint", default=None,
+                   help="Separate policy checkpoint for top-K candidate selection "
+                        "(hybrid oracle: clean policy filter + value-leaf from --checkpoint).")
     args = p.parse_args()
 
     print(f"AZ self-play data generation")
     print(f"  checkpoint: {args.checkpoint}")
+    if args.policy_checkpoint:
+        print(f"  policy-checkpoint: {args.policy_checkpoint}  (hybrid oracle)")
     print(f"  decisions={args.decisions}  n_det={args.n_det}  K={args.top_k}  "
           f"workers={args.workers}", flush=True)
 
@@ -236,6 +285,7 @@ def main() -> None:
         workers=args.workers,
         seed=args.seed,
         use_value_leaf=args.use_value_leaf,
+        policy_checkpoint=args.policy_checkpoint,
     )
 
     out = Path(args.out)

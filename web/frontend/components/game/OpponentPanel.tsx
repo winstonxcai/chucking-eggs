@@ -60,7 +60,7 @@ export default function OpponentPanel({ player, thinking, revealedHand, isActive
       {revealedHand && revealedHand.length > 0 && (
         <div
           data-testid={`opponent-hand-${player.seat}`}
-          className="hidden lg:flex flex-wrap gap-x-2 gap-y-1 mt-1 max-w-[280px]"
+          className="hidden lg:flex flex-row items-start self-start gap-x-2 mt-1"
         >
           {groupByRank(revealedHand).map((rankGroup) => (
             <div key={rankGroup[0].id} className="relative w-fit">

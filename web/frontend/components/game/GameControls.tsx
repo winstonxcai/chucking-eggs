@@ -60,14 +60,13 @@ export default function GameControls({
     return prev;
   }, [isMyTurn, turnDeadlineMs]);
 
-  // Urgency + countdown via rAF — single effect eliminates race with a separate tick interval
+  // Urgency + countdown via setInterval — runs even in background tabs (rAF pauses there)
   useEffect(() => {
     if (!isMyTurn || !stableDeadline) {
       setUrgent(false);
       setCountdown(null);
       return;
     }
-    let rafId: number;
     const tick = () => {
       const remaining = Math.max(0, stableDeadline - Date.now());
       if (remaining <= 15000) {
@@ -77,10 +76,10 @@ export default function GameControls({
         setUrgent(false);
         setCountdown(null);
       }
-      if (remaining > 0) rafId = requestAnimationFrame(tick);
     };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
+    tick();
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
   }, [isMyTurn, stableDeadline]);
 
   // Rope bar animation — scaleX is GPU-composited (no layout reflow), runs at 60 fps

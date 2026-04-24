@@ -452,6 +452,16 @@ async def game_websocket(
             if room.env.current_player not in room.human_seats and not room.env.done:
                 await room.run_ai_turns()
         else:
+            # On reconnect: give the player a fresh deadline so a stale near-expired
+            # deadline doesn't cause an instant auto-pass right after reconnecting.
+            if (
+                room.started
+                and not room.env.done
+                and room.env.current_player == seat
+                and seat in room.turn_deadlines
+            ):
+                room.turn_deadlines[seat] = asyncio.get_event_loop().time() + HUMAN_TURN_TIMEOUT_S
+                room.turn_deadline_wallclock_ms[seat] = int((time.time() + HUMAN_TURN_TIMEOUT_S) * 1000)
             await room.send_game_state_to(seat)
             if (
                 room.started

@@ -470,16 +470,13 @@ These fixes were implemented during the gen-2-v2 investigation and remain in the
 
 **Why this breaks the distribution-shift cycle:** Jidan-rollout data always comes from the same base distribution (Jidan-vs-Jidan games). V trained on gen-3 Jidan-rollout data will have high z-corr on gen-4 data from the same type of rollout. Only use V-at-leaf once a generation of V is verified to have good z-corr on its own distribution.
 
-**Command:**
-```bash
-PYTHONPATH=ml/src python ml/scripts/train/selfplay_data.py \
-    --checkpoint ml/checkpoints/az_gen1_latest.pt \
-    --decisions 30000 --out ml/data/selfplay_gen3.npz \
-    --n-det 30 --top-k 3 --workers 8
-    # No --use-value-leaf: Jidan full rollouts
-```
+**Data (selfplay_gen3.npz):** 30K decisions in 3975s (7.5 dec/s). z mean=+0.098, std=2.205 — near-identical to gen-1 stats, confirming Jidan-rollout data quality.
 
-Expected data quality: H≈0.348 (same as gen-1, real game outcomes). Training: ranking loss + label smoothing + best-WR checkpoint, init from az_gen1_latest.pt.
+**Training (az_gen3.pt):** init from az_gen1_latest.pt. Best policy-only WR=40% at epoch 3 (az_gen3_bestwr.pt), H=0.850 (no collapse), ranking loss r=0.479. Best val epoch 4. Early stop at epoch 9 (patience=5).
+
+**With-search WR: 75.0% (150/200, CI [68.6%, 80.5%])** — clear improvement over gen-1's 68.0% (136/200, CI [61.2%, 74.1%]). Gen-3 CI lower bound (68.6%) exceeds gen-1 point estimate, confirming real gain.
+
+**AZ loop working:** one proper generation (Jidan rollouts + ranking loss) moved 68% → 75%. Strategy confirmed. Proceeding to gen-4 with az_gen3_bestwr.pt policy + Jidan rollouts.
 
 ---
 

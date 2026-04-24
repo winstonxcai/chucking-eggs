@@ -72,8 +72,11 @@ class QValueNet(QNetwork):
             nn.ReLU(),
             nn.Linear(hidden // 2, 1),
         )
-        for p in self.v_net.parameters():
-            nn.init.zeros_(p)
+        # Zero-init only the FINAL layer so V(s)=0 at init but hidden layers
+        # have non-zero weights (so gradients flow). Zeroing all layers makes
+        # every activation 0 and the value head never learns.
+        nn.init.zeros_(self.v_net[-1].weight)
+        nn.init.zeros_(self.v_net[-1].bias)
 
     def value(self, state: torch.Tensor) -> torch.Tensor:
         """state: [B, d_state] -> V: [B]."""

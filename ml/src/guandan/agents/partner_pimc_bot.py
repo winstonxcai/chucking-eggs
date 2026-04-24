@@ -163,6 +163,32 @@ def _rollout_limited(
     return _leaf_value(env, player)
 
 
+def _value_at_leaf(env: GuanDanEnv, player: int, value_net) -> float:
+    """Evaluate V(s) at leaf instead of rolling out. AlphaZero-style.
+
+    `player` is the original acting player (whose perspective the value is).
+    We seat-reflect to match the team-{0,2} encoding contract.
+    """
+    if env.done:
+        return float(env.get_rewards()[player])
+
+    # Lazy imports to avoid loading torch in main process unnecessarily.
+    import numpy as np
+    import torch
+    from .partner_oracle_bot import _reflect_env
+    from ..training.visibility import encode_state_tier1_team
+
+    if player in (0, 2):
+        enc_env, enc_player = env, player
+    else:
+        enc_env, enc_player = _reflect_env(env), player ^ 1
+
+    state = encode_state_tier1_team(enc_env, enc_player).astype(np.float32)
+    with torch.no_grad():
+        st = torch.from_numpy(state).to(value_net.v_net[0].weight.device).unsqueeze(0)
+        return float(value_net.value(st).item())
+
+
 # ── Multiprocessing worker ─────────────────────────────────────────────────────
 
 def _init_worker(src_path: str) -> None:
@@ -217,6 +243,7 @@ class PartnerPIMCBot(Agent):
         pre_filter: Callable | None = None,
         rollout_policy: str = "greedy",
         belief: BeliefModel | None = None,
+        value_net=None,
     ):
         self.level_rank = level_rank
         self.n_det = n_det
@@ -226,9 +253,13 @@ class PartnerPIMCBot(Agent):
         self.pre_filter = pre_filter
         self.rollout_policy = rollout_policy
         self.belief = belief
+        self.value_net = value_net  # if set, replaces rollouts entirely (AZ V-at-leaf)
         self._rng = random.Random(seed)
         self._pool: ProcessPoolExecutor | None = None
-        if n_workers > 1:
+        # NOTE: when value_net is set, we force single-process. Workers can't easily
+        # share a torch.nn.Module across spawn, and self-play already parallelises
+        # at the game level (each game runs in its own top-level worker).
+        if n_workers > 1 and value_net is None:
             self._pool = ProcessPoolExecutor(
                 max_workers=n_workers,
                 initializer=_init_worker,
@@ -245,7 +276,14 @@ class PartnerPIMCBot(Agent):
             for _ in range(self.n_det)
         ]
         scores = [0.0] * len(candidates)
-        if self._pool is not None:
+        if self.value_net is not None:
+            # AZ V-at-leaf path: skip rollouts, query value net directly.
+            for det in dets:
+                for i, move in enumerate(candidates):
+                    sim = _clone_env(det)
+                    sim.step(move)
+                    scores[i] += _value_at_leaf(sim, player, self.value_net)
+        elif self._pool is not None:
             worker_args = [
                 (det, candidates, player, self.depth_limit, self.level_rank, self.rollout_policy)
                 for det in dets

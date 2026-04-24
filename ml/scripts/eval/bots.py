@@ -24,7 +24,7 @@ from guandan.game import GuanDanEnv
 
 
 def build_agent(name: str, n_det: int, n_cands: int, top_k: int, checkpoint: str | None,
-                no_search: bool, no_belief: bool):
+                no_search: bool, no_belief: bool, use_value_leaf: bool = False):
     if name == "partner_pimc":
         return PartnerPIMCBot(level_rank=Rank.TWO, n_det=n_det, n_cands=n_cands)
     if name == "partner_oracle":
@@ -37,6 +37,7 @@ def build_agent(name: str, n_det: int, n_cands: int, top_k: int, checkpoint: str
             n_det=n_det,
             top_k=top_k,
             use_belief=not no_belief,
+            use_value_leaf=use_value_leaf,
         )
     return make_agent(name, level_rank=Rank.TWO)
 
@@ -58,12 +59,14 @@ def main() -> None:
                         help="partner_oracle: disable PIMC search, use pure policy argmax")
     parser.add_argument("--no-belief", action="store_true",
                         help="partner_oracle: disable BeliefModel in determinization (uniform sampling)")
+    parser.add_argument("--use-value-leaf", action="store_true",
+                        help="partner_oracle: use V(s) at leaf instead of Jidan rollouts (AZ gen-2+)")
     parser.add_argument("--seat-rotate", action="store_true",
                         help="Alternate agent1 between seats {0,2} and {1,3} each game")
     args = parser.parse_args()
 
-    a1 = build_agent(args.agent1, args.n_det, args.n_cands, args.top_k, args.checkpoint, args.no_search, args.no_belief)
-    a2 = build_agent(args.agent2, args.n_det, args.n_cands, args.top_k, args.checkpoint, args.no_search, args.no_belief)
+    a1 = build_agent(args.agent1, args.n_det, args.n_cands, args.top_k, args.checkpoint, args.no_search, args.no_belief, args.use_value_leaf)
+    a2 = build_agent(args.agent2, args.n_det, args.n_cands, args.top_k, args.checkpoint, args.no_search, args.no_belief, args.use_value_leaf)
     env = GuanDanEnv()
     wins = 0
 

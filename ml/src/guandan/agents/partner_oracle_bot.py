@@ -65,6 +65,7 @@ class PartnerOracleBot(Agent):
         n_det: int = 30,
         use_belief: bool = False,
         n_workers: int = _N_WORKERS,
+        use_value_leaf: bool = False,
         device: torch.device | None = None,
     ):
         self.level_rank = level_rank
@@ -94,6 +95,7 @@ class PartnerOracleBot(Agent):
                 rollout_policy="jidan",
                 belief=BeliefModel() if use_belief else None,
                 n_workers=n_workers,
+                value_net=self.net if use_value_leaf else None,
             )
         else:
             self._search = None

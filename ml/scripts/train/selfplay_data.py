@@ -46,7 +46,7 @@ TOP_K_MAX = 10  # maximum top_k supported (for padding)
 
 def _worker(args: tuple) -> list[dict]:
     """Run games in one worker process, return list of decision dicts."""
-    checkpoint_path, n_decisions, n_det, top_k, seed = args
+    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf = args
 
     import random
     import numpy as np_w
@@ -70,6 +70,8 @@ def _worker(args: tuple) -> list[dict]:
         top_k=top_k,
         use_belief=False,
         n_workers=1,  # single-process PIMC — we're already inside a worker
+        use_value_leaf=use_value_leaf,
+        device=torch.device("cpu"),  # avoid GPU contention across self-play workers
     )
 
     env = GuanDanEnv(level_rank=Rank.TWO)
@@ -152,10 +154,11 @@ def generate(
     top_k: int,
     workers: int,
     seed: int,
+    use_value_leaf: bool = False,
 ) -> dict[str, np.ndarray]:
     per_worker = math.ceil(n_decisions / workers)
     args_list = [
-        (checkpoint, per_worker, n_det, top_k, seed + w)
+        (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf)
         for w in range(workers)
     ]
     print(
@@ -216,6 +219,8 @@ def main() -> None:
     p.add_argument("--top-k", type=int, default=3)
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--use-value-leaf", action="store_true",
+                   help="Use V(s) at leaf instead of Jidan rollouts (AZ gen-2+).")
     args = p.parse_args()
 
     print(f"AZ self-play data generation")
@@ -230,6 +235,7 @@ def main() -> None:
         top_k=args.top_k,
         workers=args.workers,
         seed=args.seed,
+        use_value_leaf=args.use_value_leaf,
     )
 
     out = Path(args.out)

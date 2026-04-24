@@ -9,7 +9,7 @@ Layers (per Direction D plan):
             H1  passed on single of key R     → no single  > R (level order)
             H2  passed on pair of key R       → no pair    > R
             H3  passed on triple of key R     → no triple  > R
-            H5  passed on a non-bomb trick    → no bomb    (no rank with count ≥ 4)
+            (H5 no_bomb inference removed — players routinely sandbag bombs)
 
   (H4 — full-house/straight/etc same-type constraints — skipped in Phase 1a.
    Layer 3 soft signals — Phase 1b only.)
@@ -119,11 +119,9 @@ class BeliefModel:
                 # is intentionally not handled in Phase 1a — adds complexity for modest
                 # marginal value. Revisit if Phase 1a clears the gate.
 
-                # H5: any pass on a non-bomb trick implies no bomb in hand.
-                if not trick_is_bomb:
-                    c.no_bomb = True
-                # H5 (bomb-vs-bomb): we'd need to encode "no bomb stronger than X".
-                # Skipped in Phase 1a — bombs-on-bombs are rare in practice.
+                # H5 (no_bomb inference) removed: players routinely sandbag bombs
+                # and save them for critical moments, even in greedy bots. Applying
+                # this constraint over-rejects valid determinizations.
             else:
                 # New trick or response within the trick.
                 # In Guandan, a play is either the lead (current_trick is None)

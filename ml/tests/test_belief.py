@@ -54,7 +54,7 @@ def test_pass_on_single_excludes_higher_singles():
     bm = BeliefModel()
     c = bm.constraints(env)[1]
     assert c.max_single_key == 7
-    assert c.no_bomb is True   # passed on a non-bomb trick → no bomb either
+    assert c.no_bomb is False  # H5 removed: players sandbag bombs, not a hard constraint
     assert c.max_pair_key is None  # untouched
     assert c.max_triple_key is None
 

@@ -359,6 +359,22 @@ Direction B stays archived unless A and C both flatline.
 
 ---
 
+## 26. Direction D Phase 1a — Belief-aware determinization (2026-04-25)
+
+**Hypothesis:** Inference from opponent pass events (H1–H5 hard constraints) tightens the determinization distribution, improving PIMC search quality above the 69.5%/71.0% ceiling.
+
+**Implementation:** `BeliefModel` (Layer 2): per-pass constraints H1 (no single > R), H2 (no pair > R), H3 (no triple > R), accumulated via `env.move_history` replay. Wired into `_determinize` with up to 50 retries and uniform fallback. 11 unit tests, all passing.
+
+**Phase 1a v1 result (2026-04-25):** 65.0% WR (130/200, CI [58.2%, 71.3%]) — regression. Root cause: H5 (`no_bomb=True` on any non-bomb pass) is not a hard constraint; players sandbag bombs routinely. Fixed by removing H5.
+
+**Phase 1a v2 result (2026-04-25, H5 removed):** 68.0% WR (136/200, CI [61.2%, 74.1%]) — still a regression from 69.5% baseline. Root cause: H1/H2/H3 are also not hard constraints for JidanBot, which uses a weighted value scorer (`get_VAL` / Reyn_AI 2.0) and chooses to pass on singles/pairs/triples to preserve combo structure. The inference "passed on single-K → no card above K" is wrong whenever the opponent is preserving pairs, triples, or combos.
+
+**Key insight:** Layer 1 (rank distribution / card counting) adds nothing over the existing uniform shuffle of the known hidden-card pool — the uniform shuffle already gives the correct hypergeometric marginal distribution per rank. Layer 2 (pass-inference) requires opponents that always play when they can beat, which JidanBot does not satisfy.
+
+**Decision:** Belief Layer 2 does not work vs JidanBot-class opponents. H5 is removed (correct fix); H1/H2/H3 are disabled by defaulting `use_belief=False` in PartnerOracleBot. Phase 1b (soft signals) is **skipped**. Move to Phase 2: AZ self-play with value head.
+
+---
+
 ## 24. What this logbook is for
 
 When designing the next training run:

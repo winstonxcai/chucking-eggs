@@ -63,7 +63,7 @@ class PartnerOracleBot(Agent):
         use_search: bool = True,
         top_k: int = 3,
         n_det: int = 30,
-        use_belief: bool = True,
+        use_belief: bool = False,
         device: torch.device | None = None,
     ):
         self.level_rank = level_rank

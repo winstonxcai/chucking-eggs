@@ -270,6 +270,8 @@ def main():
     parser.add_argument("--pretrain-games", type=int, default=5000)
     parser.add_argument("--episodes", type=int, default=50000)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr-end", type=float, default=1e-5,
+                        help="Final LR after cosine decay. Set equal to --lr to disable decay.")
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--buffer-capacity", type=int, default=300000)
     parser.add_argument("--train-steps", type=int, default=4)
@@ -282,11 +284,19 @@ def main():
     parser.add_argument("--lstm-hidden", type=int, default=256)
     parser.add_argument("--mlp-hidden", type=int, default=1024)
     parser.add_argument("--n-workers", type=int, default=4)
-    parser.add_argument("--patience", type=int, default=40,
-                        help="Early stop after N evals with no jidan WR improvement")
     parser.add_argument("--resume", type=str, default=None,
                         help="Resume from checkpoint (skip pretrain)")
+    parser.add_argument("--opponent-pool", type=str,
+                        default="heuristic,strategic,xingdream,noai",
+                        help="Comma-separated opponent names to mix into training episodes.")
+    parser.add_argument("--self-play-frac", type=float, default=0.3,
+                        help="Fraction of episodes that are pure self-play (0.0=all pool, 1.0=all self-play).")
+    parser.add_argument("--eval-pool", type=str, default="noai,yaoji,jidan",
+                        help="Comma-separated opponents to evaluate against each interval.")
     args = parser.parse_args()
+
+    opponent_pool = [s.strip() for s in args.opponent_pool.split(",") if s.strip()]
+    eval_pool = [s.strip() for s in args.eval_pool.split(",") if s.strip()]
 
     from guandan.agents.heuristic_bot import HeuristicBot
     from guandan.game import GuanDanEnv
@@ -360,22 +370,37 @@ def main():
             {k: v.cpu() for k, v in q_follow.state_dict().items()},
         )
 
-    def _submit_batch(epsilon: float, opponent_name: str | None = None):
-        """Submit one batch of `step` episodes. Returns list of futures."""
-        lead_sd, follow_sd = _snapshot_weights()
-        return [pool.submit(_episode_worker, lead_sd, follow_sd, epsilon, opponent_name)
-                for _ in range(step)]
+    def _submit_batch(epsilon: float):
+        """Submit one batch of `step` episodes. Returns list of futures.
 
-    def _collect_batch(epsilon: float, n: int, opponent_name: str | None = None) -> list:
-        """Synchronous collect (used for prefill / non-parallel path)."""
+        Each episode independently samples: self-play with prob self_play_frac,
+        else a random opponent from opponent_pool. This keeps the policy anchored
+        to the evaluation distribution while retaining self-improvement signal.
+        """
+        lead_sd, follow_sd = _snapshot_weights()
+        futs = []
+        for _ in range(step):
+            if random.random() < args.self_play_frac or not opponent_pool:
+                opp = None
+            else:
+                opp = random.choice(opponent_pool)
+            futs.append(pool.submit(_episode_worker, lead_sd, follow_sd, epsilon, opp))
+        return futs
+
+    def _collect_batch(epsilon: float, n: int) -> list:
+        """Synchronous collect (used for pretrain prefill / non-parallel path)."""
         if use_parallel:
-            futs = _submit_batch(epsilon, opponent_name)
+            futs = _submit_batch(epsilon)
             return [t for fut in futs for t in fut.result()]
         else:
             from guandan.agents import make_agent
-            opp = make_agent(opponent_name, level_rank) if opponent_name else None
             all_trans = []
             for _ in range(n):
+                if random.random() < args.self_play_frac or not opponent_pool:
+                    opp_name = None
+                else:
+                    opp_name = random.choice(opponent_pool)
+                opp = make_agent(opp_name, level_rank) if opp_name else None
                 all_trans.extend(play_episode(
                     env, q_lead, q_follow, epsilon, device,
                     encode_state_tier1_team, encode_action, encode_history,
@@ -439,25 +464,29 @@ def main():
                    pt_path)
         log.info("Pretrain complete. Saved %s", pt_path)
 
-    # Baseline eval
+    # Baseline eval across eval pool
     q_lead.eval(); q_follow.eval()
-    res_h = evaluate(q_lead, q_follow, device, 200, "heuristic",
-                     encode_state_tier1_team, encode_action, encode_history,
-                     compute_behavior_flags, level_rank)
-    res_j = evaluate(q_lead, q_follow, device, 200, "jidan",
-                     encode_state_tier1_team, encode_action, encode_history,
-                     compute_behavior_flags, level_rank)
-    log.info("Baseline | vs_heuristic=%.1f%% | vs_jidan=%.1f%%",
-             res_h["winrate"] * 100, res_j["winrate"] * 100)
+    baseline_results = {}
+    for opp_name in eval_pool:
+        res = evaluate(q_lead, q_follow, device, args.eval_games, opp_name,
+                       encode_state_tier1_team, encode_action, encode_history,
+                       compute_behavior_flags, level_rank)
+        baseline_results[opp_name] = res["winrate"]
+    baseline_avg = sum(baseline_results.values()) / len(baseline_results)
+    log.info("Baseline | %s | avg=%.1f%%",
+             "  ".join(f"vs_{k}={v*100:.1f}%" for k, v in baseline_results.items()),
+             baseline_avg * 100)
 
-    # ── Phase 2: Self-Play ───────────────────────────────────────────────────
+    # ── Phase 2: Mixed Training ───────────────────────────────────────────────
     log.info("")
     log.info("=" * 60)
-    log.info("Phase 2: Self-Play (%d episodes, lr=%.1e)", args.episodes, args.lr)
+    log.info("Phase 2: Mixed Training (%d episodes, lr=%.1e)", args.episodes, args.lr)
+    log.info("Train pool: %s | self-play: %.0f%%", ", ".join(opponent_pool) if opponent_pool else "none",
+             args.self_play_frac * 100)
+    log.info("Eval pool:  %s | %d games each", ", ".join(eval_pool), args.eval_games)
     log.info("=" * 60)
     t_start = time.time()
-    best_wr = res_j["winrate"]
-    evals_without_improvement = 0
+    best_wr = baseline_avg
     loss_q_sum = loss_aux_sum = 0.0
     loss_count = 0
 
@@ -476,10 +505,17 @@ def main():
     pending_futures = None
     if use_parallel:
         q_lead.eval(); q_follow.eval()
-        pending_futures = _submit_batch(_epsilon_at(ep), opponent_name=None)
+        pending_futures = _submit_batch(_epsilon_at(ep))
 
     while ep < args.episodes:
         epsilon = _epsilon_at(ep)
+
+        # Cosine LR decay
+        frac = ep / max(1, args.episodes)
+        lr = args.lr_end + 0.5 * (args.lr - args.lr_end) * (1 + np.cos(np.pi * frac))
+        for opt in (opt_lead, opt_follow):
+            for pg in opt.param_groups:
+                pg["lr"] = lr
 
         # Wait for the current batch to finish collecting
         if use_parallel:
@@ -487,12 +523,12 @@ def main():
             # Immediately submit the NEXT batch (runs in background while we train)
             if ep + step < args.episodes:
                 q_lead.eval(); q_follow.eval()
-                pending_futures = _submit_batch(_epsilon_at(ep + step), opponent_name=None)
+                pending_futures = _submit_batch(_epsilon_at(ep + step))
             else:
                 pending_futures = None
         else:
             q_lead.eval(); q_follow.eval()
-            trans = _collect_batch(epsilon, step, opponent_name=None)
+            trans = _collect_batch(epsilon, step)
 
         for t in trans:
             buffer.push(*t)
@@ -514,55 +550,48 @@ def main():
             elapsed = time.time() - t_start
             pbar.set_postfix_str(
                 f"q={loss_q_sum/loss_count:.3f} aux={loss_aux_sum/loss_count:.3f} "
-                f"e={epsilon:.3f} {ep/elapsed:.1f}ep/s best={best_wr:.1%}"
+                f"e={epsilon:.3f} {ep/elapsed:.1f}ep/s avg={best_wr:.1%}"
             )
 
         if ep % 200 < step and loss_count > 0:
             elapsed = time.time() - t_start
-            log.info("Ep %6d | q=%.4f aux=%.4f | e=%.3f | buf=%d | %.1f ep/s | %s",
+            log.info("Ep %6d | q=%.4f aux=%.4f | e=%.3f lr=%.2e | buf=%d | %.1f ep/s | %s",
                      ep, loss_q_sum / loss_count, loss_aux_sum / loss_count,
-                     epsilon, len(buffer), ep / elapsed, _fmt(elapsed))
+                     epsilon, lr, len(buffer), ep / elapsed, _fmt(elapsed))
             loss_q_sum = loss_aux_sum = 0.0; loss_count = 0
 
-        # Eval
+        # Eval across pool
         if ep % args.eval_interval < step:
             q_lead.eval(); q_follow.eval()
             elapsed = time.time() - t_start
-            res_h = evaluate(q_lead, q_follow, device, args.eval_games, "heuristic",
-                             encode_state_tier1_team, encode_action, encode_history,
-                             compute_behavior_flags, level_rank)
-            res_j = evaluate(q_lead, q_follow, device, args.eval_games, "jidan",
-                             encode_state_tier1_team, encode_action, encode_history,
-                             compute_behavior_flags, level_rank)
-            wr = res_j["winrate"]
+            eval_results = {}
+            for opp_name in eval_pool:
+                res = evaluate(q_lead, q_follow, device, args.eval_games, opp_name,
+                               encode_state_tier1_team, encode_action, encode_history,
+                               compute_behavior_flags, level_rank)
+                eval_results[opp_name] = res["winrate"]
+            avg_wr = sum(eval_results.values()) / len(eval_results)
+
             log.info("-" * 60)
-            log.info("EVAL Ep %6d | vs_heur=%.1f%% vs_jidan=%.1f%% (1-2: %.0f%%) | "
-                     "best=%.1f%% pat=%d | %s",
-                     ep, res_h["winrate"] * 100, wr * 100,
-                     res_j["finish_12"] / args.eval_games * 100,
-                     best_wr * 100, evals_without_improvement, _fmt(elapsed))
+            log.info("EVAL Ep %6d | %s | avg=%.1f%% | best=%.1f%% | %s",
+                     ep,
+                     "  ".join(f"vs_{k}={v*100:.1f}%" for k, v in eval_results.items()),
+                     avg_wr * 100, best_wr * 100, _fmt(elapsed))
             log.info("-" * 60)
 
             entry = {"episode": ep, "elapsed_s": elapsed,
-                     "wr_heuristic": res_h["winrate"], "wr_jidan": wr,
-                     "finish_12_jidan": res_j["finish_12"]}
+                     **{f"wr_{k}": v for k, v in eval_results.items()},
+                     "wr_avg": avg_wr}
             with open(run_dir / "metrics.jsonl", "a") as f:
                 f.write(json.dumps(entry) + "\n")
 
-            if wr > best_wr:
-                best_wr = wr
-                evals_without_improvement = 0
+            if avg_wr > best_wr:
+                best_wr = avg_wr
                 best_path = run_dir / "checkpoint_best.pt"
                 torch.save({"lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                            "episode": ep, "wr_jidan": wr, "d_state": D_STATE},
+                            "episode": ep, "wr_avg": avg_wr, "d_state": D_STATE},
                            best_path)
-                log.info("  *** New best: %.1f%% → %s ***", wr * 100, best_path)
-            else:
-                evals_without_improvement += 1
-                if evals_without_improvement >= args.patience:
-                    log.info("Early stopping: no jidan WR improvement for %d evals. "
-                             "Best: %.1f%%", args.patience, best_wr * 100)
-                    break
+                log.info("  *** New best avg: %.1f%% → %s ***", avg_wr * 100, best_path)
 
         # Save checkpoint
         if ep % args.save_interval < step:

@@ -24,6 +24,7 @@ from .liuzha_bot import LiuzhaBot
 from .noai_bot import NoAIBot
 from .random_bot import RandomBot
 from .strategic_bot import StrategicBot
+from .partner_pimc_bot import PartnerPIMCBot
 from .wjsd_bot import WjsdBot
 from .xingdream_bot import XingDreamBot
 from .yaoji_bot import YaojiBot
@@ -45,6 +46,7 @@ __all__ = [
     "YaojiBot",
     "JidanBot",
     "WjsdBot",
+    "PartnerPIMCBot",
 ]
 
 AGENT_REGISTRY: dict[str, type[Agent]] = {

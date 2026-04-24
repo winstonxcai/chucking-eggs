@@ -1,16 +1,11 @@
-"""Tier 1 training: fine-tune with partner hand visibility.
+"""Tier 1 training: partner visibility via frozen base + partner adapter.
 
-Two-phase approach to prevent catastrophic forgetting:
+Architecture:
+  Q_final(s, a) = Q_base(s, a) + PartnerAdapter(partner_hand, action_enc)
 
-Phase 1 (representation): Freeze entire network. Only update the 60 partner
-  columns in mlp.0.weight and hand_pred.0.weight via gradient masking.
-  Train with aux loss only (q_loss_weight=0). The aux head learns to predict
-  opponent cards using partner hand info — a clean, well-defined signal.
-  Policy stays identical to base checkpoint.
-
-Phase 2 (fine-tuning): Unfreeze everything. Re-enable q_loss. The partner
-  columns now encode meaningful features, so Q-loss gradients carry real
-  partner-specific signal instead of just pretrained calibration noise.
+The base Q-network is loaded from the production checkpoint and frozen.
+Only the small PartnerAdapter (~90K params) is trained, so catastrophic
+forgetting is impossible by construction — the base policy never changes.
 """
 
 from __future__ import annotations
@@ -30,159 +25,110 @@ log = logging.getLogger(__name__)
 
 from ...agents import make_agent
 from ...game import GuanDanEnv
-from ..encoding import (
-    ACTION_DIM,
-    encode_action,
-    encode_history,
-    encode_opponent_cards,
-)
+from ..encoding import ACTION_DIM, encode_action, encode_history
 from ..q_network import QNetworkLSTM, get_device
 from ..replay import ReplayBuffer
+from .adapter import PartnerAdapter
 from .encoding import PARTNER_INSERT_POS, PARTNER_HAND_DIM, STATE_DIM_TIER1, encode_state_tier1
 
 
-# Gradient mask: which columns of the first layer to update
-_PARTNER_COL_START = PARTNER_INSERT_POS  # 60
-_PARTNER_COL_END = PARTNER_INSERT_POS + PARTNER_HAND_DIM  # 120
+def _extract_partner_hand(states: torch.Tensor) -> torch.Tensor:
+    """Slice partner hand columns from a batch of states. Shape: (batch, 60)."""
+    return states[:, PARTNER_INSERT_POS: PARTNER_INSERT_POS + PARTNER_HAND_DIM]
 
 
-def _mask_gradients(model: QNetworkLSTM) -> None:
-    """Zero gradients for all columns except partner hand (60:120) in first layers.
-
-    Called after loss.backward(), before optimizer.step(). Ensures only the 60
-    partner columns in mlp.0.weight and hand_pred.0.weight receive updates.
-    All other parameters (including biases) stay at their pretrained values.
-    """
-    for name, param in model.named_parameters():
-        if param.grad is None:
-            continue
-        if name == "mlp.0.weight" or name == "hand_pred.0.weight":
-            # Zero everything except partner columns
-            param.grad[:, :_PARTNER_COL_START] = 0
-            param.grad[:, _PARTNER_COL_END:] = 0
-        else:
-            # Zero all gradients for other params
-            param.grad.zero_()
-
-
-def train_step_tier1(
+def train_step_adapter(
     q_net: QNetworkLSTM,
+    adapter: PartnerAdapter,
     buf: ReplayBuffer,
     optimizer: torch.optim.Optimizer,
     batch_size: int,
     device: torch.device,
-    q_loss_weight: float = 1.0,
-    aux_weight: float = 0.1,
-    partner_only: bool = False,
-) -> tuple[float, float] | None:
-    """One gradient step with configurable Q-loss and aux loss weights.
+    output_reg: float = 2.0,
+) -> float | None:
+    """One gradient step on the adapter only using residual learning.
 
-    If partner_only=True, applies gradient masking after backward to restrict
-    updates to partner columns (60:120) in mlp.0.weight and hand_pred.0.weight.
+    Target: clamp(mc_return - Q_base, -1, 1).
+
+    Clipping removes game-level noise outliers the adapter cannot predict.
+    output_reg penalizes large adapter outputs — forces near-zero when there
+    is no real partner-action signal, small adjustments when there is.
     """
     if len(buf) < batch_size:
         return None
 
     batch = buf.sample(batch_size, device)
-    hist_emb = q_net.encode_history(batch["history"], batch["hist_len"])
 
-    total = torch.tensor(0.0, device=device)
+    with torch.no_grad():
+        hist_emb = q_net.encode_history(batch["history"], batch["hist_len"])
+        q_base = q_net.forward_from_embedding(batch["state"], batch["action"], hist_emb)
+        # Clip residual to remove outlier game noise adapter can't predict
+        residual = (batch["return"] - q_base).clamp(-1.0, 1.0)
 
-    # Q-loss
-    if q_loss_weight > 0:
-        q_pred = q_net.forward_from_embedding(
-            batch["state"], batch["action"], hist_emb)
-        q_loss = torch.nn.functional.mse_loss(q_pred, batch["return"])
-        total = total + q_loss_weight * q_loss
-        q_loss_val = q_loss.item()
-    else:
-        q_loss_val = 0.0
+    partner_hand = _extract_partner_hand(batch["state"])
+    q_adj = adapter(partner_hand, batch["action"])
 
-    # Aux loss (opponent card prediction)
-    if aux_weight > 0:
-        hand_pred = q_net.predict_opponent_cards(batch["state"], hist_emb)
-        aux_loss = torch.nn.functional.binary_cross_entropy(
-            hand_pred, batch["opponent_cards"]
-        )
-        total = total + aux_weight * aux_loss
-        aux_loss_val = aux_loss.item()
-    else:
-        aux_loss_val = 0.0
+    mse = torch.nn.functional.mse_loss(q_adj, residual)
+    # L2 output regularization: pushes adapter toward zero when signal is weak
+    output_penalty = (q_adj ** 2).mean()
+    loss = mse + output_reg * output_penalty
 
     optimizer.zero_grad()
-    total.backward()
-
-    if partner_only:
-        _mask_gradients(q_net)
-
-    torch.nn.utils.clip_grad_norm_(q_net.parameters(), max_norm=1.0)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(adapter.parameters(), max_norm=5.0)
     optimizer.step()
 
-    return q_loss_val, aux_loss_val
+    return mse.item()
 
 
 def play_episode_tier1(
     env: GuanDanEnv,
     q_lead: QNetworkLSTM,
     q_follow: QNetworkLSTM,
+    adapter_lead: PartnerAdapter,
+    adapter_follow: PartnerAdapter,
     epsilon: float,
     device: torch.device,
     opponent=None,
-) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, int, float, np.ndarray]]:
-    """Play one game with partner-visible encoding.
-
-    If opponent is None: symmetric self-play — all 4 seats use Tier 1 encoding.
-    If opponent is provided: seats {0,2} Tier 1, seats {1,3} opponent.
-    """
+) -> list[tuple]:
+    """Play one game. Seats {0,2} use Q_base + adapter; seats {1,3} use opponent."""
     env.reset()
-    selfplay = opponent is None
-    seats = range(4) if selfplay else (0, 2)
-    transitions: dict[int, list[tuple]] = {p: [] for p in seats}
+    transitions: dict[int, list[tuple]] = {0: [], 2: []}
 
     while not env.done:
         player = env.current_player
 
-        if not selfplay and player in (1, 3):
+        if player in (1, 3):
             env.step(opponent.act(env, player))
             continue
 
         legal = env.legal_moves()
         is_leading = env.current_trick is None
+        q_net = q_lead if is_leading else q_follow
+        adapter = adapter_lead if is_leading else adapter_follow
 
         state_enc = encode_state_tier1(env, player)
         hand = env.hands[player]
-        action_encs = np.array(
-            [encode_action(m, hand, env.level_rank) for m in legal]
-        )
+        action_encs = np.array([encode_action(m, hand, env.level_rank) for m in legal])
         history, hist_len = encode_history(env, player, env.level_rank)
-
-        q_net = q_lead if is_leading else q_follow
 
         if random.random() < epsilon:
             idx = random.randint(0, len(legal) - 1)
         else:
             with torch.no_grad():
                 B = len(legal)
-                s = (
-                    torch.tensor(state_enc, device=device)
-                    .unsqueeze(0)
-                    .expand(B, -1)
-                )
+                s = torch.tensor(state_enc, device=device).unsqueeze(0).expand(B, -1)
                 a = torch.tensor(action_encs, device=device)
-                h = (
-                    torch.tensor(history, device=device)
-                    .unsqueeze(0)
-                    .expand(B, -1, -1)
-                )
-                hl = torch.tensor(
-                    [hist_len], dtype=torch.long, device=device
-                ).expand(B)
-                idx = q_net(s, a, h, hl).argmax().item()
+                h = torch.tensor(history, device=device).unsqueeze(0).expand(B, -1, -1)
+                hl = torch.tensor([hist_len], dtype=torch.long, device=device).expand(B)
+                hist_emb = q_net.encode_history(h, hl)
+                q_base = q_net.forward_from_embedding(s, a, hist_emb)
+                partner_hand = s[:, PARTNER_INSERT_POS: PARTNER_INSERT_POS + PARTNER_HAND_DIM]
+                q_total = q_base + adapter(partner_hand, a, hist_emb)
+                idx = q_total.argmax().item()
 
-        opp_cards = encode_opponent_cards(env, player)
-        transitions[player].append(
-            (state_enc, action_encs[idx], history, hist_len, opp_cards)
-        )
+        opp_cards_enc = _dummy_opp_cards(state_enc)
+        transitions[player].append((state_enc, action_encs[idx], history, hist_len, opp_cards_enc))
         env.step(legal[idx])
 
     rewards = env.get_rewards()
@@ -194,20 +140,25 @@ def play_episode_tier1(
     return all_trans
 
 
+def _dummy_opp_cards(state_enc: np.ndarray) -> np.ndarray:
+    """Placeholder opponent cards (zeros). Aux loss is not used in adapter training."""
+    return np.zeros(60, dtype=np.float32)
+
+
 def evaluate_tier1(
     q_lead: QNetworkLSTM,
     q_follow: QNetworkLSTM,
     device: torch.device,
     n_games: int = 300,
     opponent: str = "jidan",
+    adapter_lead: PartnerAdapter | None = None,
+    adapter_follow: PartnerAdapter | None = None,
 ) -> dict:
-    """Evaluate Tier 1 agent (seats {0,2}) vs opponent (seats {1,3})."""
+    """Evaluate Tier 1 agent vs opponent. Adapter is optional (for compatibility)."""
     env = GuanDanEnv()
     opp_agent = make_agent(opponent, env.level_rank)
 
-    wins = 0
-    total_reward = 0.0
-    finish_12 = finish_13 = finish_14 = 0
+    wins = finish_12 = finish_13 = finish_14 = 0
 
     for _ in tqdm(range(n_games), desc=f"eval vs {opponent}", unit="game",
                   leave=False, file=sys.stderr, dynamic_ncols=True):
@@ -221,39 +172,31 @@ def evaluate_tier1(
             legal = env.legal_moves()
             is_leading = env.current_trick is None
             q_net = q_lead if is_leading else q_follow
+            adapter = (adapter_lead if is_leading else adapter_follow) if adapter_lead else None
 
             state_enc = encode_state_tier1(env, player)
             hand = env.hands[player]
-            action_encs = np.array(
-                [encode_action(m, hand, env.level_rank) for m in legal]
-            )
+            action_encs = np.array([encode_action(m, hand, env.level_rank) for m in legal])
             history, hist_len = encode_history(env, player, env.level_rank)
 
             with torch.no_grad():
                 B = len(legal)
-                s = (
-                    torch.tensor(state_enc, device=device)
-                    .unsqueeze(0)
-                    .expand(B, -1)
-                )
+                s = torch.tensor(state_enc, device=device).unsqueeze(0).expand(B, -1)
                 a = torch.tensor(action_encs, device=device)
-                h = (
-                    torch.tensor(history, device=device)
-                    .unsqueeze(0)
-                    .expand(B, -1, -1)
-                )
-                hl = torch.tensor(
-                    [hist_len], dtype=torch.long, device=device
-                ).expand(B)
-                idx = q_net(s, a, h, hl).argmax().item()
+                h = torch.tensor(history, device=device).unsqueeze(0).expand(B, -1, -1)
+                hl = torch.tensor([hist_len], dtype=torch.long, device=device).expand(B)
+                hist_emb = q_net.encode_history(h, hl)
+                q_vals = q_net.forward_from_embedding(s, a, hist_emb)
+                if adapter is not None:
+                    partner_hand = s[:, PARTNER_INSERT_POS: PARTNER_INSERT_POS + PARTNER_HAND_DIM]
+                    q_vals = q_vals + adapter(partner_hand, a, hist_emb)
+                idx = q_vals.argmax().item()
 
             env.step(legal[idx])
 
         rewards = env.get_rewards()
-        team_reward = rewards[0] + rewards[2]
-        if team_reward > 0:
+        if rewards[0] + rewards[2] > 0:
             wins += 1
-        total_reward += team_reward
 
         fo = env.finish_order
         team_pos = sorted(fo.index(p) for p in (0, 2))
@@ -267,7 +210,6 @@ def evaluate_tier1(
 
     return {
         "winrate": wins / n_games,
-        "avg_reward": total_reward / n_games,
         "finish_12": finish_12,
         "finish_13": finish_13,
         "finish_14": finish_14,
@@ -301,44 +243,45 @@ def _fmt_elapsed(seconds: float) -> str:
     return f"{h}h{m:02d}m{s:02d}s"
 
 
-def _partner_col_norm(model: QNetworkLSTM) -> float:
-    """L2 norm of partner columns in mlp.0.weight."""
-    return torch.norm(model.mlp[0].weight[:, _PARTNER_COL_START:_PARTNER_COL_END]).item()
+def _adapter_norm(adapter: PartnerAdapter) -> float:
+    """L2 norm of the adapter's first-layer weights — proxy for how much it's learned."""
+    return torch.norm(adapter.net[0].weight).item()
 
 
-def _run_eval(q_lead, q_follow, device, config, total_ep, run_dir, t_start,
-              opp_name, best_wr_jidan):
-    """Run eval against stage opponent + jidan, log results, save best."""
+def _run_eval(q_lead, q_follow, adapter_lead, adapter_follow, device, config,
+              total_ep, run_dir, t_start, opp_name, best_wr_jidan):
     t_eval = time.time()
     n_games = config["eval_games"]
 
-    result_stage = evaluate_tier1(q_lead, q_follow, device, n_games=n_games, opponent=opp_name)
-    result_jidan = evaluate_tier1(q_lead, q_follow, device, n_games=n_games, opponent="jidan")
+    result_stage = evaluate_tier1(q_lead, q_follow, device, n_games=n_games,
+                                  opponent=opp_name,
+                                  adapter_lead=adapter_lead, adapter_follow=adapter_follow)
+    result_jidan = evaluate_tier1(q_lead, q_follow, device, n_games=n_games,
+                                  opponent="jidan",
+                                  adapter_lead=adapter_lead, adapter_follow=adapter_follow)
     eval_secs = time.time() - t_eval
 
-    pn_lead = _partner_col_norm(q_lead)
-    pn_follow = _partner_col_norm(q_follow)
+    an_lead = _adapter_norm(adapter_lead)
+    an_follow = _adapter_norm(adapter_follow)
     wr_stage = result_stage["winrate"]
     wr_jidan = result_jidan["winrate"]
     elapsed = time.time() - t_start
     total_all = config["stage1_episodes"] + config["stage2_episodes"]
-    remaining_ep = total_all - total_ep
-    eta_secs = remaining_ep / (total_ep / elapsed) if total_ep > 0 else 0
+    eta_secs = (total_all - total_ep) / (total_ep / elapsed) if total_ep > 0 else 0
 
     log.info("-" * 60)
     log.info(
         "EVAL Ep %6d | vs_%s=%.1f%% | vs_jidan=%.1f%% | "
-        "1-2: %d/%d (%.0f%%) | partner_L2: lead=%.4f follow=%.4f",
+        "1-2: %d/%d (%.0f%%) | adapter_norm: lead=%.4f follow=%.4f",
         total_ep, opp_name, wr_stage * 100, wr_jidan * 100,
         result_jidan["finish_12"], n_games,
         result_jidan["finish_12"] / n_games * 100,
-        pn_lead, pn_follow,
+        an_lead, an_follow,
     )
     log.info(
         "     jidan_detail: 1-2=%d 1-3=%d 1-4=%d | "
         "eval took %s | elapsed %s | ETA %s",
-        result_jidan["finish_12"], result_jidan["finish_13"],
-        result_jidan["finish_14"],
+        result_jidan["finish_12"], result_jidan["finish_13"], result_jidan["finish_14"],
         _fmt_elapsed(eval_secs), _fmt_elapsed(elapsed), _fmt_elapsed(eta_secs),
     )
     log.info("-" * 60)
@@ -349,12 +292,11 @@ def _run_eval(q_lead, q_follow, device, config, total_ep, run_dir, t_start,
         "elapsed_s": elapsed,
         f"wr_{opp_name}": wr_stage,
         "wr_jidan": wr_jidan,
-        "avg_reward_jidan": result_jidan["avg_reward"],
         "finish_12_jidan": result_jidan["finish_12"],
         "finish_13_jidan": result_jidan["finish_13"],
         "finish_14_jidan": result_jidan["finish_14"],
-        "partner_column_l2_lead": pn_lead,
-        "partner_column_l2_follow": pn_follow,
+        "adapter_norm_lead": an_lead,
+        "adapter_norm_follow": an_follow,
     })
 
     if wr_jidan > best_wr_jidan:
@@ -363,9 +305,12 @@ def _run_eval(q_lead, q_follow, device, config, total_ep, run_dir, t_start,
         torch.save({
             "lead": q_lead.state_dict(),
             "follow": q_follow.state_dict(),
+            "adapter_lead": adapter_lead.state_dict(),
+            "adapter_follow": adapter_follow.state_dict(),
             "episode": total_ep,
             "wr_jidan": wr_jidan,
             "d_state": STATE_DIM_TIER1,
+            "adapter_hidden": adapter_lead.net[0].out_features,
         }, best_path)
         log.info("  *** New best: %.1f%% vs jidan → %s ***", wr_jidan * 100, best_path)
 
@@ -375,65 +320,56 @@ def _run_eval(q_lead, q_follow, device, config, total_ep, run_dir, t_start,
 def run_training(
     q_lead: QNetworkLSTM,
     q_follow: QNetworkLSTM,
+    adapter_lead: PartnerAdapter,
+    adapter_follow: PartnerAdapter,
     config: dict,
     run_dir: Path,
     device: torch.device,
 ) -> None:
-    """Two-phase Tier 1 training: representation → fine-tuning."""
+    """Adapter-only Tier 1 training. Base Q-networks must already be frozen."""
     _setup_logging(run_dir)
 
     with open(run_dir / "config.json", "w") as f:
         json.dump(config, f, indent=2)
 
     log.info("=" * 60)
-    log.info("Tier 1 Training — Two-Phase Partner Visibility")
+    log.info("Tier 1 Training — Frozen Base + Partner Adapter")
     log.info("=" * 60)
     log.info("Device: %s", device)
     log.info("Config: %s", json.dumps(config, indent=2))
     log.info("Run dir: %s", run_dir)
 
-    phase1_episodes = config.get("phase1_episodes", 5000)
-    phase1_aux_weight = config.get("phase1_aux_weight", 1.0)
-    phase1_lr = config.get("phase1_lr", 1e-4)
-    phase2_lr_start = config.get("lr_start", 3e-5)
-    phase2_lr_end = config.get("lr_end", 3e-6)
-
-    total_all = config["stage1_episodes"] + config["stage2_episodes"]
-    log.info("Phase 1: %d episodes, aux-only (q_loss=0), partner columns only, lr=%.1e",
-             phase1_episodes, phase1_lr)
-    log.info("Phase 2: %d episodes, full fine-tuning, lr=%.1e→%.1e",
-             total_all - phase1_episodes, phase2_lr_start, phase2_lr_end)
-
-    partner_params_per_model = (
-        PARTNER_HAND_DIM * q_lead.mlp[0].weight.shape[0] +  # mlp.0
-        PARTNER_HAND_DIM * q_lead.hand_pred[0].weight.shape[0]  # hand_pred.0
-    )
-    total_params = sum(p.numel() for p in q_lead.parameters())
-    log.info("Partner columns: %d params (%.1f%% of %d total)",
-             partner_params_per_model, partner_params_per_model / total_params * 100,
-             total_params)
+    adapter_params = sum(p.numel() for p in adapter_lead.parameters())
+    base_params = sum(p.numel() for p in q_lead.parameters())
+    log.info("Adapter params: %d (%.1f%% of frozen base %d)",
+             adapter_params, adapter_params / base_params * 100, base_params)
 
     buffer = ReplayBuffer(capacity=config["buffer_capacity"], d_state=STATE_DIM_TIER1)
-    use_selfplay = config.get("selfplay", True)
 
-    # Phase 1 uses all params in optimizer (gradient masking handles the rest)
-    opt_lead = torch.optim.Adam(q_lead.parameters(), lr=phase1_lr)
-    opt_follow = torch.optim.Adam(q_follow.parameters(), lr=phase1_lr)
+    lr_start = config["lr_start"]
+    lr_end = config["lr_end"]
+    wd = config.get("weight_decay", 1e-2)
+    opt_lead = torch.optim.Adam(adapter_lead.parameters(), lr=lr_start, weight_decay=wd)
+    opt_follow = torch.optim.Adam(adapter_follow.parameters(), lr=lr_start, weight_decay=wd)
 
     env = GuanDanEnv()
     t_start = time.time()
+    total_all = config["stage1_episodes"] + config["stage2_episodes"]
 
     # --- Pre-fill buffer ---
     prefill_eps = config["prefill_episodes"]
-    log.info("Pre-filling buffer with %d self-play episodes...", prefill_eps)
+    log.info("Pre-filling buffer with %d episodes...", prefill_eps)
     t_prefill = time.time()
     q_lead.eval()
     q_follow.eval()
+    adapter_lead.eval()
+    adapter_follow.eval()
+    opp_prefill = make_agent(config["stage1_opponent"], env.level_rank)
     prefill_trans = 0
     for _ in tqdm(range(prefill_eps), desc="prefill", file=sys.stderr):
         trans = play_episode_tier1(
-            env, q_lead, q_follow,
-            epsilon=config["epsilon_start"], device=device,
+            env, q_lead, q_follow, adapter_lead, adapter_follow,
+            epsilon=config["epsilon_start"], device=device, opponent=opp_prefill,
         )
         prefill_trans += len(trans)
         for s, a, h, hl, r, oc in trans:
@@ -450,9 +386,7 @@ def run_training(
 
     total_ep = 0
     best_wr_jidan = 0.0
-    in_phase1 = True
-    loss_q_sum = loss_aux_sum = 0.0
-    loss_count = 0
+    loss_sum = loss_count = 0
 
     for stage_idx, (opp_name, stage_episodes, gate) in enumerate(stages, 1):
         log.info("")
@@ -461,7 +395,7 @@ def run_training(
                  stage_idx, opp_name, stage_episodes,
                  f"{gate:.0%}" if gate else "none")
         log.info("=" * 60)
-        opp = None if use_selfplay else make_agent(opp_name, env.level_rank)
+        opp = make_agent(opp_name, env.level_rank)
         t_stage = time.time()
 
         eps_start = config["epsilon_start"]
@@ -473,27 +407,8 @@ def run_training(
             frac = min(1.0, total_ep / (0.85 * total_all))
             epsilon = eps_start + (eps_end - eps_start) * frac
 
-            # --- Phase transition ---
-            if in_phase1 and total_ep > phase1_episodes:
-                in_phase1 = False
-                opt_lead = torch.optim.Adam(q_lead.parameters(), lr=phase2_lr_start)
-                opt_follow = torch.optim.Adam(q_follow.parameters(), lr=phase2_lr_start)
-                log.info("")
-                log.info("*" * 60)
-                log.info("*** PHASE 2: Full fine-tuning (ep %d) ***", total_ep)
-                log.info("*" * 60)
-                log.info("  Partner L2 at transition: lead=%.4f follow=%.4f",
-                         _partner_col_norm(q_lead), _partner_col_norm(q_follow))
-
-            # LR schedule
-            if in_phase1:
-                lr = phase1_lr
-            else:
-                phase2_ep = total_ep - phase1_episodes
-                phase2_total = total_all - phase1_episodes
-                lr = phase2_lr_end + 0.5 * (phase2_lr_start - phase2_lr_end) * (
-                    1 + np.cos(np.pi * phase2_ep / phase2_total)
-                )
+            # Cosine LR decay over full training
+            lr = lr_end + 0.5 * (lr_start - lr_end) * (1 + np.cos(np.pi * total_ep / total_all))
             for opt in (opt_lead, opt_follow):
                 for pg in opt.param_groups:
                     pg["lr"] = lr
@@ -501,65 +416,55 @@ def run_training(
             # Collect episode
             q_lead.eval()
             q_follow.eval()
-            trans = play_episode_tier1(env, q_lead, q_follow, epsilon, device, opponent=opp)
+            adapter_lead.eval()
+            adapter_follow.eval()
+            trans = play_episode_tier1(
+                env, q_lead, q_follow, adapter_lead, adapter_follow,
+                epsilon, device, opponent=opp,
+            )
             for s, a, h, hl, r, oc in trans:
                 buffer.push(s, a, h, hl, r, oc)
 
             # Train steps
-            q_lead.train()
-            q_follow.train()
+            adapter_lead.train()
+            adapter_follow.train()
             bs = config["batch_size"]
-            q_w = 0.0 if in_phase1 else 1.0
-            aux_w = phase1_aux_weight if in_phase1 else config["aux_weight"]
-
+            output_reg = config.get("output_reg", 2.0)
             for _ in range(config["train_steps_per_episode"]):
-                res_lead = train_step_tier1(
-                    q_lead, buffer, opt_lead, bs, device,
-                    q_loss_weight=q_w, aux_weight=aux_w, partner_only=in_phase1,
-                )
-                train_step_tier1(
-                    q_follow, buffer, opt_follow, bs, device,
-                    q_loss_weight=q_w, aux_weight=aux_w, partner_only=in_phase1,
-                )
-                if res_lead is not None:
-                    loss_q_sum += res_lead[0]
-                    loss_aux_sum += res_lead[1]
+                loss_l = train_step_adapter(q_lead, adapter_lead, buffer, opt_lead, bs, device,
+                                            output_reg=output_reg)
+                train_step_adapter(q_follow, adapter_follow, buffer, opt_follow, bs, device,
+                                   output_reg=output_reg)
+                if loss_l is not None:
+                    loss_sum += loss_l
                     loss_count += 1
 
-            # tqdm postfix
             if loss_count > 0:
                 elapsed = time.time() - t_start
-                phase_str = "P1" if in_phase1 else "P2"
                 pbar.set_postfix_str(
-                    f"{phase_str} q={loss_q_sum/loss_count:.4f} "
-                    f"aux={loss_aux_sum/loss_count:.4f} "
-                    f"lr={lr:.1e} "
+                    f"loss={loss_sum/loss_count:.4f} lr={lr:.1e} "
                     f"{total_ep/elapsed:.1f}ep/s"
                 )
 
             # Periodic loss log
             if total_ep % 200 == 0 and loss_count > 0:
                 elapsed = time.time() - t_start
-                phase_str = "PHASE1" if in_phase1 else "PHASE2"
                 log.info(
-                    "Ep %6d [%s] | q=%.4f aux=%.4f | "
-                    "lr=%.2e e=%.3f | buf=%d | %.1f ep/s | %s",
-                    total_ep, phase_str,
-                    loss_q_sum / loss_count, loss_aux_sum / loss_count,
-                    lr, epsilon, len(buffer),
+                    "Ep %6d | loss=%.4f | lr=%.2e e=%.3f | buf=%d | %.1f ep/s | %s",
+                    total_ep, loss_sum / loss_count, lr, epsilon, len(buffer),
                     total_ep / elapsed, _fmt_elapsed(elapsed),
                 )
-                loss_q_sum = loss_aux_sum = 0.0
-                loss_count = 0
+                loss_sum = loss_count = 0
 
             # Eval
-            eval_interval = config["eval_interval"]
-            if (ep_in_stage + 1) % eval_interval == 0 or ep_in_stage == stage_episodes - 1:
+            if (ep_in_stage + 1) % config["eval_interval"] == 0 or ep_in_stage == stage_episodes - 1:
                 q_lead.eval()
                 q_follow.eval()
+                adapter_lead.eval()
+                adapter_follow.eval()
                 best_wr_jidan, wr_stage = _run_eval(
-                    q_lead, q_follow, device, config, total_ep,
-                    run_dir, t_start, opp_name, best_wr_jidan,
+                    q_lead, q_follow, adapter_lead, adapter_follow,
+                    device, config, total_ep, run_dir, t_start, opp_name, best_wr_jidan,
                 )
                 if gate is not None and wr_stage >= gate:
                     log.info("  Stage gate: %.1f%% >= %.0f%%. Advancing.",
@@ -571,8 +476,13 @@ def run_training(
             if total_ep % config["save_interval"] == 0:
                 path = run_dir / f"checkpoint_ep{total_ep}.pt"
                 torch.save({
-                    "lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-                    "episode": total_ep, "d_state": STATE_DIM_TIER1,
+                    "lead": q_lead.state_dict(),
+                    "follow": q_follow.state_dict(),
+                    "adapter_lead": adapter_lead.state_dict(),
+                    "adapter_follow": adapter_follow.state_dict(),
+                    "episode": total_ep,
+                    "d_state": STATE_DIM_TIER1,
+                    "adapter_hidden": adapter_lead.net[0].out_features,
                 }, path)
                 log.info("Saved checkpoint: %s", path)
 
@@ -586,9 +496,14 @@ def run_training(
     total_secs = time.time() - t_start
     final_path = run_dir / "model_final.pt"
     torch.save({
-        "lead": q_lead.state_dict(), "follow": q_follow.state_dict(),
-        "episode": total_ep, "d_state": STATE_DIM_TIER1,
+        "lead": q_lead.state_dict(),
+        "follow": q_follow.state_dict(),
+        "adapter_lead": adapter_lead.state_dict(),
+        "adapter_follow": adapter_follow.state_dict(),
+        "episode": total_ep,
+        "d_state": STATE_DIM_TIER1,
         "best_wr_jidan": best_wr_jidan,
+        "adapter_hidden": adapter_lead.net[0].out_features,
     }, final_path)
     log.info("")
     log.info("=" * 60)

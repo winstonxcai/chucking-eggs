@@ -24,13 +24,16 @@ from guandan.game import GuanDanEnv
 
 
 def build_agent(name: str, n_det: int, n_cands: int, top_k: int, checkpoint: str | None,
-                no_search: bool, no_belief: bool, use_value_leaf: bool = False):
+                no_search: bool, no_belief: bool, use_value_leaf: bool = False,
+                policy_checkpoint: str | None = None):
     if name == "partner_pimc":
         return PartnerPIMCBot(level_rank=Rank.TWO, n_det=n_det, n_cands=n_cands)
     if name == "partner_oracle":
         if checkpoint is None:
             raise ValueError("--checkpoint is required for partner_oracle")
-        return PartnerOracleBot(
+        import torch
+        from guandan.training import QValueNet
+        agent = PartnerOracleBot(
             checkpoint_path=checkpoint,
             level_rank=Rank.TWO,
             use_search=not no_search,
@@ -39,6 +42,20 @@ def build_agent(name: str, n_det: int, n_cands: int, top_k: int, checkpoint: str
             use_belief=not no_belief,
             use_value_leaf=use_value_leaf,
         )
+        if policy_checkpoint is not None:
+            # Hybrid oracle: separate clean policy net for top-K candidate selection.
+            # agent._search.value_net still holds the original V-head (bound at init).
+            pol_ckpt = torch.load(policy_checkpoint, map_location=agent.device, weights_only=True)
+            pol_cfg = pol_ckpt["config"]
+            pol_net = QValueNet(
+                d_state=pol_cfg["d_state"],
+                d_action=pol_cfg["d_action"],
+                hidden=pol_cfg["hidden"],
+            ).to(agent.device)
+            pol_net.load_state_dict(pol_ckpt["state_dict"], strict=False)
+            pol_net.eval()
+            agent.net = pol_net
+        return agent
     return make_agent(name, level_rank=Rank.TWO)
 
 
@@ -61,12 +78,17 @@ def main() -> None:
                         help="partner_oracle: disable BeliefModel in determinization (uniform sampling)")
     parser.add_argument("--use-value-leaf", action="store_true",
                         help="partner_oracle: use V(s) at leaf instead of Jidan rollouts (AZ gen-2+)")
+    parser.add_argument("--policy-checkpoint", default=None,
+                        help="partner_oracle: separate clean policy checkpoint for top-K candidate "
+                             "selection (hybrid oracle; keeps value-leaf from --checkpoint)")
     parser.add_argument("--seat-rotate", action="store_true",
                         help="Alternate agent1 between seats {0,2} and {1,3} each game")
     args = parser.parse_args()
 
-    a1 = build_agent(args.agent1, args.n_det, args.n_cands, args.top_k, args.checkpoint, args.no_search, args.no_belief, args.use_value_leaf)
-    a2 = build_agent(args.agent2, args.n_det, args.n_cands, args.top_k, args.checkpoint, args.no_search, args.no_belief, args.use_value_leaf)
+    a1 = build_agent(args.agent1, args.n_det, args.n_cands, args.top_k, args.checkpoint,
+                     args.no_search, args.no_belief, args.use_value_leaf, args.policy_checkpoint)
+    a2 = build_agent(args.agent2, args.n_det, args.n_cands, args.top_k, args.checkpoint,
+                     args.no_search, args.no_belief, args.use_value_leaf)
     env = GuanDanEnv()
     wins = 0
 

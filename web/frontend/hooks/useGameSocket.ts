@@ -160,6 +160,8 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
     setGameState(null);
     setAiThinking(null);
     setRematch(null);
+    setAutoPlayed(null);
+    autoPlayKeyRef.current = 0;
     retriesRef.current = 0;
     intentionalCloseRef.current = false;
     setConnectionStatus("connecting");

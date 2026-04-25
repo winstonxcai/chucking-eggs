@@ -570,7 +570,7 @@ export default function GameBoard({
                 onClick={() => setReviewPlayIdx(0)}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs font-medium"
               >
-                ⟪
+                «
               </button>
               <button
                 data-testid="review-prev"
@@ -578,7 +578,7 @@ export default function GameBoard({
                 onClick={() => setReviewPlayIdx((i) => Math.max(0, i - 1))}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
               >
-                ←
+                ‹
               </button>
               <span data-testid="review-trick-counter" className="text-sm text-text-secondary tabular-nums w-44 text-center">
                 Trick {snapshot?.trick_num ?? "—"} · Play {reviewPlayIdx + 1} of {reviewTotal}
@@ -589,7 +589,7 @@ export default function GameBoard({
                 onClick={() => setReviewPlayIdx((i) => Math.min(reviewTotal - 1, i + 1))}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
               >
-                →
+                ›
               </button>
               <button
                 data-testid="review-end"
@@ -597,7 +597,7 @@ export default function GameBoard({
                 onClick={() => setReviewPlayIdx(reviewTotal - 1)}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs font-medium"
               >
-                ⟫
+                »
               </button>
               <button
                 onClick={() => { setReviewMode(false); setGameOverDismissed(false); }}

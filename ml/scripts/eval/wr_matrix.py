@@ -19,20 +19,38 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from guandan.agents import PartnerPIMCBot, make_agent
+from guandan.agents import PartnerOracleBot, PartnerPIMCBot, make_agent
 from guandan.cards import Rank
 from guandan.game import GuanDanEnv
 from guandan.rating import GlickoPlayer, glicko2_update
 
 DEFAULT_AGENTS = [
     "random", "greedy", "heuristic", "strategic",
-    "xingdream", "lalala", "noai", "yaoji", "jidan",
+    "xingdream", "yaoji", "jidan",
 ]
 
 
-def build_agent(name: str, level_rank: int, n_det: int, n_cands: int):
+def build_agent(
+    name: str,
+    level_rank: int,
+    n_det: int,
+    n_cands: int,
+    checkpoint: str | None = None,
+    top_k: int = 3,
+):
     if name == "partner_pimc":
         return PartnerPIMCBot(level_rank=level_rank, n_det=n_det, n_cands=n_cands)
+    if name == "partner_oracle":
+        if checkpoint is None:
+            raise ValueError("--checkpoint is required for partner_oracle")
+        return PartnerOracleBot(
+            checkpoint_path=checkpoint,
+            level_rank=level_rank,
+            use_search=True,
+            n_det=n_det,
+            top_k=top_k,
+            use_belief=True,
+        )
     return make_agent(name, level_rank=level_rank)
 
 
@@ -129,15 +147,21 @@ def main() -> None:
     parser.add_argument("--agents", type=str, default=None,
                         help="Comma-separated agent names (default: all rule-based)")
     parser.add_argument("--n-det", type=int, default=20,
-                        help="partner_pimc: determinizations per move (default 20)")
+                        help="partner_pimc/partner_oracle: determinizations per move (default 20)")
     parser.add_argument("--n-cands", type=int, default=10,
                         help="partner_pimc: max candidates pre-filter (default 10)")
+    parser.add_argument("--top-k", type=int, default=3,
+                        help="partner_oracle: top-K candidates from policy (default 3)")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Checkpoint path for partner_oracle agent")
     parser.add_argument("--output", type=str, default="ml/runs/wr_matrix",
                         help="Output directory (default: ml/runs/wr_matrix)")
     parser.add_argument("--rating-passes", type=int, default=30)
     args = parser.parse_args()
 
     agent_names = args.agents.split(",") if args.agents else DEFAULT_AGENTS
+    if args.checkpoint and "partner_oracle" not in agent_names:
+        agent_names = agent_names + ["partner_oracle"]
     n_games = args.games
     level_rank = Rank.TWO
 
@@ -147,7 +171,8 @@ def main() -> None:
           f"{total_games} total games @ {n_games}/matchup")
 
     agents = {
-        name: build_agent(name, level_rank, args.n_det, args.n_cands)
+        name: build_agent(name, level_rank, args.n_det, args.n_cands,
+                          checkpoint=args.checkpoint, top_k=args.top_k)
         for name in agent_names
     }
     print(f"Agents loaded: {', '.join(agent_names)}")

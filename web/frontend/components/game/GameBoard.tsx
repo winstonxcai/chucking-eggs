@@ -209,10 +209,11 @@ export default function GameBoard({
     setFlyingCards(null);
     flyingStartRef.current = null;
     setToasts((prev) => [...prev, { id, text: message }]);
-    const t = setTimeout(() => {
+    // No cleanup — let each toast's timer run to completion independently.
+    // Cancelling on re-fire would leave the previous toast stuck in state.
+    setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 3000);
-    return () => clearTimeout(t);
   }, [latestError?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // On AFK auto-play: show toast explaining what happened
@@ -224,10 +225,9 @@ export default function GameBoard({
       ? "Time's up — random move played"
       : "Time's up — auto-passed";
     setToasts((prev) => [...prev, { id, text }]);
-    const t = setTimeout(() => {
+    setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 3000);
-    return () => clearTimeout(t);
   }, [autoPlayed?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePass = useCallback(() => {

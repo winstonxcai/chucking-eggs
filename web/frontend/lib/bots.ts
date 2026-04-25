@@ -4,7 +4,7 @@
 // Two groups shown as separate sections in the UI.
 export const OUR_BOTS = ["easy", "casual", "hard"] as const;
 // liuzha and hulalala hidden — port bugs cause them to lose to random
-export const COMPETITION_BOTS = ["wjsd", "competition", "master", "yaoji", "jidan"] as const;
+export const COMPETITION_BOTS = ["wjsd", "competition", "master", "yaoji", "jidan", "partner_oracle"] as const;
 
 export const DIFFICULTY_INFO: Record<
   string,
@@ -75,5 +75,11 @@ export const DIFFICULTY_INFO: Record<
     description: "NUAA 2nd Prize \u00b7 2020 NJUPT entry.",
     emoji: "🚀",
     elo: 1779,
+  },
+  partner_oracle: {
+    label: "Oracle",
+    description: "Our AI \u00b7 Belief-aware PIMC search \u00b7 AlphaZero policy.",
+    emoji: "🤖",
+    elo: 1923,
   },
 };

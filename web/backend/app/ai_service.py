@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
+from pathlib import Path
 
 from guandan.agents import Agent, make_agent
 from guandan.cards import Rank
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_ORACLE_CHECKPOINT = _REPO_ROOT / "ml" / "checkpoints" / "az_gen3_bestwr.pt"
 
 
 # Bot personalities per difficulty.
@@ -51,6 +55,9 @@ BOT_POOLS = {
     "jidan": [
         {"name": "Jidan", "avatar": "dragon", "elo": 1779},
     ],
+    "partner_oracle": [
+        {"name": "Oracle", "avatar": "dragon", "elo": 1923},
+    ],
 }
 
 DIFFICULTY_TO_AGENT = {
@@ -60,10 +67,11 @@ DIFFICULTY_TO_AGENT = {
     "hard": "strategic",
     "competition": "lalala",  # SEU 1st Prize (Li Jing)
     "yaoji": "yaoji",         # NUAA 3rd Prize (2020 NJUPT)
-    "jidan": "jidan",         # NUAA 2nd Prize (2020 NJUPT)
-    "hulalala": "hulalala",   # SEU 3rd Prize (2020 NJUPT)
-    "liuzha": "liuzha",       # SEU 2nd Prize (2020 NJUPT)
-    "master": "noai",         # Fudan 2nd Prize (Chen Yuguan)
+    "jidan": "jidan",             # NUAA 2nd Prize (2020 NJUPT)
+    "hulalala": "hulalala",       # SEU 3rd Prize (2020 NJUPT)
+    "liuzha": "liuzha",           # SEU 2nd Prize (2020 NJUPT)
+    "master": "noai",             # Fudan 2nd Prize (Chen Yuguan)
+    "partner_oracle": "partner_oracle",  # AZ policy + belief-aware PIMC search
 }
 
 
@@ -77,6 +85,18 @@ class AIService:
                            "lalala", "noai", "wjsd", "yaoji", "jidan",
                            "hulalala", "liuzha"):
             self.agents[agent_name] = make_agent(agent_name, level_rank=Rank.TWO)
+
+        if _ORACLE_CHECKPOINT.exists():
+            from guandan.agents import PartnerOracleBot
+            self.agents["partner_oracle"] = PartnerOracleBot(
+                checkpoint_path=str(_ORACLE_CHECKPOINT),
+                level_rank=Rank.TWO,
+                use_search=True,
+                n_det=20,
+                top_k=3,
+                use_belief=True,
+                n_workers=1,  # avoid subprocess overhead in web context
+            )
 
     def get_agent(self, difficulty: str) -> Agent:
         agent_name = DIFFICULTY_TO_AGENT[difficulty]

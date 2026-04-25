@@ -83,7 +83,7 @@ export default function AttributionsPage() {
           <div className="flex flex-col gap-0.5">
             <h3 className="text-sm font-semibold text-foreground">Competition Bots</h3>
             <p className="text-xs text-text-secondary">
-              Ported from the 2020 NJUPT Guan Dan AI Competition with permission.
+              Ported from the 2020 NJUPT Guan Dan AI Competition.
               NJUPT = Nanjing University of Posts and Telecommunications.
             </p>
           </div>
@@ -115,7 +115,7 @@ export default function AttributionsPage() {
         <p className="text-sm text-text-secondary leading-relaxed">
           Chucking Eggs is an open-source Guan Dan engine and deep reinforcement learning trainer.
           The strategic and heuristic bots were built in-house.
-          Competition bots were ported from the 2020 NJUPT Guan Dan AI Competition with permission.
+          Competition bots were ported from the 2020 NJUPT Guan Dan AI Competition.
         </p>
       </section>
     </div>

@@ -488,7 +488,29 @@ These fixes were implemented during the gen-2-v2 investigation and remain in the
 
 **Plateau diagnosis:** Policy-only WR improving (38→40→44% across gens) but translating to noise-level with-search gains. Two likely causes: (1) bestwr checkpoint selection is noisy (100-game eval → high variance; epoch 8 44% might be lucky), (2) entropy collapse at epoch 8 (H=0.696 vs gen-3's 0.850) → more peaked Q-values → Q-drift re-emerging at late epochs. The ranking loss slows but doesn't stop entropy collapse.
 
-**Proceeding to gen-5** using az_gen4_bestwr.pt (latest generation). If gen-5 also plateaus, consider: larger data (50K decisions), stronger ranking loss margin, or implementing Phase 1a belief-aware determinization.
+**Proceeding to gen-5** using az_gen4_bestwr.pt (latest generation). If gen-5 also plateaus, consider V-at-leaf with higher n_det to break the search quality ceiling.
+
+### Gen-5 (2026-04-25)
+
+**Data (selfplay_gen5.npz):** 30K decisions in 5005s (6.0 dec/s). z mean=+0.102, std=2.222.
+
+**Training (az_gen5.pt):** init from az_gen4_bestwr.pt. Best policy-only WR=40% at epoch 5 (az_gen5_bestwr.pt). Best val epoch 3 (val=1.215). Early stop epoch 8.
+
+**With-search WR: 70.5% (141/200, CI [63.8%, 76.4%])** — plateau confirmed. Three consecutive generations: gen-3=75%, gen-4=72.5%, gen-5=70.5%, all within each other's CI. More Jidan-rollout AZ iterations won't break through.
+
+### Plateau analysis and Phase 1b: V-at-leaf with higher n_det (2026-04-25)
+
+**Root of plateau:** Jidan rollouts give "expected outcome against Jidan" — the policy has learned to optimally beat Jidan. More iterations with the same rollout policy can't discover strategies Jidan doesn't use. Policy-only WR stuck at 40% across gens 3-5.
+
+**V cross-gen z-correlation diagnostic:**
+- Gen-5 V on gen-5 data: 0.980 (training distribution)
+- Gen-5 V on gen-3 data: 0.808 (different gen, same Jidan-rollout type)
+- Gen-5 V on gen-4 data: 0.770
+- Gen-3 V on gen-5 data: 0.289 (asymmetric: later V generalizes better)
+
+**Insight:** Gen-5 V generalizes well across Jidan-rollout gens (0.77–0.81). This is very different from the gen-2-v2 failure (gen-1 V had 0.128 on V-at-leaf data). The failure was V-at-leaf → distribution shift; Jidan-rollout gens are close enough that cross-gen generalization holds.
+
+**Plan (gen-6):** Use gen-5 V at leaf with n_det=100 (vs Jidan's n_det=30). V-at-leaf is ~3.85× faster per decision → n_det=100 in same time as n_det=26 Jidan. Better search signal from 3.3× more determinizations may break plateau. pi_temp=2.0 to soften peaked V-at-leaf targets. After first 1000 decisions, verify gen-5 V z-corr on gen-6 data before full run.
 
 ---
 

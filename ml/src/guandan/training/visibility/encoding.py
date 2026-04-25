@@ -161,3 +161,23 @@ def encode_state_tier1_team(env: GuanDanEnv, player: int) -> np.ndarray:
         is_leader, trick_type_oh, trick_key_oh, trick_is_bomb,            # 34
     ])
     # Total: 360 + 60 + 8 + 2 + 3 + 13 + 34 = 480
+
+
+# ─── Per-action wrapper with team-coordination flags ──────────────────────
+#
+# Appends 9 per-action behavior flags (cooperating/dwarfing/assisting) to the
+# 480-dim base team state. Used by PartnerOracleBot's policy net so the model
+# sees an explicit per-action team-coord signal alongside the base state.
+
+from .behavior_flags import FLAG_DIM, compute_behavior_flags  # noqa: E402
+
+STATE_DIM_TIER1_TEAM_WITH_FLAGS = STATE_DIM_TIER1_TEAM + FLAG_DIM  # 489
+
+
+def encode_state_tier1_team_with_flags(
+    env: GuanDanEnv, player: int, action, legal_moves: list
+) -> np.ndarray:
+    """480-dim team state + 9-dim per-action behavior flags. Total 489."""
+    base = encode_state_tier1_team(env, player)
+    flags = compute_behavior_flags(env, player, action, legal_moves)
+    return np.concatenate([base, flags])

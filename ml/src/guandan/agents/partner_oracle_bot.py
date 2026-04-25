@@ -15,11 +15,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ..cards import BOMB_TYPES, Rank
+from ..cards import Rank
 from ..combos import Combo
 from ..game import GuanDanEnv
 from ..training import ACTION_DIM, QValueNet, encode_action, get_device
-from ..training.visibility import STATE_DIM_TIER1_TEAM, encode_state_tier1_team
+from ..training.visibility import (
+    STATE_DIM_TIER1_TEAM_WITH_FLAGS,
+    encode_state_tier1_team_with_flags,
+)
 from .base import Agent
 from .belief import BeliefModel
 from .partner_pimc_bot import _N_WORKERS, PartnerPIMCBot, _clone_env
@@ -104,7 +107,8 @@ class PartnerOracleBot(Agent):
     def _score_actions(
         self, env: GuanDanEnv, player: int, legal: list[Combo]
     ) -> np.ndarray:
-        """Return Q-values for each legal action under the policy net."""
+        """Q-values per legal action. State is per-action (includes 9-dim
+        team-coordination behavior flags computed for each candidate)."""
         if player in (0, 2):
             enc_env = env
             enc_player = player
@@ -112,36 +116,24 @@ class PartnerOracleBot(Agent):
             enc_env = _reflect_env(env)
             enc_player = player ^ 1
 
-        state = encode_state_tier1_team(enc_env, enc_player).astype(np.float32)
+        states = np.stack([
+            encode_state_tier1_team_with_flags(enc_env, enc_player, a, legal)
+            for a in legal
+        ]).astype(np.float32)
         actions = np.stack([
             encode_action(a, enc_env.hands[enc_player], enc_env.level_rank)
             for a in legal
         ]).astype(np.float32)
 
-        K = len(legal)
-        st = torch.from_numpy(state).to(self.device).unsqueeze(0).expand(K, -1)
+        st = torch.from_numpy(states).to(self.device)
         at = torch.from_numpy(actions).to(self.device)
         q = self.net(st, at)  # [K]
         return q.cpu().numpy()
-
-    def _remove_partner_overbombs(
-        self, env: GuanDanEnv, player: int, candidates: list[Combo]
-    ) -> list[Combo]:
-        """Drop bombs when partner already holds the winning trick, unless the
-        bomb would empty this player's hand (going out)."""
-        if env.trick_winner != GuanDanEnv.partner(player):
-            return candidates
-        hand_size = len(env.hands[player])
-        return [
-            c for c in candidates
-            if c.type not in BOMB_TYPES or len(c.cards) == hand_size
-        ]
 
     def _policy_top_k(
         self, env: GuanDanEnv, player: int, candidates: list[Combo]
     ) -> list[Combo]:
         """Pre-filter callable plugged into PartnerPIMCBot."""
-        candidates = self._remove_partner_overbombs(env, player, candidates)
         if len(candidates) <= self.top_k:
             return candidates
         q = self._score_actions(env, player, candidates)
@@ -157,6 +149,5 @@ class PartnerOracleBot(Agent):
             return self._search.act(env, player)
 
         # Stage 1: pure policy argmax
-        filtered = self._remove_partner_overbombs(env, player, legal)
-        q = self._score_actions(env, player, filtered)
-        return filtered[int(np.argmax(q))]
+        q = self._score_actions(env, player, legal)
+        return legal[int(np.argmax(q))]

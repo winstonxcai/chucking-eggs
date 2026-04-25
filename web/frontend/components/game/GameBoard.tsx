@@ -91,7 +91,7 @@ export default function GameBoard({
     fromRects: DOMRect[];
     toRect: DOMRect;
   } | null>(null);
-  const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
+  const [toasts, setToasts] = useState<{ id: number; text: string; kind?: string }[]>([]);
   const [gameOverDismissed, setGameOverDismissed] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
   const [reviewPlayIdx, setReviewPlayIdx] = useState(0);
@@ -224,7 +224,10 @@ export default function GameBoard({
     const text = leading
       ? "Time's up — random move played"
       : "Time's up — auto-passed";
-    setToasts((prev) => [...prev, { id, text }]);
+    setToasts((prev) => {
+      if (prev.filter((t) => t.kind === "afk").length >= 1) return prev;
+      return [...prev, { id, text, kind: "afk" }];
+    });
     setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 3000);

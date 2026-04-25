@@ -176,16 +176,23 @@ def _value_at_leaf(env: GuanDanEnv, player: int, value_net) -> float:
     import numpy as np
     import torch
     from .partner_oracle_bot import _reflect_env
-    from ..training.visibility import encode_state_tier1_team
+    from ..training.visibility import (
+        STATE_DIM_TIER1_TEAM_WITH_FLAGS,
+        encode_state_tier1_team,
+    )
 
     if player in (0, 2):
         enc_env, enc_player = env, player
     else:
         enc_env, enc_player = _reflect_env(env), player ^ 1
 
-    state = encode_state_tier1_team(enc_env, enc_player).astype(np.float32)
+    # V head is action-agnostic — pad base state with zeros for behavior flags.
+    base = encode_state_tier1_team(enc_env, enc_player).astype(np.float32)
+    pad = STATE_DIM_TIER1_TEAM_WITH_FLAGS - base.shape[0]
+    if pad > 0:
+        base = np.concatenate([base, np.zeros(pad, dtype=np.float32)])
     with torch.no_grad():
-        st = torch.from_numpy(state).to(value_net.v_net[0].weight.device).unsqueeze(0)
+        st = torch.from_numpy(base).to(value_net.v_net[0].weight.device).unsqueeze(0)
         return float(value_net.value(st).item())
 
 

@@ -69,7 +69,7 @@ def _worker(args: tuple) -> list[dict]:
         use_search=True,
         n_det=n_det,
         top_k=top_k,
-        use_belief=False,
+        use_belief=True,   # match eval-time belief (H1-H4 constraints improve PIMC realism)
         n_workers=1,  # single-process PIMC — we're already inside a worker
         use_value_leaf=use_value_leaf,
         device=torch.device("cpu"),  # avoid GPU contention across self-play workers

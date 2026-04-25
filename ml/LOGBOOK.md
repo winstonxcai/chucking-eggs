@@ -517,7 +517,13 @@ These fixes were implemented during the gen-2-v2 investigation and remain in the
 
 **V-at-leaf is fundamentally incompatible with Jidan-rollout V.** The distribution shift between Jidan-rollout game trajectories and V-at-leaf game trajectories is too large for cross-distribution V generalization. This rules out V-at-leaf as a route to breaking the plateau via any Jidan-rollout-trained V.
 
-**Pivot to H4 constraints:** Add full combo-type hard constraints to BeliefModel (straights, full-houses, plates, tubes, straight-flushes). H1-H3 already implemented; H4 extends to all combo types. May narrow PIMC determinization space for positions where complex combos were played, improving search signal quality.
+**H4 constraints implemented (2026-04-25):** Added STRAIGHT, TUBE, PLATE, FULL_HOUSE pass inference to BeliefModel. `violates()` checks consecutive-rank sequences for straights/tubes/plates, and triple rank for full houses (wilds excluded → safe under-constraint).
+
+**H4 eval result (gen-5 bestwr + H4): 72.5% WR (145/200, CI [65.9%, 78.2%])** — vs gen-5 baseline 70.5%. +2pp, within CI, marginal.
+
+**Gen-3 bestwr + H4 eval: running** — gen-3 gave highest WR (75%) prior to H4. This eval measures best-case benefit.
+
+**Critical discovery: training/eval belief mismatch.** All selfplay_data.py runs used `use_belief=False`, while bots.py eval uses `use_belief=True` (default). Training data was generated with unrealistic PIMC worlds (no constraint filtering) → noisier π_search targets. Gen-6 data will fix this by enabling belief in selfplay (H4 constraints active during self-play PIMC → better world sampling → better training signal).
 
 ---
 

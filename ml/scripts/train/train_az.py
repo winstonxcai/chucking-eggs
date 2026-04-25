@@ -460,7 +460,7 @@ def main() -> None:
           f"hidden={args.hidden}  eval_games={args.eval_games}", flush=True)
 
     data = load_data(args.data)
-    N = len(data["states"])
+    N = len(data["base_states"])
     K = data["actions"].shape[1]
     print(f"  loaded {N} decisions (K={K})")
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Crown, Flag, Hand, HelpCircle, LogOut, MoreVertical } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Crown, Flag, Hand, HelpCircle, LogOut, MoreVertical, X } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { CardDTO, CardGroup, ComboDTO, GameOverMsg, GameState, TrickAction, TrickPlay } from "@/lib/types";
 import { findMatchingCombo, validateCombo } from "@/lib/cards";
@@ -570,7 +570,7 @@ export default function GameBoard({
                 onClick={() => setReviewPlayIdx(0)}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs font-medium"
               >
-                «
+                <ChevronsLeft size={16} />
               </button>
               <button
                 data-testid="review-prev"
@@ -578,7 +578,7 @@ export default function GameBoard({
                 onClick={() => setReviewPlayIdx((i) => Math.max(0, i - 1))}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
               >
-                ‹
+                <ChevronLeft size={16} />
               </button>
               <span data-testid="review-trick-counter" className="text-sm text-text-secondary tabular-nums w-44 text-center">
                 Trick {snapshot?.trick_num ?? "—"} · Play {reviewPlayIdx + 1} of {reviewTotal}
@@ -589,7 +589,7 @@ export default function GameBoard({
                 onClick={() => setReviewPlayIdx((i) => Math.min(reviewTotal - 1, i + 1))}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
               >
-                ›
+                <ChevronRight size={16} />
               </button>
               <button
                 data-testid="review-end"
@@ -597,13 +597,13 @@ export default function GameBoard({
                 onClick={() => setReviewPlayIdx(reviewTotal - 1)}
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs font-medium"
               >
-                »
+                <ChevronsRight size={16} />
               </button>
               <button
                 onClick={() => { setReviewMode(false); setGameOverDismissed(false); }}
                 className="w-9 h-9 flex items-center justify-center text-xs font-medium text-text-secondary border border-border rounded-lg hover:text-foreground hover:border-foreground/30 transition-colors"
               >
-                ✕
+                <X size={14} />
               </button>
             </div>
           ) : (

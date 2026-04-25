@@ -523,7 +523,17 @@ These fixes were implemented during the gen-2-v2 investigation and remain in the
 
 **Gen-3 bestwr + H4 eval: 72.0% WR (144/200, CI [65.4%, 77.8%])** — vs gen-3 without H4 = 75.0%. H4 HURTS by 3pp. Root cause identical to H5 removal: players routinely sandbag complex combos (straights, full-houses) for strategic deception. H4 constraints incorrectly reject valid determinizations → worse PIMC worlds → lower search quality. H4 reverted. H1-H3 retained (singles/pairs/triples are more greedily played).
 
-**Critical discovery: training/eval belief mismatch.** All selfplay_data.py runs used `use_belief=False`, while bots.py eval uses `use_belief=True` (default). Training data was generated with unrealistic PIMC worlds (no constraint filtering) → noisier π_search targets. Gen-6 data will fix this by enabling belief in selfplay (H4 constraints active during self-play PIMC → better world sampling → better training signal).
+**Critical discovery: training/eval belief mismatch.** All selfplay_data.py runs used `use_belief=False`, while bots.py eval uses `use_belief=True` (default). Training data was generated with unrealistic PIMC worlds (no constraint filtering) → noisier π_search targets. Gen-6 data fixes this with `use_belief=True` in selfplay (H1-H3 active during PIMC).
+
+### Gen-6 (2026-04-25) — first with belief-consistent training
+
+**Data (selfplay_gen6.npz):** 30K decisions in 4958s (6.1 dec/s). z mean=+0.100, std=2.193. First gen with `use_belief=True` in selfplay.
+
+**Training (az_gen6.pt):** init from az_gen5_bestwr.pt. Best-val=1.180 at epoch 3 — lowest best-val across all gens (gen-5 was 1.215), suggesting belief-consistent data improves training signal quality. Best policy-only WR=41% at epoch 6 (az_gen6_bestwr.pt). Early stop epoch 8.
+
+**With-search WR: 72.5% (145/200, CI [65.9%, 78.2%])** — statistically identical to gen-4 (72.5%) and gen-5 (70.5%). Belief-consistent training did NOT break the plateau. Best-val improvement (1.180 vs 1.215) did not translate to WR gain. Jidan-rollout AZ ceiling confirmed across 4 generations (gen-3 through gen-6): 70–75% with no upward trend.
+
+**Conclusion:** The ceiling is the Jidan rollout itself, not data quality or belief consistency. Search evaluates positions as "expected outcome if all players play Jidan" — after a few iterations the policy has fully learned to exploit Jidan and further generations give no gain. Path forward requires a different signal source (Modal multi-generation AZ with self-evaluated rollouts once V is bootstrapped, or acceptance of 75% as the ceiling and shipping gen-3_bestwr).
 
 ---
 

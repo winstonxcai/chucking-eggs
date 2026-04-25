@@ -33,18 +33,12 @@ from ..game import GuanDanEnv
 @dataclass
 class OppConstraints:
     """Per-opponent hard constraints. Defaults = no constraint."""
-    # H1-H3: Largest level-order-key the opp can hold for each single/pair/triple.
-    # None means unconstrained.
+    # Largest level-order-key the opp can hold for each combo type.
+    # None means unconstrained. 0 means "nothing" (impossible to satisfy → infeasible opp).
     max_single_key: int | None = None
     max_pair_key: int | None = None
     max_triple_key: int | None = None
     no_bomb: bool = False  # True ⇒ opp holds no rank with count ≥ 4
-    # H4: Largest natural-rank key for same-type combos (STRAIGHT, TUBE, PLATE).
-    # FULL_HOUSE is keyed by level-order-key of the triple's rank.
-    max_straight_key: int | None = None    # natural rank of highest card in straight
-    max_tube_key: int | None = None        # natural rank of highest pair in tube (3 consec pairs)
-    max_plate_key: int | None = None       # natural rank of highest triple in plate (2 consec triples)
-    max_fullhouse_lo_key: int | None = None  # level-order-key of triple's rank in full house
 
     def tighten_max(self, attr: str, k: int) -> None:
         cur = getattr(self, attr)
@@ -56,22 +50,21 @@ class OppConstraints:
         if not hand:
             return False
 
-        # Build per-rank counts once (excludes jokers from natural-rank sequences)
+        # Build per-rank counts once
         rank_counts: Counter[int] = Counter(c.rank for c in hand)
 
-        # H1: passed on single of key K → no card with level_order_key > K
+        # Convert ranks to level-order keys
         if self.max_single_key is not None:
+            # Any card whose level_order_key > max_single_key would form a winning single
             for rank in rank_counts:
                 if level_order_key(rank, level_rank) > self.max_single_key:
                     return True
 
-        # H2: passed on pair of key K → no pair with level_order_key > K
         if self.max_pair_key is not None:
             for rank, cnt in rank_counts.items():
                 if cnt >= 2 and level_order_key(rank, level_rank) > self.max_pair_key:
                     return True
 
-        # H3: passed on triple of key K → no triple with level_order_key > K
         if self.max_triple_key is not None:
             for rank, cnt in rank_counts.items():
                 if cnt >= 3 and level_order_key(rank, level_rank) > self.max_triple_key:
@@ -81,49 +74,12 @@ class OppConstraints:
             for cnt in rank_counts.values():
                 if cnt >= 4:
                     return True
+            # Check 4-joker bomb: 2 BJ + 2 RJ
             from ..cards import Rank
             bj = rank_counts.get(Rank.BLACK_JOKER, 0)
             rj = rank_counts.get(Rank.RED_JOKER, 0)
             if bj >= 2 and rj >= 2:
                 return True
-
-        # H4: same-type combo constraints (natural rank only; wilds not counted → safe under-constraint)
-        # Jokers and level-rank wilds are excluded from consecutive-rank checks intentionally:
-        # over-rejection from wild-assisted combos is harder to detect and rarer than base combos.
-        natural_ranks = sorted(
-            r for r, cnt in rank_counts.items()
-            if r not in (level_rank,) and r < 15  # exclude wilds and jokers
-            for _ in range(cnt)
-        )
-
-        if self.max_straight_key is not None and len(natural_ranks) >= 5:
-            # Find any 5 consecutive distinct natural ranks with max > max_straight_key.
-            distinct = sorted(set(natural_ranks))
-            for i in range(len(distinct) - 4):
-                seq = distinct[i:i + 5]
-                if seq[-1] - seq[0] == 4 and seq[-1] > self.max_straight_key:
-                    return True
-
-        if self.max_tube_key is not None:
-            # Tube = 3 consecutive ranks each with count ≥ 2; key = highest rank.
-            pairs = sorted(r for r, cnt in rank_counts.items() if cnt >= 2 and r < 15 and r != level_rank)
-            for i in range(len(pairs) - 2):
-                if pairs[i + 1] == pairs[i] + 1 and pairs[i + 2] == pairs[i] + 2:
-                    if pairs[i + 2] > self.max_tube_key:
-                        return True
-
-        if self.max_plate_key is not None:
-            # Plate = 2 consecutive ranks each with count ≥ 3; key = highest rank.
-            triples = sorted(r for r, cnt in rank_counts.items() if cnt >= 3 and r < 15 and r != level_rank)
-            for i in range(len(triples) - 1):
-                if triples[i + 1] == triples[i] + 1 and triples[i + 1] > self.max_plate_key:
-                    return True
-
-        if self.max_fullhouse_lo_key is not None:
-            # Full house key = level-order-key of the triple's rank.
-            for rank, cnt in rank_counts.items():
-                if cnt >= 3 and level_order_key(rank, level_rank) > self.max_fullhouse_lo_key:
-                    return True
 
         return False
 
@@ -159,17 +115,10 @@ class BeliefModel:
                     c.tighten_max("max_pair_key", k)
                 elif t == ComboType.TRIPLE:
                     c.tighten_max("max_triple_key", k)
-                # H4: same-type combo constraints from passes.
-                # STRAIGHT/TUBE/PLATE use natural key (not level-order) for comparison.
-                elif t == ComboType.STRAIGHT:
-                    c.tighten_max("max_straight_key", current_trick.key)
-                elif t == ComboType.TUBE:
-                    c.tighten_max("max_tube_key", current_trick.key)
-                elif t == ComboType.PLATE:
-                    c.tighten_max("max_plate_key", current_trick.key)
-                elif t == ComboType.FULL_HOUSE:
-                    # Full house key uses level-order-key (same as triple comparison).
-                    c.tighten_max("max_fullhouse_lo_key", k)
+                # H4 (full house, straight, tube, plate) intentionally not implemented:
+                # players routinely sandbag complex combos (same reason H5 bomb inference
+                # was removed). False constraints hurt PIMC by rejecting valid worlds.
+                # Eval confirmed: gen-3+H4 → 72% vs gen-3 baseline → 75% (-3pp).
 
                 # H5 (no_bomb inference) removed: players routinely sandbag bombs
                 # and save them for critical moments, even in greedy bots. Applying

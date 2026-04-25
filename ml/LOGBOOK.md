@@ -521,7 +521,7 @@ These fixes were implemented during the gen-2-v2 investigation and remain in the
 
 **H4 eval result (gen-5 bestwr + H4): 72.5% WR (145/200, CI [65.9%, 78.2%])** — vs gen-5 baseline 70.5%. +2pp, within CI, marginal.
 
-**Gen-3 bestwr + H4 eval: running** — gen-3 gave highest WR (75%) prior to H4. This eval measures best-case benefit.
+**Gen-3 bestwr + H4 eval: 72.0% WR (144/200, CI [65.4%, 77.8%])** — vs gen-3 without H4 = 75.0%. H4 HURTS by 3pp. Root cause identical to H5 removal: players routinely sandbag complex combos (straights, full-houses) for strategic deception. H4 constraints incorrectly reject valid determinizations → worse PIMC worlds → lower search quality. H4 reverted. H1-H3 retained (singles/pairs/triples are more greedily played).
 
 **Critical discovery: training/eval belief mismatch.** All selfplay_data.py runs used `use_belief=False`, while bots.py eval uses `use_belief=True` (default). Training data was generated with unrealistic PIMC worlds (no constraint filtering) → noisier π_search targets. Gen-6 data will fix this by enabling belief in selfplay (H4 constraints active during self-play PIMC → better world sampling → better training signal).
 

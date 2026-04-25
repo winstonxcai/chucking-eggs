@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ..cards import Rank
+from ..cards import BOMB_TYPES, Rank
 from ..combos import Combo
 from ..game import GuanDanEnv
 from ..training import ACTION_DIM, QValueNet, encode_action, get_device
@@ -124,10 +124,24 @@ class PartnerOracleBot(Agent):
         q = self.net(st, at)  # [K]
         return q.cpu().numpy()
 
+    def _remove_partner_overbombs(
+        self, env: GuanDanEnv, player: int, candidates: list[Combo]
+    ) -> list[Combo]:
+        """Drop bombs when partner already holds the winning trick, unless the
+        bomb would empty this player's hand (going out)."""
+        if env.trick_winner != GuanDanEnv.partner(player):
+            return candidates
+        hand_size = len(env.hands[player])
+        return [
+            c for c in candidates
+            if c.type not in BOMB_TYPES or len(c.cards) == hand_size
+        ]
+
     def _policy_top_k(
         self, env: GuanDanEnv, player: int, candidates: list[Combo]
     ) -> list[Combo]:
         """Pre-filter callable plugged into PartnerPIMCBot."""
+        candidates = self._remove_partner_overbombs(env, player, candidates)
         if len(candidates) <= self.top_k:
             return candidates
         q = self._score_actions(env, player, candidates)
@@ -143,5 +157,6 @@ class PartnerOracleBot(Agent):
             return self._search.act(env, player)
 
         # Stage 1: pure policy argmax
-        q = self._score_actions(env, player, legal)
-        return legal[int(np.argmax(q))]
+        filtered = self._remove_partner_overbombs(env, player, legal)
+        q = self._score_actions(env, player, filtered)
+        return filtered[int(np.argmax(q))]

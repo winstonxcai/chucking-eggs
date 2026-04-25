@@ -327,10 +327,12 @@ def main() -> None:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out, **data)
-    print(f"\nSaved {data['states'].shape[0]} decisions → {out}")
-    print(f"  states:    {data['states'].shape}")
-    print(f"  actions:   {data['actions'].shape}")
-    print(f"  pi_search: {data['pi_search'].shape}")
+    N = data['base_states'].shape[0]
+    print(f"\nSaved {N} decisions → {out}")
+    print(f"  base_states:  {data['base_states'].shape}")
+    print(f"  cand_states:  {data['cand_states'].shape}")
+    print(f"  actions:      {data['actions'].shape}")
+    print(f"  pi_search:    {data['pi_search'].shape}")
     print(f"  z:  mean={data['z'].mean():.3f}  std={data['z'].std():.3f}")
 
 

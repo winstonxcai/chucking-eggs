@@ -20,13 +20,24 @@ def get_db() -> AsyncIOMotorDatabase:
 async def init_db() -> None:
     global _client, _db
     url = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-    _client = AsyncIOMotorClient(url)
+    # Use in-memory mock when MongoDB is unavailable (local dev without mongo).
+    if os.getenv("USE_MOCK_DB", "").lower() in ("1", "true", "yes"):
+        from mongomock_motor import AsyncMongoMockClient
+        _client = AsyncMongoMockClient()  # type: ignore[assignment]
+    else:
+        _client = AsyncIOMotorClient(url, serverSelectionTimeoutMS=3000)
     _db = _client["chucking_eggs"]
     # Idempotent indexes
-    await _db.players.create_index("username", unique=True)
-    await _db.players.create_index("email", unique=True, sparse=True)
-    await _db.games.create_index([("players.player_id", 1)])
-    await _db.games.create_index([("played_at", -1)])
+    try:
+        await _db.players.create_index("username", unique=True)
+        await _db.players.create_index("email", unique=True, sparse=True)
+        await _db.games.create_index([("players.player_id", 1)])
+        await _db.games.create_index([("played_at", -1)])
+    except Exception:
+        # Fall back to mock DB when real MongoDB is unreachable
+        from mongomock_motor import AsyncMongoMockClient
+        _client = AsyncMongoMockClient()  # type: ignore[assignment]
+        _db = _client["chucking_eggs"]
 
 
 async def close_db() -> None:

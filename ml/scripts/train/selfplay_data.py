@@ -1,11 +1,15 @@
 """Generate AZ self-play training data using PartnerOracleBot (Direction D, Phase 2).
 
 Each decision records:
-  state     [480]     encode_state_tier1_team from acting player's perspective
-  actions   [K, 160]  top-K policy candidates, encoded
-  pi_search [K]       softmax of PIMC scores over those K candidates
-  n_cands   scalar    actual K (rest of actions/pi_search rows are zero-padded)
-  z         scalar    final reward for the acting player
+  base_state   [480]       encode_state_tier1_team (no action-specific flags) — for V head
+  cand_states  [K, 489]    per-candidate state (base + 9-dim behavior flags) — for Q-policy
+  actions      [K, 160]    top-K policy candidates, encoded
+  pi_search    [K]         softmax of PIMC scores over those K candidates
+  n_cands      scalar      actual K (rest of actions/pi_search rows are zero-padded)
+  neg_states   [K_neg,489] per-negative state (for ranking loss)
+  neg_actions  [K_neg,160] hard-negative non-candidate actions
+  n_neg        scalar      actual count of negatives
+  z            scalar      final reward for the acting player
 
 All 4 seats use the same PartnerOracleBot (one network, seat reflection for {1,3}).
 Only decisions where PIMC search ran (|candidates| > 1) are recorded.
@@ -37,7 +41,10 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from guandan.training import ACTION_DIM
-from guandan.training.visibility import STATE_DIM_TIER1_TEAM
+from guandan.training.visibility import (
+    STATE_DIM_TIER1_TEAM,
+    STATE_DIM_TIER1_TEAM_WITH_FLAGS,
+)
 
 TOP_K_MAX = 10  # maximum top_k supported (for padding)
 K_NEG = 5       # hard negative non-candidates to store (for ranking loss)
@@ -61,7 +68,11 @@ def _worker(args: tuple) -> list[dict]:
     from guandan.cards import Rank
     from guandan.game import GuanDanEnv
     from guandan.training import ACTION_DIM, QValueNet, encode_action
-    from guandan.training.visibility import STATE_DIM_TIER1_TEAM, encode_state_tier1_team
+    from guandan.training.visibility import (
+        STATE_DIM_TIER1_TEAM,
+        encode_state_tier1_team,
+        encode_state_tier1_team_with_flags,
+    )
 
     oracle = PartnerOracleBot(
         checkpoint_path=checkpoint_path,
@@ -138,8 +149,13 @@ def _worker(args: tuple) -> list[dict]:
             else:
                 enc_env, enc_player = _reflect_env(env), player ^ 1
 
-            state = encode_state_tier1_team(enc_env, enc_player).astype(np_w.float32)
+            base_state = encode_state_tier1_team(enc_env, enc_player).astype(np_w.float32)
 
+            # Per-candidate state with action-specific behavior flags
+            cand_states = np_w.stack([
+                encode_state_tier1_team_with_flags(enc_env, enc_player, a, legal)
+                for a in candidates
+            ]).astype(np_w.float32)
             actions = np_w.stack([
                 encode_action(a, enc_env.hands[enc_player], env.level_rank)
                 for a in candidates
@@ -151,19 +167,26 @@ def _worker(args: tuple) -> list[dict]:
             n_neg = min(len(non_cands), K_NEG)
             if n_neg > 0:
                 neg_sample = random.sample(non_cands, n_neg)
+                neg_states = np_w.stack([
+                    encode_state_tier1_team_with_flags(enc_env, enc_player, a, legal)
+                    for a in neg_sample
+                ]).astype(np_w.float32)
                 neg_actions = np_w.stack([
                     encode_action(a, enc_env.hands[enc_player], env.level_rank)
                     for a in neg_sample
                 ]).astype(np_w.float32)
             else:
+                neg_states = np_w.zeros((0, cand_states.shape[1]), dtype=np_w.float32)
                 neg_actions = np_w.zeros((0, actions.shape[1]), dtype=np_w.float32)
 
             game_buf.append({
-                "state": state,           # [480]
-                "actions": actions,       # [K, 160]
-                "pi_search": pi_search,   # [K]
+                "base_state": base_state,        # [480]   — for V head
+                "cand_states": cand_states,      # [K, 489] — for Q-policy
+                "actions": actions,              # [K, 160]
+                "pi_search": pi_search,          # [K]
                 "n_cands": len(candidates),
-                "neg_actions": neg_actions,  # [n_neg, 160]
+                "neg_states": neg_states,        # [n_neg, 489]
+                "neg_actions": neg_actions,      # [n_neg, 160]
                 "n_neg": n_neg,
                 "player": player,
             })
@@ -224,35 +247,42 @@ def generate(
     # Pack into numpy arrays (zero-pad to top_k / K_NEG)
     N = len(all_decisions)
     K = top_k
-    states = np.zeros((N, STATE_DIM_TIER1_TEAM), dtype=np.float32)
+    D_FLAGS = STATE_DIM_TIER1_TEAM_WITH_FLAGS
+    base_states = np.zeros((N, STATE_DIM_TIER1_TEAM), dtype=np.float32)
+    cand_states = np.zeros((N, K, D_FLAGS), dtype=np.float32)
     actions = np.zeros((N, K, ACTION_DIM), dtype=np.float32)
     pi_search = np.zeros((N, K), dtype=np.float32)
     n_cands = np.zeros(N, dtype=np.int32)
+    neg_states = np.zeros((N, K_NEG, D_FLAGS), dtype=np.float32)
     neg_actions = np.zeros((N, K_NEG, ACTION_DIM), dtype=np.float32)
     n_neg = np.zeros(N, dtype=np.int32)
     z = np.zeros(N, dtype=np.float32)
 
     for i, d in enumerate(all_decisions):
-        states[i] = d["state"]
+        base_states[i] = d["base_state"]
         k = min(d["n_cands"], K)
+        cand_states[i, :k] = d["cand_states"][:k]
         actions[i, :k] = d["actions"][:k]
         pi_search[i, :k] = d["pi_search"][:k]
         n_cands[i] = k
         kn = min(d.get("n_neg", 0), K_NEG)
         if kn > 0:
+            neg_states[i, :kn] = d["neg_states"][:kn]
             neg_actions[i, :kn] = d["neg_actions"][:kn]
         n_neg[i] = kn
         z[i] = d["z"]
 
     return {
-        "states": states,
+        "base_states": base_states,
+        "cand_states": cand_states,
         "actions": actions,
         "pi_search": pi_search,
         "n_cands": n_cands,
+        "neg_states": neg_states,
         "neg_actions": neg_actions,
         "n_neg": n_neg,
         "z": z,
-        "config": np.array([STATE_DIM_TIER1_TEAM, ACTION_DIM, K], dtype=np.int32),
+        "config": np.array([D_FLAGS, ACTION_DIM, K], dtype=np.int32),
     }
 
 

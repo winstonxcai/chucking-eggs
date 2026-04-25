@@ -41,7 +41,10 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from guandan.training import ACTION_DIM, QValueNet, encode_action, get_device
-from guandan.training.visibility import STATE_DIM_TIER1_TEAM, encode_state_tier1_team
+from guandan.training.visibility import (
+    STATE_DIM_TIER1_TEAM_WITH_FLAGS,
+    encode_state_tier1_team_with_flags,
+)
 
 
 # ── Data loading ───────────────────────────────────────────────────────────────
@@ -67,42 +70,54 @@ def _smooth_targets(pi: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
 def _train_step(
     net: QValueNet,
-    states: torch.Tensor,        # [B, 480]
+    base_states: torch.Tensor,   # [B, 480] — for V head
+    cand_states: torch.Tensor,   # [B, K, 489] — per-candidate state for Q
     actions: torch.Tensor,       # [B, K, 160]
     pi_search: torch.Tensor,     # [B, K] soft target
     n_cands: torch.Tensor,       # [B] int
     z: torch.Tensor,             # [B]
     opt: torch.optim.Optimizer,
+    neg_states: torch.Tensor | None = None,   # [B, K_neg, 489]
     neg_actions: torch.Tensor | None = None,  # [B, K_neg, 160]
     n_neg: torch.Tensor | None = None,        # [B] int
 ) -> tuple[float, float, float, float]:
-    B, K, _ = actions.shape
-    mask = torch.arange(K, device=states.device).unsqueeze(0) < n_cands.unsqueeze(1)
+    B, K, d_state = cand_states.shape
+    mask = torch.arange(K, device=cand_states.device).unsqueeze(0) < n_cands.unsqueeze(1)
 
-    states_exp = states.unsqueeze(1).expand(B, K, -1).reshape(B * K, -1)
-    q_flat = net(states_exp, actions.reshape(B * K, -1)).reshape(B, K)
+    q_flat = net(cand_states.reshape(B * K, d_state),
+                 actions.reshape(B * K, -1)).reshape(B, K)
     q_flat = q_flat.masked_fill(~mask, -1e9)
     log_probs = F.log_softmax(q_flat, dim=-1)
     pi_smooth = _smooth_targets(pi_search, mask)
     policy_loss = -(pi_smooth * log_probs).sum(dim=-1).mean()
 
-    v_pred = net.value(states)
+    # V head sees the base 480-dim state (no action-conditional flags).
+    # Pad with zeros to match d_state if needed (V net was built with d_state).
+    pad_w = d_state - base_states.shape[1]
+    v_input = (
+        torch.cat(
+            [base_states, torch.zeros(B, pad_w, device=base_states.device)], dim=-1
+        )
+        if pad_w > 0
+        else base_states
+    )
+    v_pred = net.value(v_input)
     value_loss = F.mse_loss(v_pred, z)
 
     # Ranking loss: enforce Q(top-K) > Q(non-candidates) + margin.
-    rank_loss = torch.tensor(0.0, device=states.device)
-    if neg_actions is not None and n_neg is not None:
+    rank_loss = torch.tensor(0.0, device=cand_states.device)
+    if neg_states is not None and neg_actions is not None and n_neg is not None:
         K_neg = neg_actions.shape[1]
-        neg_mask = torch.arange(K_neg, device=states.device).unsqueeze(0) < n_neg.unsqueeze(1)
-        has_neg = neg_mask.any(dim=1)  # [B] which samples have negatives
+        neg_mask = torch.arange(K_neg, device=cand_states.device).unsqueeze(0) < n_neg.unsqueeze(1)
+        has_neg = neg_mask.any(dim=1)
         if has_neg.any():
-            states_exp_neg = states.unsqueeze(1).expand(B, K_neg, -1).reshape(B * K_neg, -1)
-            q_neg = net(states_exp_neg, neg_actions.reshape(B * K_neg, -1)).reshape(B, K_neg)
+            q_neg = net(neg_states.reshape(B * K_neg, d_state),
+                        neg_actions.reshape(B * K_neg, -1)).reshape(B, K_neg)
             q_neg = q_neg.masked_fill(~neg_mask, -1e9)
-            q_neg_max = q_neg.max(dim=-1).values          # [B] max over valid negs
+            q_neg_max = q_neg.max(dim=-1).values
 
             q_pos = q_flat.masked_fill(~mask, 1e9)
-            q_pos_min = q_pos.min(dim=-1).values           # [B] min over valid candidates
+            q_pos_min = q_pos.min(dim=-1).values
 
             margin_loss = F.relu(q_neg_max - q_pos_min + RANK_MARGIN)
             rank_loss = margin_loss[has_neg].mean()
@@ -118,34 +133,41 @@ def _train_step(
 @torch.no_grad()
 def _eval_step(
     net: QValueNet,
-    states: torch.Tensor,
+    base_states: torch.Tensor,
+    cand_states: torch.Tensor,
     actions: torch.Tensor,
     pi_search: torch.Tensor,
     n_cands: torch.Tensor,
     z: torch.Tensor,
 ) -> dict:
     """Returns batched val metrics (sums, divide by N at end)."""
-    B, K, _ = actions.shape
-    mask = torch.arange(K, device=states.device).unsqueeze(0) < n_cands.unsqueeze(1)
+    B, K, d_state = cand_states.shape
+    mask = torch.arange(K, device=cand_states.device).unsqueeze(0) < n_cands.unsqueeze(1)
 
-    states_exp = states.unsqueeze(1).expand(B, K, -1).reshape(B * K, -1)
-    q_flat = net(states_exp, actions.reshape(B * K, -1)).reshape(B, K)
+    q_flat = net(cand_states.reshape(B * K, d_state),
+                 actions.reshape(B * K, -1)).reshape(B, K)
     q_flat = q_flat.masked_fill(~mask, -1e9)
     log_probs = F.log_softmax(q_flat, dim=-1)
     probs = log_probs.exp()
 
-    policy_loss = -(pi_search * log_probs).sum(dim=-1).sum().item()  # sum over batch
+    policy_loss = -(pi_search * log_probs).sum(dim=-1).sum().item()
 
-    # Policy entropy on each sample (mean over batch later)
-    entropy_per = -(probs * log_probs).masked_fill(~mask, 0).sum(dim=-1)  # [B]
+    entropy_per = -(probs * log_probs).masked_fill(~mask, 0).sum(dim=-1)
     entropy_sum = entropy_per.sum().item()
 
-    # Policy argmax accuracy: predicted argmax matches π_search argmax?
     pred = q_flat.argmax(dim=-1)
     target = pi_search.argmax(dim=-1)
     correct = (pred == target).sum().item()
 
-    v_pred = net.value(states)
+    pad_w = d_state - base_states.shape[1]
+    v_input = (
+        torch.cat(
+            [base_states, torch.zeros(B, pad_w, device=base_states.device)], dim=-1
+        )
+        if pad_w > 0
+        else base_states
+    )
+    v_pred = net.value(v_input)
     value_loss = F.mse_loss(v_pred, z, reduction="sum").item()
     value_mae = (v_pred - z).abs().sum().item()
 
@@ -186,12 +208,15 @@ def _eval_vs_jidan(
             enc_env, enc_player = env, player
         else:
             enc_env, enc_player = _reflect_env(env), player ^ 1
-        state = encode_state_tier1_team(enc_env, enc_player).astype(np.float32)
+        states = np.stack([
+            encode_state_tier1_team_with_flags(enc_env, enc_player, a, legal)
+            for a in legal
+        ]).astype(np.float32)
         actions = np.stack([
             encode_action(a, enc_env.hands[enc_player], env.level_rank)
             for a in legal
         ]).astype(np.float32)
-        st = torch.from_numpy(state).to(device).unsqueeze(0).expand(len(legal), -1)
+        st = torch.from_numpy(states).to(device)
         at = torch.from_numpy(actions).to(device)
         q = net(st, at).cpu().numpy()
         return legal[int(np.argmax(q))]
@@ -229,16 +254,18 @@ def train(
     seed: int = 0,
     out_path: str | None = None,
 ) -> tuple[QValueNet, dict]:
-    states_np = data["states"]
+    base_states_np = data["base_states"]
+    cand_states_np = data["cand_states"]
     actions_np = data["actions"]
     pi_np = data["pi_search"]
     n_cands_np = data["n_cands"]
     z_np = data["z"]
-    neg_actions_np = data.get("neg_actions")  # None for legacy data without negatives
+    neg_states_np = data.get("neg_states")
+    neg_actions_np = data.get("neg_actions")
     n_neg_np = data.get("n_neg")
-    N = len(states_np)
+    N = len(base_states_np)
 
-    net = QValueNet(d_state=STATE_DIM_TIER1_TEAM, d_action=ACTION_DIM, hidden=hidden).to(device)
+    net = QValueNet(d_state=STATE_DIM_TIER1_TEAM_WITH_FLAGS, d_action=ACTION_DIM, hidden=hidden).to(device)
     if init_checkpoint:
         ckpt = torch.load(init_checkpoint, map_location=device, weights_only=True)
         missing, unexpected = net.load_state_dict(ckpt["state_dict"], strict=False)
@@ -259,20 +286,24 @@ def train(
     print(f"  z stats: mean={z_np.mean():+.3f}  std={z_np.std():.3f}  "
           f"  baseline_value_loss={(z_np**2).mean():.3f} (V≡0)")
 
-    has_negatives = neg_actions_np is not None and n_neg_np is not None
+    has_negatives = (
+        neg_states_np is not None and neg_actions_np is not None and n_neg_np is not None
+    )
 
     def to_tensors(idx_list):
-        st = torch.from_numpy(states_np[idx_list]).to(device)
+        bs = torch.from_numpy(base_states_np[idx_list]).to(device)
+        cs = torch.from_numpy(cand_states_np[idx_list]).to(device)
         ac = torch.from_numpy(actions_np[idx_list]).to(device)
         pi = torch.from_numpy(pi_np[idx_list]).to(device)
         nc = torch.from_numpy(n_cands_np[idx_list].astype(np.int64)).to(device)
         zb = torch.from_numpy(z_np[idx_list]).to(device)
         if has_negatives:
+            ns = torch.from_numpy(neg_states_np[idx_list]).to(device)
             na = torch.from_numpy(neg_actions_np[idx_list]).to(device)
             nn_ = torch.from_numpy(n_neg_np[idx_list].astype(np.int64)).to(device)
         else:
-            na, nn_ = None, None
-        return st, ac, pi, nc, zb, na, nn_
+            ns, na, nn_ = None, None, None
+        return bs, cs, ac, pi, nc, zb, ns, na, nn_
 
     metrics = {"epochs": []}
     t0 = time.time()
@@ -295,8 +326,8 @@ def train(
         ep_total = ep_policy = ep_value = ep_rank = 0.0
         n_batches = 0
         for bs in range(0, len(train_idx), batch_size):
-            st, ac, pi, nc, zb, na, nn_ = to_tensors(train_idx[bs: bs + batch_size])
-            tl, pl, vl, rl = _train_step(net, st, ac, pi, nc, zb, opt, na, nn_)
+            bst, cst, ac, pi, nc, zb, ns, na, nn_ = to_tensors(train_idx[bs: bs + batch_size])
+            tl, pl, vl, rl = _train_step(net, bst, cst, ac, pi, nc, zb, opt, ns, na, nn_)
             ep_total += tl
             ep_policy += pl
             ep_value += vl
@@ -312,8 +343,8 @@ def train(
         agg = {"policy_loss_sum": 0, "value_loss_sum": 0, "value_mae_sum": 0,
                "entropy_sum": 0, "correct": 0, "n": 0}
         for bs in range(0, len(val_idx), batch_size):
-            st, ac, pi, nc, zb, _na, _nn = to_tensors(val_idx[bs: bs + batch_size])
-            m = _eval_step(net, st, ac, pi, nc, zb)
+            bst, cst, ac, pi, nc, zb, _ns, _na, _nn = to_tensors(val_idx[bs: bs + batch_size])
+            m = _eval_step(net, bst, cst, ac, pi, nc, zb)
             for k in agg:
                 agg[k] += m[k]
         n = max(1, agg["n"])
@@ -373,7 +404,7 @@ def train(
             latest_path = Path(out_path).with_name(Path(out_path).stem + "_latest.pt")
             torch.save({
                 "state_dict": net.state_dict(),
-                "config": {"d_state": STATE_DIM_TIER1_TEAM, "d_action": ACTION_DIM, "hidden": hidden},
+                "config": {"d_state": STATE_DIM_TIER1_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": hidden},
                 "metrics": metrics, "epoch": epoch + 1,
             }, latest_path)
 
@@ -389,7 +420,7 @@ def train(
         wr_path = Path(out_path).with_name(Path(out_path).stem + "_bestwr.pt")
         torch.save({
             "state_dict": best_wr_state,
-            "config": {"d_state": STATE_DIM_TIER1_TEAM, "d_action": ACTION_DIM, "hidden": hidden},
+            "config": {"d_state": STATE_DIM_TIER1_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": hidden},
             "metrics": metrics,
         }, wr_path)
         print(f"  Best-WR checkpoint saved → {wr_path}  (WR={best_wr:.1%})")
@@ -454,7 +485,7 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
         "state_dict": net.state_dict(),
-        "config": {"d_state": STATE_DIM_TIER1_TEAM, "d_action": ACTION_DIM, "hidden": args.hidden},
+        "config": {"d_state": STATE_DIM_TIER1_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": args.hidden},
         "metrics": metrics,
         "args": vars(args),
     }, out)

@@ -510,7 +510,14 @@ These fixes were implemented during the gen-2-v2 investigation and remain in the
 
 **Insight:** Gen-5 V generalizes well across Jidan-rollout gens (0.77–0.81). This is very different from the gen-2-v2 failure (gen-1 V had 0.128 on V-at-leaf data). The failure was V-at-leaf → distribution shift; Jidan-rollout gens are close enough that cross-gen generalization holds.
 
-**Plan (gen-6):** Use gen-5 V at leaf with n_det=100 (vs Jidan's n_det=30). V-at-leaf is ~3.85× faster per decision → n_det=100 in same time as n_det=26 Jidan. Better search signal from 3.3× more determinizations may break plateau. pi_temp=2.0 to soften peaked V-at-leaf targets. After first 1000 decisions, verify gen-5 V z-corr on gen-6 data before full run.
+**Gen-6 smoke run (ABORTED):** Attempted gen-5 V at leaf with n_det=100, pi_temp=2.0. Smoke run diagnostic (1000 decisions, 63s):
+- Gen-5 V z-corr on gen-6 smoke data: **0.085** (catastrophic — same failure mode as gen-2-v2)
+- pi_search entropy H: 0.105, 86.6% near-one-hot
+- Root cause: same distribution shift — V trained on Jidan-rollout trajectories has near-zero z-corr on V-at-leaf trajectories, despite 0.808 corr on Jidan-rollout cross-gen data
+
+**V-at-leaf is fundamentally incompatible with Jidan-rollout V.** The distribution shift between Jidan-rollout game trajectories and V-at-leaf game trajectories is too large for cross-distribution V generalization. This rules out V-at-leaf as a route to breaking the plateau via any Jidan-rollout-trained V.
+
+**Pivot to H4 constraints:** Add full combo-type hard constraints to BeliefModel (straights, full-houses, plates, tubes, straight-flushes). H1-H3 already implemented; H4 extends to all combo types. May narrow PIMC determinization space for positions where complex combos were played, improving search signal quality.
 
 ---
 

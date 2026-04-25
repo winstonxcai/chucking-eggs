@@ -3,10 +3,15 @@
 Runs every ordered bot pair (A on seats {0,2} vs B on seats {1,3}) and
 records win rates. Derives calibrated Glicko-2 ratings from the empirical WRs.
 
+Use --inject to fold in pre-known matchup results without re-running them:
+    --inject "partner_oracle,jidan,150,200"   (name, opponent, wins, n_games)
+  Injected agents are included in Glicko derivation using only their known matchups.
+
 Usage:
     PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200
     PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200 --agents greedy,heuristic,strategic,jidan
-    PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 50 --agents strategic,jidan,partner_pimc --n-det 5
+    PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200 \\
+        --inject "partner_oracle,jidan,150,200"
 """
 
 from __future__ import annotations
@@ -79,7 +84,31 @@ def run_matchup(agent_a, agent_b, n_games: int) -> dict:
         "n_games": n_games,
         "winrate": wins_a / n_games,
         "avg_reward": total_r / n_games,
+        "injected": False,
     }
+
+
+def parse_inject(inject_strs: list[str]) -> dict[str, dict[str, dict]]:
+    """Parse --inject entries into matrix-compatible dicts.
+
+    Each entry: "name,opponent,wins,n_games"
+    Automatically adds the symmetric reverse entry.
+    """
+    injected: dict[str, dict[str, dict]] = {}
+    for s in inject_strs:
+        parts = s.strip().split(",")
+        if len(parts) != 4:
+            raise ValueError(f"--inject entry must be 'name,opponent,wins,n_games': {s!r}")
+        name, opp, wins_s, n_s = parts
+        wins, n = int(wins_s), int(n_s)
+        losses = n - wins
+
+        for a, b, w, l in [(name, opp, wins, losses), (opp, name, losses, wins)]:
+            injected.setdefault(a, {})[b] = {
+                "wins": w, "losses": l, "n_games": n,
+                "winrate": w / n, "avg_reward": 0.0, "injected": True,
+            }
+    return injected
 
 
 def derive_ratings(
@@ -97,7 +126,9 @@ def derive_ratings(
             for opp_name in agent_names:
                 if opp_name == name:
                     continue
-                data = matrix[name][opp_name]
+                data = matrix.get(name, {}).get(opp_name)
+                if data is None:
+                    continue  # skip missing pairs (injected agents with partial data)
                 opponents.append(players[opp_name])
                 outcomes.append(data["wins"] / data["n_games"])
             new_players[name] = glicko2_update(players[name], opponents, outcomes)
@@ -121,10 +152,14 @@ def print_matrix(matrix: dict[str, dict[str, dict]], agent_names: list[str]) -> 
         for b in agent_names:
             if a == b:
                 row += f"{'---':>{col_w}}"
+            elif b not in matrix.get(a, {}):
+                row += f"{'???':>{col_w}}"
             else:
                 wr = matrix[a][b]["winrate"]
-                row += f"{wr:>{col_w}.1%}"
+                inj = "*" if matrix[a][b].get("injected") else ""
+                row += f"{wr:>{col_w-1}.1%}{inj}"
         print(row)
+    print("  (* = injected from prior eval, not re-run)")
     print()
 
 
@@ -154,35 +189,54 @@ def main() -> None:
                         help="partner_oracle: top-K candidates from policy (default 3)")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Checkpoint path for partner_oracle agent")
+    parser.add_argument("--inject", type=str, action="append", default=[],
+                        help="Pre-known result: 'name,opponent,wins,n_games'. "
+                             "Agent is added to Glicko without re-running games. "
+                             "Reverse is auto-inferred. Can be repeated.")
     parser.add_argument("--output", type=str, default="ml/runs/wr_matrix",
                         help="Output directory (default: ml/runs/wr_matrix)")
     parser.add_argument("--rating-passes", type=int, default=30)
     args = parser.parse_args()
 
-    agent_names = args.agents.split(",") if args.agents else DEFAULT_AGENTS
-    if args.checkpoint and "partner_oracle" not in agent_names:
-        agent_names = agent_names + ["partner_oracle"]
+    agent_names = args.agents.split(",") if args.agents else DEFAULT_AGENTS[:]
+
+    # Parse injected results. Only agents NOT already in agent_names are injected-only.
+    injected_matrix = parse_inject(args.inject)
+    injected_only = set()  # agents that exist only via --inject (no live games)
+    for inj_name in injected_matrix:
+        if inj_name not in agent_names:
+            agent_names.append(inj_name)
+            injected_only.add(inj_name)
+
     n_games = args.games
     level_rank = Rank.TWO
 
-    n_matchups = len(agent_names) * (len(agent_names) - 1)
+    live_names = [n for n in agent_names if n not in injected_only]
+
+    n_matchups = len(live_names) * (len(live_names) - 1)
     total_games = n_matchups * n_games
-    print(f"Round-robin: {len(agent_names)} agents, {n_matchups} matchups, "
+    print(f"Round-robin: {len(live_names)} live agents, {n_matchups} matchups, "
           f"{total_games} total games @ {n_games}/matchup")
+    if injected_only:
+        print(f"Injected (no games run): {', '.join(sorted(injected_only))}")
 
     agents = {
         name: build_agent(name, level_rank, args.n_det, args.n_cands,
                           checkpoint=args.checkpoint, top_k=args.top_k)
-        for name in agent_names
+        for name in live_names
     }
-    print(f"Agents loaded: {', '.join(agent_names)}")
+    print(f"Agents loaded: {', '.join(live_names)}")
 
     matrix: dict[str, dict[str, dict]] = {a: {} for a in agent_names}
+    # Pre-populate injected results
+    for a, row in injected_matrix.items():
+        matrix.setdefault(a, {}).update(row)
+
     t_start = time.time()
     completed = 0
 
-    for a in agent_names:
-        for b in agent_names:
+    for a in live_names:
+        for b in live_names:
             if a == b:
                 continue
             t0 = time.time()
@@ -208,7 +262,8 @@ def main() -> None:
         "games_per_matchup": n_games,
         "total_games": total_games,
         "total_time_s": round(total_time, 1),
-        "matrix": {a: {b: matrix[a][b] for b in agent_names if b != a} for a in agent_names},
+        "matrix": {a: {b: matrix[a][b] for b in agent_names if b != a and b in matrix.get(a, {})}
+                   for a in agent_names},
         "ratings": {name: ratings[name].to_dict() for name in agent_names},
     }
     out_file = out_dir / f"results_{time.strftime('%m%d_%H%M')}.json"

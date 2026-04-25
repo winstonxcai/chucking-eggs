@@ -535,6 +535,46 @@ These fixes were implemented during the gen-2-v2 investigation and remain in the
 
 **Conclusion:** The ceiling is the Jidan rollout itself, not data quality or belief consistency. Search evaluates positions as "expected outcome if all players play Jidan" — after a few iterations the policy has fully learned to exploit Jidan and further generations give no gain. Path forward requires a different signal source (Modal multi-generation AZ with self-evaluated rollouts once V is bootstrapped, or acceptance of 75% as the ceiling and shipping gen-3_bestwr).
 
+### Bot ladder WR matrix + Glicko-2 ratings (2026-04-25)
+
+7-bot round-robin (200 games/matchup, 42 directed pairs, 8400 total games, 6 min). partner_oracle (az_gen3_bestwr, n_det=30, K=3) injected via known 75.0% WR vs jidan (200 games).
+
+**Win Rate Matrix** (row = seats {0,2}, col = seats {1,3}):
+
+```
+                  random  greedy heuristic strategic xingdream  yaoji  jidan  partner_oracle
+random              ---   22.5%  16.5%    2.5%    7.0%   1.0%   1.5%    ???
+greedy            76.0%    ---   41.5%   13.5%   26.5%   5.5%   0.0%    ???
+heuristic         92.5%  55.5%    ---    21.5%   46.0%   9.0%  13.0%    ???
+strategic         96.5%  86.5%  72.0%     ---    70.5%  28.5%  25.0%    ???
+xingdream         95.5%  72.0%  64.0%   41.0%     ---    9.0%  10.0%    ???
+yaoji             99.5%  96.0%  89.0%   73.0%   84.0%    ---   53.0%    ???
+jidan             98.0%  97.0%  89.5%   72.5%   85.0%  51.5%    ---    25.0%*
+partner_oracle      ???     ???    ???     ???      ???    ???   75.0%*    ---
+```
+(* = injected from prior 200-game eval, not re-run)
+
+**Glicko-2 Ratings** (30 convergence passes):
+
+| Bot | Rating | RD |
+|-----|-------|----|
+| **partner_oracle** | **1923** | 75 |
+| yaoji | 1784 | 48 |
+| jidan | 1768 | 44 |
+| strategic | 1604 | 44 |
+| xingdream | 1481 | 43 |
+| heuristic | 1405 | 44 |
+| greedy | 1291 | 46 |
+| random | 1071 | 56 |
+
+**Notable observations:**
+- partner_oracle (1923) is +155 Glicko above jidan (1768), reflecting the 75% WR advantage from PIMC search.
+- yaoji (1784) ≈ jidan (1768): head-to-head nearly 50-50 (yaoji leads 53.0%, jidan leads 51.5% — first-move advantage explains both being >50%). These two are essentially peer-strength.
+- xingdream (1481) sits well below yaoji/jidan but beats strategic 41%, heuristic 64%, greedy 72% — a capable mid-tier vendor bot.
+- partner_oracle RD=75 (vs ~45 for fully calibrated bots): higher uncertainty because it only played one matchup (jidan). True rating likely in range [1848, 1998].
+
+**Shipped checkpoint:** az_gen3_bestwr.pt (75% WR vs jidan with search, Glicko ~1923).
+
 ---
 
 ## 24. What this logbook is for

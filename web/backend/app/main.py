@@ -234,7 +234,7 @@ async def get_leaderboard():
 async def create_game(req: CreateGameRequest):
     assert game_manager is not None
     if req.difficulty not in ("easy", "wjsd", "casual", "competition", "hard",
-         "yaoji", "jidan", "hulalala", "liuzha", "master", "partner_oracle"):
+         "yaoji", "jidan", "hulalala", "liuzha", "master"):
         req.difficulty = "easy"
     room = await game_manager.create_game(req.difficulty)
     return CreateGameResponse(
@@ -253,7 +253,7 @@ async def create_room(req: CreateRoomRequest, x_player_id: str | None = Header(N
     if req.mode not in ("solo", "duo", "quad"):
         req.mode = "solo"
     if req.difficulty not in ("easy", "wjsd", "casual", "competition", "hard",
-         "yaoji", "jidan", "hulalala", "liuzha", "master", "partner_oracle"):
+         "yaoji", "jidan", "hulalala", "liuzha", "master"):
         req.difficulty = "easy"
     try:
         room = await game_manager.create_room(req.mode, req.difficulty, seed=req.seed, creator_player_id=x_player_id)
@@ -277,7 +277,7 @@ async def set_room_difficulty(game_id: str, req: SetDifficultyRequest):
     if room.started:
         raise HTTPException(status_code=400, detail="Game already started")
     valid = ("easy", "wjsd", "casual", "competition", "hard",
-             "yaoji", "jidan", "hulalala", "liuzha", "master", "partner_oracle")
+             "yaoji", "jidan", "hulalala", "liuzha", "master")
     if req.difficulty not in valid:
         raise HTTPException(status_code=400, detail="Invalid difficulty")
     room.set_difficulty(req.difficulty)

@@ -537,43 +537,44 @@ These fixes were implemented during the gen-2-v2 investigation and remain in the
 
 ### Bot ladder WR matrix + Glicko-2 ratings (2026-04-25)
 
-7-bot round-robin (200 games/matchup, 42 directed pairs, 8400 total games, 6 min). partner_oracle (az_gen3_bestwr, n_det=30, K=3) injected via known 75.0% WR vs jidan (200 games).
+7-bot round-robin (200 games/matchup, 42 directed pairs, 8400 total games, 6 min). partner_oracle (az_gen3_bestwr, n_det=30, K=3) injected via 100-game evals vs all 7 bots (2026-04-25 18:05 CST) + pre-existing 75.0% WR vs jidan (200 games).
 
 **Win Rate Matrix** (row = seats {0,2}, col = seats {1,3}):
 
 ```
                   random  greedy heuristic strategic xingdream  yaoji  jidan  partner_oracle
-random              ---   22.5%  16.5%    2.5%    7.0%   1.0%   1.5%    ???
-greedy            76.0%    ---   41.5%   13.5%   26.5%   5.5%   0.0%    ???
-heuristic         92.5%  55.5%    ---    21.5%   46.0%   9.0%  13.0%    ???
-strategic         96.5%  86.5%  72.0%     ---    70.5%  28.5%  25.0%    ???
-xingdream         95.5%  72.0%  64.0%   41.0%     ---    9.0%  10.0%    ???
-yaoji             99.5%  96.0%  89.0%   73.0%   84.0%    ---   53.0%    ???
+random              ---   22.5%  16.5%    2.5%    7.0%   1.0%   1.5%    0.0%*
+greedy            76.0%    ---   41.5%   13.5%   26.5%   5.5%   0.0%    0.0%*
+heuristic         92.5%  55.5%    ---    21.5%   46.0%   9.0%  13.0%   15.0%*
+strategic         96.5%  86.5%  72.0%     ---    70.5%  28.5%  25.0%   29.0%*
+xingdream         95.5%  72.0%  64.0%   41.0%     ---    9.0%  10.0%    6.0%*
+yaoji             99.5%  96.0%  89.0%   73.0%   84.0%    ---   53.0%   41.0%*
 jidan             98.0%  97.0%  89.5%   72.5%   85.0%  51.5%    ---    25.0%*
-partner_oracle      ???     ???    ???     ???      ???    ???   75.0%*    ---
+partner_oracle   100.0%* 100.0%* 85.0%*  71.0%*  94.0%*  59.0%*  75.0%*   ---
 ```
-(* = injected from prior 200-game eval, not re-run)
+(* = injected from prior eval, not re-run in round-robin)
 
-**Glicko-2 Ratings** (30 convergence passes):
+**Glicko-2 Ratings** (30 convergence passes, 7 partner_oracle matchups fully calibrated):
 
 | Bot | Rating | RD |
 |-----|-------|----|
-| **partner_oracle** | **1923** | 75 |
-| yaoji | 1784 | 48 |
-| jidan | 1768 | 44 |
-| strategic | 1604 | 44 |
-| xingdream | 1481 | 43 |
-| heuristic | 1405 | 44 |
-| greedy | 1291 | 46 |
-| random | 1071 | 56 |
+| **partner_oracle** | **1832** | 46 |
+| yaoji | 1759 | 44 |
+| jidan | 1735 | 43 |
+| strategic | 1589 | 42 |
+| xingdream | 1448 | 42 |
+| heuristic | 1387 | 43 |
+| greedy | 1256 | 46 |
+| random | 1039 | 55 |
 
 **Notable observations:**
-- partner_oracle (1923) is +155 Glicko above jidan (1768), reflecting the 75% WR advantage from PIMC search.
-- yaoji (1784) ≈ jidan (1768): head-to-head nearly 50-50 (yaoji leads 53.0%, jidan leads 51.5% — first-move advantage explains both being >50%). These two are essentially peer-strength.
-- xingdream (1481) sits well below yaoji/jidan but beats strategic 41%, heuristic 64%, greedy 72% — a capable mid-tier vendor bot.
-- partner_oracle RD=75 (vs ~45 for fully calibrated bots): higher uncertainty because it only played one matchup (jidan). True rating likely in range [1848, 1998].
+- partner_oracle (1832) is +97 Glicko above jidan (1735) with full calibration. The earlier single-matchup estimate (1923) was inflated by small sample / high RD.
+- yaoji (1759) is the closest competitor to partner_oracle: 59% WR for oracle, 41% for yaoji — meaningful gap but not dominant.
+- jidan (1735) ≈ yaoji (1759): head-to-head nearly 50-50 (yaoji 53.0%, jidan 51.5%). Essentially peer-strength.
+- partner_oracle sweeps random (100%) and greedy (100%), strong vs xingdream (94%) and heuristic (85%), competitive vs strategic (71%) and yaoji (59%).
+- RD=46 for partner_oracle now matches calibrated bots (vs RD=75 with one matchup). Reliable estimate.
 
-**Shipped checkpoint:** az_gen3_bestwr.pt (75% WR vs jidan with search, Glicko ~1923).
+**Shipped checkpoint:** az_gen3_bestwr.pt (Glicko ~1832, calibrated vs all 7 bots).
 
 ---
 

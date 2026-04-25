@@ -18,7 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from tqdm import tqdm
 
-from guandan.agents import PartnerOracleBot, PartnerPIMCBot, make_agent
+from guandan.agents import make_agent
+from guandan.agents.partner_oracle_bot import PartnerOracleBot
+from guandan.agents.partner_pimc_bot import PartnerPIMCBot
 from guandan.cards import Rank
 from guandan.game import GuanDanEnv
 

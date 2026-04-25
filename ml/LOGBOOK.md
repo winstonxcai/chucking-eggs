@@ -578,6 +578,65 @@ partner_oracle   100.0%* 100.0%* 85.0%*  71.0%*  94.0%*  59.0%*  75.0%*   ---
 
 ---
 
+## 28. Behavior-flags encoder retrain — team-coord-flags branch (2026-04-26)
+
+### Motivation
+
+Gen-3 bestwr (az_gen3_bestwr.pt, Glicko 1832) has a structural gap: **vs yaoji 59%, vs strategic 71%** — both well below the ≥85% target. The hypothesis: the Q-net cannot distinguish "this action overtakes my partner's winning trick" from "this action overtakes an opponent's trick" because the state encoder has no per-action team-coordination signal.
+
+### Encoder change: 9-dim per-action behavior flags
+
+Resurrected `compute_behavior_flags` from git `3237fa8` (Apr 10) into `ml/src/guandan/training/visibility/behavior_flags.py`. Added `encode_state_tier1_team_with_flags(env, player, action, legal) → [489]` = base[480] + flags[9].
+
+**Three axes (3 dims each = [N/A, doing_it, refusing]):**
+
+| Axis | Trigger | Signal |
+|------|---------|--------|
+| **Cooperating** | trick_winner == partner AND legal beat exists | "this action overtakes my partner's win" |
+| **Dwarfing** | leading AND have combo > min(opp_hand_sizes) | "this lead is bigger than opponent can hold" |
+| **Assisting** | leading AND have small non-strong combo | "small lead to preserve partner's hand size advantage" |
+
+State dim: 480 → 489. Q-net first layer: [512, 640] → [512, 649].
+
+### Pipeline
+
+1. **Re-distill from Jidan** (`jidan_policy_v2.pt`): d_state=489, val_acc=91.2%, best_val_loss=0.3326. 858k params.
+2. **Gen-1 v2 selfplay:** 30K decisions, 4 workers, n_det=20, K=3, Jidan rollouts. 4051s (7.4 dec/s). z mean=+0.114, std=2.174. Policy-only WR: 57%.
+3. **Gen-2 v2 selfplay:** 30K decisions, 4 workers, 4725s (6.3 dec/s). z mean similar. Policy-only WR: 53%.
+4. **Gen-3 v2 selfplay:** 30K decisions, 2 workers (4-worker OOM), 5442s (5.5 dec/s). Policy-only WR: 52%.
+
+V-mae trend across gens: 1.40 → 1.01 → 0.86 → 0.33 (V head converging). Policy-only WR 52-57% is within ±10pp noise at 100-game inline eval — not a reliable metric.
+
+### Gen-3 v2 with-search eval (2026-04-26, 200 games each)
+
+| Opponent | Baseline (gen-3 original) | Gen-3 v2 | Delta |
+|----------|--------------------------|----------|-------|
+| strategic | 71.0% | **63.0%** | -8pp ❌ |
+| jidan | 75.0% | **68.5%** | -6.5pp ❌ |
+| yaoji | 59.0% | **57.0%** | -2pp ❌ |
+
+**Gen-3 v2 regressed on all three opponents.** The flags encoder + AZ retrain from re-distill produced a weaker bot than the original gen-3.
+
+### Root cause analysis
+
+Gen-3 v2 was seeded from `jidan_policy_v2.pt` (re-distill from scratch), then ran only 3 AZ generations vs Jidan rollouts. The original gen-3 was also seeded from `jidan_policy.pt` and ran 3 AZ generations — **both pipelines are identical structurally**. The difference is:
+
+1. **Re-distill loses AZ self-play gains.** `jidan_policy_v2.pt` starts at Jidan-clone level (91% distill accuracy). The original `jidan_policy.pt` was also a Jidan clone. The 489-dim distill shouldn't be weaker. But the original gen-3 was built on top of 6 gens of prior AZ work (including gen-1/gen-3 with ranking loss). The v2 pipeline resets to gen-1 from a fresh distill — 3 gens from a cold start vs 3 gens from an established policy foundation. The original pipeline had accumulated signal from gens 1-2 before gen-3; v2 gen-3 is actually only the 3rd independent iteration.
+
+2. **9 flag dims may dilute the base-480-dim signal.** Adding 9 dims that are mostly zero (most turns don't trigger cooperating/dwarfing/assisting) adds noise to the first-layer weight updates. The base-480 signal is proven; the flag signal is small and sparse.
+
+3. **3 gens from fresh distill is insufficient.** Original gen-3 at 75% WR required gen-1 (68%) → gen-3 (75%) — a two-generation improvement from an already-trained gen-1. V2 gen-1 at 68.5% vs jidan matches original gen-1. V2 gen-3 at the same level suggests the flags are not helping AND re-distill reset the training state.
+
+### Conclusion
+
+The behavior-flags encoder change is **net negative at 3 generations**. The flags don't hurt fundamentally (yaoji WR is flat within noise), but the forced re-distill + cold restart erases the accumulated AZ signal.
+
+**Do not re-distill to add features.** The correct approach for adding encoder features to a trained network is weight surgery (zero-pad new columns in the first linear layer), not full re-distill. Re-distill costs 3+ AZ generations of accumulated signal.
+
+**Shipped checkpoint remains:** `az_gen3_bestwr.pt` (Glicko 1832, original gen-3, 75% vs jidan, 59% vs yaoji).
+
+---
+
 ## 24. What this logbook is for
 
 When designing the next training run:

@@ -563,7 +563,15 @@ export default function GameBoard({
         {/* Your turn indicator + Controls — or Review nav bar */}
         <div className={`mt-auto lg:mt-0 py-0.5 lg:py-0 ${handDone ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
           {reviewMode ? (
-            <div data-testid="review-nav" className="flex items-center justify-center gap-3 py-2.5">
+            <div data-testid="review-nav" className="flex items-center justify-center gap-2 py-2.5">
+              <button
+                data-testid="review-start"
+                disabled={reviewPlayIdx === 0}
+                onClick={() => setReviewPlayIdx(0)}
+                className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs font-medium"
+              >
+                ⟪
+              </button>
               <button
                 data-testid="review-prev"
                 disabled={reviewPlayIdx === 0}
@@ -584,10 +592,18 @@ export default function GameBoard({
                 →
               </button>
               <button
-                onClick={() => { setReviewMode(false); setGameOverDismissed(false); }}
-                className="ml-2 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border rounded-lg hover:text-foreground hover:border-foreground/30 transition-colors"
+                data-testid="review-end"
+                disabled={reviewPlayIdx === reviewTotal - 1}
+                onClick={() => setReviewPlayIdx(reviewTotal - 1)}
+                className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-foreground hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs font-medium"
               >
-                Done
+                ⟫
+              </button>
+              <button
+                onClick={() => { setReviewMode(false); setGameOverDismissed(false); }}
+                className="w-9 h-9 flex items-center justify-center text-xs font-medium text-text-secondary border border-border rounded-lg hover:text-foreground hover:border-foreground/30 transition-colors"
+              >
+                ✕
               </button>
             </div>
           ) : (

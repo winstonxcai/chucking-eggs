@@ -97,6 +97,7 @@ export default function GameBoard({
   const [reviewPlayIdx, setReviewPlayIdx] = useState(0);
   const tableSeat0Ref = useRef<HTMLDivElement>(null);
   const flyingStartRef = useRef<number | null>(null);
+  const toastIdRef = useRef(0);
 
   // Sidebar accordion state
   const [groupsOpen, setGroupsOpen] = useState(true);
@@ -203,12 +204,13 @@ export default function GameBoard({
   // On server error: immediately clear any stuck flying animation and show a toast
   useEffect(() => {
     if (!latestError) return;
-    const { key, message } = latestError;
+    const { message } = latestError;
+    const id = ++toastIdRef.current;
     setFlyingCards(null);
     flyingStartRef.current = null;
-    setToasts((prev) => [...prev, { id: key, text: message }]);
+    setToasts((prev) => [...prev, { id, text: message }]);
     const t = setTimeout(() => {
-      setToasts((prev) => prev.filter((toast) => toast.id !== key));
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 3000);
     return () => clearTimeout(t);
   }, [latestError?.key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -216,13 +218,14 @@ export default function GameBoard({
   // On AFK auto-play: show toast explaining what happened
   useEffect(() => {
     if (!autoPlayed) return;
-    const { key, leading } = autoPlayed;
+    const { leading } = autoPlayed;
+    const id = ++toastIdRef.current;
     const text = leading
       ? "Time's up — random move played"
       : "Time's up — auto-passed";
-    setToasts((prev) => [...prev, { id: key, text }]);
+    setToasts((prev) => [...prev, { id, text }]);
     const t = setTimeout(() => {
-      setToasts((prev) => prev.filter((toast) => toast.id !== key));
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 3000);
     return () => clearTimeout(t);
   }, [autoPlayed?.key]); // eslint-disable-line react-hooks/exhaustive-deps

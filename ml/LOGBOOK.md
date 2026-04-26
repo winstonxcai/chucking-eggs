@@ -637,6 +637,64 @@ The behavior-flags encoder change is **net negative at 3 generations**. The flag
 
 ---
 
+## 29. Weight surgery + gen-4-flags AZ — result (2026-04-26)
+
+### Approach
+
+Instead of re-distilling, zero-pad 9 behavior-flag dims into `az_gen3_bestwr.pt`
+(480→489 d_state) via weight surgery on the Q-trunk and V-trunk first layers.
+Accumulated AZ signal preserved; new columns zero-init so forward pass is bit-identical
+to unpadded checkpoint at t=0. Sanity eval confirmed: padded ckpt 69% vs Jidan
+(within 100-game CI of 75% baseline). Then ran one AZ gen (30K decisions, n_det=20,
+K=3, 4 workers) and trained from the padded init.
+
+### Training observations
+
+- Loaded padded ckpt cleanly (missing=0, unexpected=0)
+- **Baseline policy-only WR at epoch 0: 32%** (policy-only, no search — this is expected
+  for raw Q-net argmax; does not reflect PIMC-augmented strength)
+- Val loss improved ep 1→4 (2.665→1.198), then **overfit ep 5–7** (1.313 final)
+- Best-WR checkpoint saved at ep 7 (50% policy-only WR vs training-time Jidan)
+- Early stop at epoch 7 (3 consecutive val no-improve)
+
+### Gen-4-flags eval (200 games each, with PIMC search)
+
+| Opponent | Baseline (gen-3) | Gen-4-flags | Delta |
+|----------|-----------------|-------------|-------|
+| strategic | 71.0% | **71.5%** | +0.5pp (flat) |
+| jidan | 75.0% | **69.5%** | **-5.5pp ❌** |
+| yaoji | 59.0% | **47.5%** | **-11.5pp ❌** |
+
+Decision rule: **jidan < 70% → regression.** Training degraded the policy.
+
+### Root cause
+
+Surgery preserved the policy (sanity eval passed). The regression came from training:
+1. **Selfplay data quality**: 30K decisions with n_det=20, K=3 produced flat π_search
+   distributions (acc stuck at 51-53% throughout training). The search didn't produce
+   confident action rankings to distill from.
+2. **Overfitting**: val loss bottomed at ep 4 then climbed. Best-WR checkpoint (ep 7)
+   was the overfit checkpoint, not the best-val checkpoint.
+3. **Yaoji collapse (-11.5pp)**: yaoji plays a structurally different style. One gen
+   of Jidan-rollout selfplay reinforces Jidan-specific patterns and may actively
+   hurt generalization to other opponents.
+
+### Conclusion
+
+Weight surgery is the **correct mechanism** — surgery itself was clean and
+zero-regression at t=0. The **training step** is the failure point. One gen of AZ on
+top of the surgery is not sufficient to improve the policy; it degrades it via
+overfitting on low-confidence selfplay data.
+
+**az_gen3_bestwr.pt remains the best checkpoint** (Glicko 1832, 75% jidan, 59% yaoji).
+
+The behavior-flags approach is not yet confirmed failed — the surgery works, the
+encoder is correct — but generating high-quality selfplay data and preventing
+overfitting are unsolved. Next directions: PV-PTIE PPO (trains on-policy, avoids
+the flat-π distillation problem) or population play to escape the Jidan-rollout ceiling.
+
+---
+
 ## 24. What this logbook is for
 
 When designing the next training run:

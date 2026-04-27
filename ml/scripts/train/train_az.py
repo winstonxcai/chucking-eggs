@@ -207,21 +207,24 @@ def _eval_step(
     }
 
 
-# ── Inline eval vs Jidan (policy-only argmax) ──────────────────────────────────
+# ── Inline eval (policy-only argmax) ──────────────────────────────────────────
 
-def _eval_vs_jidan(
+def _eval_vs_opponent(
     net: QValueNet,
     device: torch.device,
+    opponent_name: str,
     n_games: int,
     seed: int,
 ) -> tuple[float, float]:
-    """Play n_games policy-only argmax vs JidanBot, alternating seats. Returns (WR, sec)."""
-    from guandan.agents import JidanBot
+    """Play n_games policy-only argmax vs named opponent, alternating seats. Returns (WR, sec)."""
+    from guandan.agents import JidanBot, StrategicBot
+    from guandan.agents.yaoji_bot import YaojiBot
     from guandan.agents.partner_oracle_bot import _reflect_env
     from guandan.cards import Rank
     from guandan.game import GuanDanEnv
 
-    jidan = JidanBot(level_rank=Rank.TWO)
+    _AGENT_CLS = {"jidan": JidanBot, "yaoji": YaojiBot, "strategic": StrategicBot}
+    opp = _AGENT_CLS[opponent_name](level_rank=Rank.TWO)
     env = GuanDanEnv(level_rank=Rank.TWO)
     rng = random.Random(seed)
 
@@ -254,12 +257,31 @@ def _eval_vs_jidan(
         a1_seats = {0, 2} if i % 2 == 0 else {1, 3}
         while not env.done:
             p = env.current_player
-            move = policy_act(env, p) if p in a1_seats else jidan.act(env, p)
+            move = policy_act(env, p) if p in a1_seats else opp.act(env, p)
             env.step(move)
         if env.get_rewards()[next(iter(a1_seats))] > 0:
             wins += 1
-    elapsed = time.time() - t0
-    return wins / n_games, elapsed
+    return wins / n_games, time.time() - t0
+
+
+def _eval_vs_opponents(
+    net: QValueNet,
+    device: torch.device,
+    opponents: list[str],
+    n_games: int,
+    seed: int,
+    log: logging.Logger,
+) -> tuple[float, dict[str, float]]:
+    """Eval vs each opponent sequentially. Returns (avg_WR, per_opp_WR_dict)."""
+    per_opp: dict[str, float] = {}
+    for opp_name in opponents:
+        wr, t_opp = _eval_vs_opponent(net, device, opp_name, n_games, seed)
+        per_opp[opp_name] = wr
+        log.info(f"    vs {opp_name:<12} WR={wr:.1%}  ({n_games} games, {t_opp:.0f}s)")
+    avg_wr = sum(per_opp.values()) / len(per_opp)
+    opps_str = "  ".join(f"{k}={v:.1%}" for k, v in per_opp.items())
+    log.info(f"    avg_WR={avg_wr:.1%}  [{opps_str}]")
+    return avg_wr, per_opp
 
 
 # ── Training loop ──────────────────────────────────────────────────────────────
@@ -275,6 +297,7 @@ def train(
     device: torch.device,
     eval_games: int,
     eval_every: int,
+    eval_opponents: list[str] | None = None,
     val_split: float = 0.10,
     early_stop_patience: int = 3,
     seed: int = 0,
@@ -284,6 +307,8 @@ def train(
 ) -> tuple[QValueNet, dict]:
     if log is None:
         log = logging.getLogger("train_az")
+    if eval_opponents is None:
+        eval_opponents = ["jidan", "yaoji", "strategic"]
     base_states_np = data["base_states"]
     cand_states_np = data["cand_states"]
     actions_np = data["actions"]
@@ -339,15 +364,14 @@ def train(
     t0 = time.time()
     best_val_loss = float("inf")
     best_wr = -1.0
-    best_state = None
     best_wr_state = None
     patience_count = 0
 
     # Initial eval (epoch 0): baseline quality of the prior
     if eval_games > 0:
         net.eval()
-        wr0, t_eval = _eval_vs_jidan(net, device, eval_games, seed=seed)
-        log.info(f"  baseline ep 0: WR_jidan={wr0:.1%}  ({eval_games} games, {t_eval:.0f}s)")
+        log.info("  baseline ep 0:")
+        _eval_vs_opponents(net, device, eval_opponents, eval_games, seed=seed, log=log)
 
     log.info("─" * 64)
     log.info("Training ...")
@@ -389,30 +413,38 @@ def train(
             val_entropy = agg["entropy_sum"] / n
             val_acc = agg["correct"] / n
 
-            # Inline eval vs Jidan
-            wr_jidan = None
-            wr_str = ""
-            if eval_games > 0 and (epoch + 1) % eval_every == 0:
-                wr_jidan, t_eval = _eval_vs_jidan(net, device, eval_games, seed=seed + epoch + 1)
-                wr_str = f" | WR={wr_jidan:.1%}({t_eval:.0f}s)"
-                if wr_jidan > best_wr:
-                    best_wr = wr_jidan
-                    best_wr_state = deepcopy(net.state_dict())
+            # Inline eval vs all opponents — avg WR drives patience + best checkpoint
+            avg_wr = None
+            per_opp_wr: dict[str, float] = {}
+            do_eval = eval_games > 0 and (epoch + 1) % eval_every == 0
+            if do_eval:
+                log.info(f"  ep {epoch+1} eval:")
+                avg_wr, per_opp_wr = _eval_vs_opponents(
+                    net, device, eval_opponents, eval_games, seed=seed + epoch + 1, log=log
+                )
 
             cur_lr = opt.param_groups[0]["lr"]
             sched.step()
             elapsed = time.time() - t0
 
-            improved = val_total < best_val_loss - 1e-4
-            if improved:
+            # Val loss tracked for diagnostics only (not used for stopping)
+            if val_total < best_val_loss - 1e-4:
                 best_val_loss = val_total
-                best_state = deepcopy(net.state_dict())
-                patience_count = 0
-                tag = "  ★ best"
-            else:
-                patience_count += 1
-                tag = f"  (no-improve {patience_count}/{early_stop_patience})"
 
+            # WR-based patience + best-checkpoint selection
+            if do_eval:
+                if avg_wr > best_wr + 1e-4:
+                    best_wr = avg_wr
+                    best_wr_state = deepcopy(net.state_dict())
+                    patience_count = 0
+                    tag = "  ★ best_wr"
+                else:
+                    patience_count += 1
+                    tag = f"  (no-improve {patience_count}/{early_stop_patience})"
+            else:
+                tag = ""
+
+            wr_str = f" | avg_WR={avg_wr:.1%}" if avg_wr is not None else ""
             rank_str = f" r={train_rank:.3f}" if has_negatives else ""
             log.info(
                 f"ep {epoch+1:2d}/{epochs} | "
@@ -430,7 +462,8 @@ def train(
                 "val_total": round(val_total, 4), "val_policy": round(val_policy, 4),
                 "val_value": round(val_value, 4), "val_entropy": round(val_entropy, 4),
                 "val_acc": round(val_acc, 4), "val_mae": round(val_mae, 4),
-                "wr_jidan": round(wr_jidan, 4) if wr_jidan is not None else None,
+                "avg_wr": round(avg_wr, 4) if avg_wr is not None else None,
+                **{f"wr_{k}": round(v, 4) for k, v in per_opp_wr.items()},
                 "lr": cur_lr, "elapsed_s": round(elapsed, 1),
             }
             metrics["epochs"].append(row)
@@ -447,15 +480,15 @@ def train(
                     "metrics": metrics, "epoch": epoch + 1,
                 }, latest_path)
 
-            if patience_count >= early_stop_patience:
+            if do_eval and patience_count >= early_stop_patience:
                 log.info(f"  early stop at epoch {epoch + 1}")
                 pbar.close()
                 break
 
-    if best_state is not None:
-        net.load_state_dict(best_state)
+    if best_wr_state is not None:
+        net.load_state_dict(best_wr_state)
 
-    # Save best-WR checkpoint separately if it differs from best-val
+    # Save best-WR checkpoint
     if best_wr_state is not None and out_path:
         wr_path = Path(out_path).with_name(Path(out_path).stem + "_bestwr.pt")
         torch.save({
@@ -488,9 +521,11 @@ def main() -> None:
     ap.add_argument("--patience", type=int, default=3)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--eval-games", type=int, default=50,
-                    help="Inline policy-only Jidan eval games per epoch (0 = disabled)")
+                    help="Inline policy-only eval games per opponent per epoch (0 = disabled)")
     ap.add_argument("--eval-every", type=int, default=1,
-                    help="Run inline Jidan eval every N epochs (default 1)")
+                    help="Run inline eval every N epochs (default 1)")
+    ap.add_argument("--eval-opponents", default="jidan,yaoji,strategic",
+                    help="Comma-separated opponents for inline eval (default: jidan,yaoji,strategic)")
     ap.add_argument("--run-dir", default=None,
                     help="Run directory for logs/config (default: ml/runs/az_{stem}_{ts}).")
     args = ap.parse_args()
@@ -511,7 +546,9 @@ def main() -> None:
     log.info(f"  init_ckpt      = {args.init_checkpoint or '(none)'}")
     log.info(f"  epochs={args.epochs}  batch={args.batch_size}  lr={args.lr}  "
              f"wd={args.weight_decay}  hidden={args.hidden}  patience={args.patience}")
-    log.info(f"  eval_games={args.eval_games}  eval_every={args.eval_every}  seed={args.seed}")
+    eval_opponents = [o.strip() for o in args.eval_opponents.split(",") if o.strip()]
+    log.info(f"  eval_games={args.eval_games}  eval_every={args.eval_every}  "
+             f"eval_opponents={eval_opponents}  seed={args.seed}")
     log.info("=" * 64)
 
     config = vars(args)
@@ -534,6 +571,7 @@ def main() -> None:
         device=device,
         eval_games=args.eval_games,
         eval_every=args.eval_every,
+        eval_opponents=eval_opponents,
         early_stop_patience=args.patience,
         seed=args.seed,
         out_path=args.out,

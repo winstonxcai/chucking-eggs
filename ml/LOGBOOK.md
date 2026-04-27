@@ -919,6 +919,27 @@ At deployment, critic_head is discarded entirely — the actor was always
 partner-visible-only; privileged info just shaped better advantages during
 training. The 120-dim slice is the only experimental knob.
 
+### Encoding clarifications (in-session Q&A)
+
+- **`level_rank_oh[13]`** — one-hot over ranks 2..A. The "level rank"
+  determines wildcards (heart-suit cards of that rank) and reward shape
+  (level A = match win). Sampled per hand; one network learns all 13 levels.
+- **`team_wild_flags[3]`** — `[lo_has_wild, hi_has_wild, total_ge_2]`.
+  Redundant with hand encoding but a strong inductive bias: wildcards drive
+  most combo decisions.
+- **Where is team communication encoded?** Three layers: (1) **direct**:
+  `partner_hand[60]` (full visibility, the whole point of PTIE), (2) **per-action
+  behaviour flags** `[755:764]` (cooperating / dwarfing / assisting — actor-only,
+  zero-padded in critic input by API contract), (3) **implicit**: pass sequences
+  + trick ownership + move-history mean. No explicit messaging channel.
+- **What does "pooled summary" mean?** `move_history_mean[83]` is the
+  *element-wise average* of per-move encodings (`encode_move_event`) over the
+  last ≤15 moves. Discards order; preserves rates (pass rate, combo-type
+  histogram, who's been active, average card volume). Sharp recent state lives
+  in Group 5 (last non-pass) and Group 4 (current trick); the pool is just cheap
+  background context. Divides by actual T (not 15) so hand age doesn't leak via
+  vector magnitude.
+
 ### M1 smoke runs
 
 Three end-to-end smokes verifying the pipeline:
@@ -929,6 +950,7 @@ Three end-to-end smokes verifying the pipeline:
 | `train_pvguan --critic pv`, 4k decisions, 4 iters, 1k warmstart from above | 3.2 min | 4 iters complete, all metrics logged, leakage alarm passing |
 | `train_pvguan --critic ptie`, same params | 3.1 min | Same — both ablations work end-to-end |
 | `distill --supervisor oracle --supervisor-search on`, 1k samples × 3 epochs, 1 worker, n_det=4 | 14.5 min | 1 dec/s on M1 (PIMC overhead dominates); pipeline ✓ |
+| `distill --supervisor jidan`, 50k samples × 4 epochs, 4 workers (medium smoke) | ~70s | val_acc=0.894 (0.79→0.87→0.89→0.89); 899 dec/s; convergence clean — 500k × 8 should clear 0.95 gate |
 
 The oracle-supervisor M1 throughput at 1 dec/s rules out doing Stage 0
 locally with oracle+PIMC. A 40-decision probe earlier showed 8 dec/s but

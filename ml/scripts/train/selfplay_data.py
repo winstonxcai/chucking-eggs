@@ -30,13 +30,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import math
 import multiprocessing as mp
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
@@ -50,7 +55,7 @@ K_NEG = 5       # hard negative non-candidates to store (for ranking loss)
 
 def _worker(args: tuple) -> list[dict]:
     """Run games in one worker process, return list of decision dicts."""
-    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint, pi_temp, rollout_mix = args
+    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint, pi_temp, rollout_mix, worker_id = args
 
     import random
     import numpy as np_w
@@ -106,6 +111,15 @@ def _worker(args: tuple) -> list[dict]:
 
     env = GuanDanEnv(level_rank=Rank.TWO)
     all_decisions: list[dict] = []
+
+    pbar = tqdm(
+        total=n_decisions,
+        desc=f"w{worker_id}",
+        unit="dec",
+        position=worker_id,
+        leave=True,
+        dynamic_ncols=True,
+    )
 
     while len(all_decisions) < n_decisions:
         env.reset()
@@ -199,8 +213,28 @@ def _worker(args: tuple) -> list[dict]:
             del d["player"]
 
         all_decisions.extend(game_buf)
+        pbar.update(len(game_buf))
 
+    pbar.close()
     return all_decisions[:n_decisions]
+
+
+# ── Logging setup ──────────────────────────────────────────────────────────────
+
+def _setup_logging(run_dir: Path) -> logging.Logger:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fmt = "%(asctime)s  %(levelname)-8s %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    log = logging.getLogger("selfplay_data")
+    log.setLevel(logging.INFO)
+    log.handlers.clear()
+    fh = logging.FileHandler(run_dir / "train.log")
+    fh.setFormatter(logging.Formatter(fmt, datefmt))
+    log.addHandler(fh)
+    sh = logging.StreamHandler()
+    sh.setFormatter(logging.Formatter(fmt, datefmt))
+    log.addHandler(sh)
+    return log
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -216,35 +250,59 @@ def generate(
     policy_checkpoint: str | None = None,
     pi_temp: float = 1.0,
     rollout_mix: list[str] | None = None,
+    run_dir: Path | None = None,
 ) -> dict[str, np.ndarray]:
     if rollout_mix is None:
         rollout_mix = ["jidan"]
+
+    log = _setup_logging(run_dir) if run_dir else logging.getLogger("selfplay_data")
+
     per_worker = math.ceil(n_decisions / workers)
     args_list = [
-        (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf, policy_checkpoint, pi_temp, rollout_mix)
+        (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf,
+         policy_checkpoint, pi_temp, rollout_mix, w)
         for w in range(workers)
     ]
-    print(
-        f"  self-play: {workers} workers × {per_worker} decisions each "
-        f"(target {n_decisions}, n_det={n_det}, K={top_k}, pi_temp={pi_temp})",
-        flush=True,
-    )
+
+    log.info("=" * 64)
+    log.info(f"[selfplay_data]  run_dir={run_dir}")
+    log.info(f"  checkpoint     = {checkpoint}")
+    if policy_checkpoint:
+        log.info(f"  policy_ckpt    = {policy_checkpoint}  (hybrid oracle)")
+    log.info(f"  decisions      = {n_decisions:,}  n_det={n_det}  K={top_k}  workers={workers}")
+    log.info(f"  rollout_mix    = {rollout_mix}  pi_temp={pi_temp}")
+    log.info("=" * 64)
+
+    if run_dir:
+        config = {
+            "checkpoint": str(checkpoint),
+            "policy_checkpoint": str(policy_checkpoint) if policy_checkpoint else None,
+            "n_decisions": n_decisions,
+            "n_det": n_det,
+            "top_k": top_k,
+            "workers": workers,
+            "seed": seed,
+            "use_value_leaf": use_value_leaf,
+            "pi_temp": pi_temp,
+            "rollout_mix": rollout_mix,
+            "run_dir": str(run_dir),
+        }
+        (run_dir / "config.json").write_text(json.dumps(config, indent=2))
+
+    log.info(f"  {workers} workers × {per_worker:,} dec/worker (target {n_decisions:,})")
 
     t0 = time.time()
-    if workers == 1:
-        all_decisions = _worker(args_list[0])
-    else:
-        with mp.get_context("spawn").Pool(workers) as pool:
-            chunks = pool.map(_worker, args_list)
-        all_decisions = [d for chunk in chunks for d in chunk]
+    with logging_redirect_tqdm(loggers=[log]):
+        if workers == 1:
+            all_chunks = [_worker(args_list[0])]
+        else:
+            with mp.get_context("spawn").Pool(workers) as pool:
+                all_chunks = pool.map(_worker, args_list)
 
+    all_decisions = [d for chunk in all_chunks for d in chunk]
     all_decisions = all_decisions[:n_decisions]
     elapsed = time.time() - t0
-    print(
-        f"  self-play: {len(all_decisions)} decisions in {elapsed:.1f}s "
-        f"({len(all_decisions)/elapsed:.1f} dec/s)",
-        flush=True,
-    )
+    log.info(f"  {len(all_decisions):,} decisions in {elapsed:.1f}s  ({len(all_decisions)/elapsed:.1f} dec/s)")
 
     # Pack into numpy arrays (zero-pad to top_k / K_NEG)
     N = len(all_decisions)
@@ -274,6 +332,40 @@ def generate(
         n_neg[i] = kn
         z[i] = d["z"]
 
+    # ── Diagnostics ────────────────────────────────────────────────────────────
+    valid = n_cands > 0
+    if valid.any():
+        pi = pi_search[valid]
+        log_pi = np.where(pi > 1e-9, np.log(np.maximum(pi, 1e-9)), 0.0)
+        H = -(pi * log_pi).sum(axis=1)
+        max_pi = pi.max(axis=1)
+        near_one_hot_frac = (max_pi > 0.9).mean()
+        log.info(
+            f"  pi_search      H_mean={H.mean():.3f}  H_median={np.median(H):.3f}  "
+            f"max_pi_mean={max_pi.mean():.3f}  near_one_hot={near_one_hot_frac:.1%}"
+        )
+    else:
+        H = max_pi = np.array([])
+        near_one_hot_frac = 0.0
+    log.info(f"  z              mean={z.mean():.3f}  std={z.std():.3f}")
+
+    if run_dir:
+        row = {
+            "n_decisions": len(all_decisions),
+            "elapsed_s": round(elapsed, 1),
+            "dec_per_s": round(len(all_decisions) / elapsed, 1),
+            "z_mean": round(float(z.mean()), 4),
+            "z_std": round(float(z.std()), 4),
+            "pi_H_mean": round(float(H.mean()), 4) if H.size else None,
+            "pi_H_median": round(float(np.median(H)), 4) if H.size else None,
+            "pi_max_mean": round(float(max_pi.mean()), 4) if max_pi.size else None,
+            "pi_near_one_hot_frac": round(float(near_one_hot_frac), 4),
+        }
+        with open(run_dir / "metrics.jsonl", "a") as f:
+            f.write(json.dumps(row) + "\n")
+
+    log.info(f"[selfplay_data]  done  →  {run_dir or 'no run_dir'}")
+
     return {
         "base_states": base_states,
         "cand_states": cand_states,
@@ -289,35 +381,37 @@ def generate(
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="AZ self-play data generation")
-    p.add_argument("--checkpoint", required=True)
-    p.add_argument("--decisions", type=int, default=30000)
-    p.add_argument("--out", required=True)
-    p.add_argument("--n-det", type=int, default=30)
-    p.add_argument("--top-k", type=int, default=3)
-    p.add_argument("--workers", type=int, default=8)
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--use-value-leaf", action="store_true",
-                   help="Use V(s) at leaf instead of Jidan rollouts (AZ gen-2+).")
-    p.add_argument("--policy-checkpoint", default=None,
-                   help="Separate policy checkpoint for top-K candidate selection "
-                        "(hybrid oracle: clean policy filter + value-leaf from --checkpoint).")
-    p.add_argument("--pi-temp", type=float, default=1.0,
-                   help="Temperature for PIMC score softmax (>1 = softer π_search targets). "
-                        "Use 2.0-3.0 with V-at-leaf to prevent training target collapse.")
-    p.add_argument("--rollout-mix", default="jidan",
-                   help="Comma-separated rollout policies sampled per-determinization "
-                        "(e.g. 'jidan,yaoji,strategic'). Default: 'jidan'.")
-    args = p.parse_args()
+    ap = argparse.ArgumentParser(description="AZ self-play data generation")
+    ap.add_argument("--checkpoint", required=True)
+    ap.add_argument("--decisions", type=int, default=30000)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--n-det", type=int, default=30)
+    ap.add_argument("--top-k", type=int, default=3)
+    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--use-value-leaf", action="store_true",
+                    help="Use V(s) at leaf instead of Jidan rollouts (AZ gen-2+).")
+    ap.add_argument("--policy-checkpoint", default=None,
+                    help="Separate policy checkpoint for top-K candidate selection "
+                         "(hybrid oracle: clean policy filter + value-leaf from --checkpoint).")
+    ap.add_argument("--pi-temp", type=float, default=1.0,
+                    help="Temperature for PIMC score softmax (>1 = softer π_search targets). "
+                         "Use 2.0-3.0 with V-at-leaf to prevent training target collapse.")
+    ap.add_argument("--rollout-mix", default="jidan",
+                    help="Comma-separated rollout policies sampled per-determinization "
+                         "(e.g. 'jidan,yaoji,strategic'). Default: 'jidan'.")
+    ap.add_argument("--run-dir", default=None,
+                    help="Run directory for logs/config (default: ml/runs/selfplay_{stem}_{ts}).")
+    args = ap.parse_args()
 
-    rollout_mix = [p.strip() for p in args.rollout_mix.split(",") if p.strip()]
+    rollout_mix = [s.strip() for s in args.rollout_mix.split(",") if s.strip()]
 
-    print(f"AZ self-play data generation")
-    print(f"  checkpoint: {args.checkpoint}")
-    if args.policy_checkpoint:
-        print(f"  policy-checkpoint: {args.policy_checkpoint}  (hybrid oracle)")
-    print(f"  decisions={args.decisions}  n_det={args.n_det}  K={args.top_k}  "
-          f"workers={args.workers}  rollout_mix={rollout_mix}", flush=True)
+    out = Path(args.out)
+    if args.run_dir:
+        run_dir = Path(args.run_dir)
+    else:
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        run_dir = Path("ml/runs") / f"selfplay_{out.stem}_{ts}"
 
     data = generate(
         checkpoint=args.checkpoint,
@@ -330,18 +424,18 @@ def main() -> None:
         policy_checkpoint=args.policy_checkpoint,
         pi_temp=args.pi_temp,
         rollout_mix=rollout_mix,
+        run_dir=run_dir,
     )
 
-    out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out, **data)
-    N = data['base_states'].shape[0]
-    print(f"\nSaved {N} decisions → {out}")
-    print(f"  base_states:  {data['base_states'].shape}")
-    print(f"  cand_states:  {data['cand_states'].shape}")
-    print(f"  actions:      {data['actions'].shape}")
-    print(f"  pi_search:    {data['pi_search'].shape}")
-    print(f"  z:  mean={data['z'].mean():.3f}  std={data['z'].std():.3f}")
+    log = logging.getLogger("selfplay_data")
+    N = data["base_states"].shape[0]
+    log.info(f"Saved {N:,} decisions → {out}")
+    log.info(f"  base_states:  {data['base_states'].shape}")
+    log.info(f"  cand_states:  {data['cand_states'].shape}")
+    log.info(f"  actions:      {data['actions'].shape}")
+    log.info(f"  pi_search:    {data['pi_search'].shape}")
 
 
 if __name__ == "__main__":

@@ -695,6 +695,61 @@ the flat-π distillation problem) or population play to escape the Jidan-rollout
 
 ---
 
+## 30. AZ codebase refactor: training/ → azguan/, pvguan/ added (2026-04-27)
+
+### Motivation
+
+Two structural problems accumulated over the AZ experiment:
+
+1. `guandan/training/` had a two-level layout (`training/` + `training/visibility/`)
+   that was inconsistent with the flat one-level `guandan/pvguan/` module written
+   for the PV-PTIE experiment.
+2. All encoder identifiers carried "tier1" versioning terminology (`encode_state_tier1_team`,
+   `STATE_DIM_TIER1_TEAM_WITH_FLAGS`, etc.) that meant nothing to a reader unfamiliar
+   with the old tiered curriculum plan.
+
+### Changes
+
+**Renamed module: `guandan/training/` → `guandan/azguan/`**
+
+Flattened the two-level layout into a single directory (mirroring `pvguan/`).
+`training/visibility/encoding.py` was merged into `azguan/encoding.py` — no
+separate subdirectory, no separate file for partner-visible encoders.
+
+**File mapping:**
+
+| Old | New |
+|---|---|
+| `training/__init__.py` | `azguan/__init__.py` (merged with visibility/__init__) |
+| `training/encoding.py` | `azguan/encoding.py` (base + partner-visible merged) |
+| `training/q_network.py` | `azguan/q_network.py` |
+| `training/visibility/behavior_flags.py` | `azguan/behavior_flags.py` |
+| `training/visibility/encoding.py` | merged into `azguan/encoding.py` |
+
+**Identifier renames (tier1 → descriptive):**
+
+| Old | New |
+|---|---|
+| `encode_state_tier1` | `encode_state_partner` |
+| `encode_state_tier1_team` | `encode_state_team` |
+| `encode_state_tier1_team_with_flags` | `encode_state_team_with_flags` |
+| `STATE_DIM_TIER1` | `STATE_DIM_PARTNER` |
+| `STATE_DIM_TIER1_TEAM` | `STATE_DIM_TEAM` |
+| `STATE_DIM_TIER1_TEAM_WITH_FLAGS` | `STATE_DIM_TEAM_WITH_FLAGS` |
+
+**Import updates:** 10 files updated (agents, scripts, tests) — all previously
+importing from `guandan.training` or `guandan.training.visibility` now import
+from `guandan.azguan`.
+
+### Verification
+
+All 145 tests passed after the refactor. Import smoke test confirmed all public
+constants and functions resolve correctly at the new paths.
+
+**Commit:** `a28da03` (team-coord-flags branch)
+
+---
+
 ## 24. What this logbook is for
 
 When designing the next training run:

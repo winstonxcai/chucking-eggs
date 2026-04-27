@@ -55,11 +55,25 @@ K_NEG = 5       # hard negative non-candidates to store (for ranking loss)
 
 def _worker(args: tuple) -> list[dict]:
     """Run games in one worker process, return list of decision dicts."""
-    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint, pi_temp, rollout_mix, worker_id = args
+    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint, pi_temp, rollout_mix, worker_id, log_file = args
 
     import random
     import numpy as np_w
     import torch
+
+    # Set up per-worker file logging so progress appears in train.log live.
+    import logging as _logging
+    if log_file:
+        _fmt = "%(asctime)s  %(levelname)-8s [w%(name)s] %(message)s"
+        _wlog = _logging.getLogger(str(worker_id))
+        _wlog.setLevel(_logging.INFO)
+        _wlog.handlers.clear()
+        _fh = _logging.FileHandler(log_file)
+        _fh.setFormatter(_logging.Formatter(_fmt, "%Y-%m-%d %H:%M:%S"))
+        _wlog.addHandler(_fh)
+    else:
+        _wlog = _logging.getLogger(str(worker_id))
+        _wlog.addHandler(_logging.NullHandler())
 
     random.seed(seed)
     np_w.random.seed(seed)
@@ -111,6 +125,9 @@ def _worker(args: tuple) -> list[dict]:
 
     env = GuanDanEnv(level_rank=Rank.TWO)
     all_decisions: list[dict] = []
+    _t0_w = time.time()
+    _games_done = 0
+    _LOG_EVERY = max(1, n_decisions // 10)  # log ~10 times per worker
 
     pbar = tqdm(
         total=n_decisions,
@@ -214,6 +231,16 @@ def _worker(args: tuple) -> list[dict]:
 
         all_decisions.extend(game_buf)
         pbar.update(len(game_buf))
+        _games_done += 1
+        _prev = len(all_decisions) - len(game_buf)
+        if _prev // _LOG_EVERY < len(all_decisions) // _LOG_EVERY:
+            _elapsed_w = time.time() - _t0_w
+            _wlog.info(
+                f"{len(all_decisions):,}/{n_decisions:,} dec  "
+                f"({len(all_decisions)/n_decisions:.0%})  "
+                f"{len(all_decisions)/_elapsed_w:.1f} dec/s  "
+                f"games={_games_done}"
+            )
 
     pbar.close()
     return all_decisions[:n_decisions]
@@ -258,9 +285,10 @@ def generate(
     log = _setup_logging(run_dir) if run_dir else logging.getLogger("selfplay_data")
 
     per_worker = math.ceil(n_decisions / workers)
+    log_file = str(run_dir / "train.log") if run_dir else None
     args_list = [
         (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf,
-         policy_checkpoint, pi_temp, rollout_mix, w)
+         policy_checkpoint, pi_temp, rollout_mix, w, log_file)
         for w in range(workers)
     ]
 

@@ -750,6 +750,153 @@ constants and functions resolve correctly at the new paths.
 
 ---
 
+## 31. pvguan module — partner-visible PTIE PPO scaffolding (2026-04-27)
+
+### Motivation
+
+With the AZ pipeline plateaued (Glicko 1832, 75% jidan, 59% yaoji — see §29),
+the next experiment is **partner-visible PTIE** (Perfect-Training,
+Partner-Visible-Execution): a separate PPO actor-critic where the actor sees
+own + partner hand + public history, and a privileged critic additionally
+sees opponent hands at training time only. The critic is discarded at
+deployment. Headline question: **does the privileged critic improve the
+partner-visible policy?** Answered by ablating PV-AC (state-only critic) vs
+PV-PTIE (state + opponent hands critic) — both share the same actor input,
+only the critic differs.
+
+Plan document: `~/.claude/plans/a-lot-of-the-valiant-frog.md`.
+
+### Module built (`ml/src/guandan/pvguan/`)
+
+7 module files, all under one flat directory:
+
+- `encoders.py` — 755-dim state, 764-dim actor (state + 9 behavior flags),
+  198-dim action, 875-dim critic (state + 120 privileged slots). Single
+  source of truth for slice constants. State features split into 6 groups
+  (card zones / per-seat status / acting context / active trick / last
+  non-pass / move-history mean-pool).
+- `actor_critic.py` — `ActorCriticNet` with 4-layer MLP heads. Critic final
+  layer zero-initialised so V=0 at cold-start, but hidden weights are
+  Xavier-normal so gradients flow.
+- `buffer.py` — per-player GAE. Each player's track terminates at their
+  last decision; bootstrap from V_next=0 if they went out before hand end.
+- `ppo.py` — clipped PPO + value loss + entropy bonus + KL-to-warmstart.
+  KL frozen during critic warmup, linear decay over 100 iters after actor
+  unfreezes. `weight_decay=0` so the privileged-column weight-delta
+  diagnostic stays at 0 for PV-AC.
+- `rollout.py` — complete-hand collection (no mid-hand truncation). Per-player
+  tracks. Deterministic deal scheduler: `deal_seed = SHA256(run_seed, idx)` so
+  matched PV-AC/PV-PTIE seeds draw from the same deal stream.
+- `diagnostics.py` — RunLogger (config.json + metrics.jsonl + train.log),
+  policy/value diagnostics, PV-AC privileged-slot zero alarm,
+  privileged-column weight-norm + delta-norm, critic privileged-sensitivity.
+- `agent.py` — `PVGuanBot` for inference (critic discarded). Reflects env
+  for seats 1/3 to match the canonical team-{0,2} encoding.
+
+Three scripts:
+
+- `ml/scripts/train/distill_pvguan.py` — bot-agnostic Stage-0 distillation.
+  `PartnerVisibleInfoState` redacts opponent hands so supervisor never sees
+  them directly. CLI `--supervisor {oracle, jidan, yaoji, ...}` selects the
+  teacher.
+- `ml/scripts/train/train_pvguan.py` — main PPO loop. CLI `--critic {pv, ptie}`
+  switches the ablation. Snapshots at 1M / 3M / 6M decision crossings.
+  Iter-0 entropy guard. Per-iter PV-AC leakage alarm (aborts if non-zero).
+- `ml/scripts/modal/train_pvguan_modal.py` — A10G launcher, 16 CPU workers,
+  6h cap.
+
+Plus `ml/scripts/eval/paired_eval.py` — block-bootstrap by deal seed, 5
+disjoint seed ranges (distill / training / validation / budget / sealed),
+4 seat rotations per deal. Reports promotion-diff ± CI, win rate, finish
+split (1-2 / 1-3 / 1-4).
+
+### Test suite (124 tests passing)
+
+- `test_encoders.py` (40 tests): dims, slice constants, bomb-tier enum,
+  ComboType injectivity, current-trick-after-beat, pass-sequence reset,
+  move-history mean-pool over actual T.
+- `test_seat_reflection.py` (15 tests): both coordinate bases — team-fixed
+  for Groups 1-3, self-relative for Groups 4-6.
+- `test_no_leakage.py` (8 tests): actor and critic encoders both invariant
+  to opponent repartition; PV-AC privileged slots all zero; PV-PTIE
+  privileged slots equal opponent encoding; critic state action-independent.
+- `test_buffer.py` (5 tests): per-player GAE for full participation, early
+  finisher, 4-player interleaving; V_old frozen.
+- `test_ppo.py` (16 tests): ratio/clip math, masked-softmax, entropy>0, KL
+  schedule, actor freeze during warmup → unfreeze.
+- `test_actor_critic.py` (8 tests): forward shapes, save/load, zero-init
+  critic at cold start.
+- `test_reward_mapping.py` (21 tests): finish-order → ±{1,2,3} per LEVEL_CHANGE.
+- `test_scheduler.py` (14 tests): hash64 determinism under simulated worker
+  timing variance.
+- `test_checkpoint_io.py` (7 tests): actor-only / critic-only / full
+  round-trip; load_warmstart leaves critic at zero-init.
+- `test_supervisor_no_leakage.py` (10 tests): `PartnerVisibleInfoState` has
+  no opponent-hand fields and is invariant to opponent repartition.
+
+### Bug found and fixed during build
+
+`ml/src/guandan/azguan/behavior_flags.py` had `from ...cards import ComboType`
+(3 dots) but is only 2 levels deep in the package — caused
+`ImportError: attempted relative import beyond top-level package` and made
+the auto-formatter's rewrites of `pvguan/encoders.py` imports break the
+test suite. Fixed by changing to `from ..cards`.
+
+### M1 smoke runs
+
+Three end-to-end smokes verifying the pipeline:
+
+| Run | Time | Result |
+|---|---|---|
+| `distill --supervisor jidan --supervisor-search off`, 5k samples × 2 epochs, 2 workers | 12s | val_acc=0.518; pipeline ✓; 431 dec/s |
+| `train_pvguan --critic pv`, 4k decisions, 4 iters, 1k warmstart from above | 3.2 min | 4 iters complete, all metrics logged, leakage alarm passing |
+| `train_pvguan --critic ptie`, same params | 3.1 min | Same — both ablations work end-to-end |
+| `distill --supervisor oracle --supervisor-search on`, 1k samples × 3 epochs, 1 worker, n_det=4 | 14.5 min | 1 dec/s on M1 (PIMC overhead dominates); pipeline ✓ |
+
+The oracle-supervisor M1 throughput at 1 dec/s rules out doing Stage 0
+locally with oracle+PIMC. A 40-decision probe earlier showed 8 dec/s but
+that turned out to be misleading pool-warmup amortisation.
+
+### Strategic decision point — warmstart strategy (open)
+
+Plan called for **Path A** — distil PartnerOracleBot + PIMC search into
+pvguan as Stage 0 (~10-20h Modal CPU, ~$25), then 6 PPO runs from that
+warmstart. After running the smoke, three options now under review:
+
+| Path | Stage 0 cost | PPO budget | Total | Risk |
+|---|---|---|---|---|
+| **A.** Oracle+PIMC warmstart (original) | ~$25, 10-20h | 6M dec | ~$33 | Actor already plays cooperatively at iter 0 — *shrinks* the gap PV-PTIE could show vs PV-AC |
+| **B.** Jidan warmstart (cheap) | ~$2, 1-3h | 6M dec | ~$10 | Actor knows valid moves, doesn't know cooperation — PPO has to learn it via the privileged critic |
+| **C.** From scratch | $0 | 30-60M dec | $40-80 | Random init brittle on partial-info card games; high seed variance |
+
+Argument shifting toward **Path B**: the original plan rejected Jidan
+warmstart on the grounds that "the actor would ignore the partner-visible
+channel at iter 0." On reflection, this is *exactly* what the experiment
+needs — if the actor already plays cooperatively (Path A), there's less
+room for the privileged critic to demonstrate its effect.
+
+Decision pending; logbook will be updated when chosen and run.
+
+### Verification status
+
+- All 124 tests pass (`uv run pytest ml/tests/pvguan/`).
+- Both PPO ablation paths (`--critic pv`, `--critic ptie`) run end-to-end on
+  M1 with the smoke checkpoint.
+- Distillation pipeline runs end-to-end with both `jidan` (no search) and
+  `oracle` (with PIMC search) supervisors.
+- Encoder dims confirmed: 764 actor / 198 action / 875 critic.
+
+### Commits (this entry)
+
+- `5d2bac4` — initial pvguan module (encoders, actor-critic, buffer, PPO,
+  diagnostics, agent, rollout, distillation, train, Modal launcher,
+  10 test files at 77 tests)
+- `a28da03` — refactor `training/` → `azguan/` (covered in §30)
+- `12a094f` — `test_checkpoint_io.py`, `test_supervisor_no_leakage.py`,
+  `paired_eval.py` (this commit brings test count to 124)
+
+---
+
 ## 24. What this logbook is for
 
 When designing the next training run:

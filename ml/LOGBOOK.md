@@ -766,81 +766,158 @@ only the critic differs.
 
 Plan document: `~/.claude/plans/a-lot-of-the-valiant-frog.md`.
 
-### Module built (`ml/src/guandan/pvguan/`)
+### Architecture — what flows through PPO
 
-7 module files, all under one flat directory:
+**Encoded state at one decision** (single source of truth: 755 dims,
+action-independent, identical between actor and critic):
 
-- `encoders.py` — 755-dim state, 764-dim actor (state + 9 behavior flags),
-  198-dim action, 875-dim critic (state + 120 privileged slots). Single
-  source of truth for slice constants. State features split into 6 groups
-  (card zones / per-seat status / acting context / active trick / last
-  non-pass / move-history mean-pool).
-- `actor_critic.py` — `ActorCriticNet` with 4-layer MLP heads. Critic final
-  layer zero-initialised so V=0 at cold-start, but hidden weights are
-  Xavier-normal so gradients flow.
-- `buffer.py` — per-player GAE. Each player's track terminates at their
-  last decision; bootstrap from V_next=0 if they went out before hand end.
-- `ppo.py` — clipped PPO + value loss + entropy bonus + KL-to-warmstart.
-  KL frozen during critic warmup, linear decay over 100 iters after actor
-  unfreezes. `weight_decay=0` so the privileged-column weight-delta
-  diagnostic stays at 0 for PV-AC.
-- `rollout.py` — complete-hand collection (no mid-hand truncation). Per-player
-  tracks. Deterministic deal scheduler: `deal_seed = SHA256(run_seed, idx)` so
-  matched PV-AC/PV-PTIE seeds draw from the same deal stream.
-- `diagnostics.py` — RunLogger (config.json + metrics.jsonl + train.log),
-  policy/value diagnostics, PV-AC privileged-slot zero alarm,
-  privileged-column weight-norm + delta-norm, critic privileged-sensitivity.
-- `agent.py` — `PVGuanBot` for inference (critic discarded). Reflects env
-  for seats 1/3 to match the canonical team-{0,2} encoding.
+```
+Group 1 — Card zones (420)        slices [0:420]
+  teammate_lo_hand     [60]    ← env.hands[0]
+  teammate_hi_hand     [60]    ← env.hands[2]
+  teammate_lo_played   [60]    ← env.played[0]
+  teammate_hi_played   [60]    ← env.played[2]
+  opp_l_played         [60]    ← env.played[1]
+  opp_r_played         [60]    ← env.played[3]
+  unknown_remaining    [60]    ← deck − all known
+Group 2 — Per-seat status (40)    slices [420:460]
+  hand_counts/27       [4]
+  finish_position_oh   [20]    4 seats × 5 buckets
+  pass_sequence_oh     [16]    4 seats × 4 buckets
+Group 3 — Acting context (18)     slices [460:478]
+  acting_teammate_flag [2]     [1,0]=lo acts, [0,1]=hi acts
+  level_rank_oh        [13]
+  team_wild_flags      [3]
+Group 4 — Active trick (98)       slices [478:576]
+  is_self_leader       [1], trick_owner_relative [4]
+  trick_type_oh [17], trick_key_oh [15], trick_is_bomb [1]
+  trick_cards [60]
+Group 5 — Last non-pass (96)      slices [576:672]
+  last_actor_relative [4], last_type/key/cards [17+15+60]
+Group 6 — Move-history mean (83)  slices [672:755]
+  mean of encode_move_event over actual T ≤ 15 moves
+```
 
-Three scripts:
+Coordinate trick: Groups 1-3 use a **team-fixed** basis (`opp_l = seat 1`,
+`opp_r = seat 3` after `_reflect_env`). Groups 4-6 use a **self-relative**
+basis (`{self, partner, opp_l, opp_r}` from acting POV). Both teammates'
+decisions train the same parameters.
 
-- `ml/scripts/train/distill_pvguan.py` — bot-agnostic Stage-0 distillation.
-  `PartnerVisibleInfoState` redacts opponent hands so supervisor never sees
-  them directly. CLI `--supervisor {oracle, jidan, yaoji, ...}` selects the
-  teacher.
-- `ml/scripts/train/train_pvguan.py` — main PPO loop. CLI `--critic {pv, ptie}`
-  switches the ablation. Snapshots at 1M / 3M / 6M decision crossings.
-  Iter-0 entropy guard. Per-iter PV-AC leakage alarm (aborts if non-zero).
-- `ml/scripts/modal/train_pvguan_modal.py` — A10G launcher, 16 CPU workers,
-  6h cap.
+**Actor input (764)** = `state[755] ⊕ behavior_flags[9]`. The 9 flags are
+candidate-dependent (`cooperating`, `dwarfing`, `assisting`, each 3-way
+one-hot). **Action vector (198)** carries the rest of the per-candidate
+signal: `played_cards[60] ⊕ remaining_after_play[60] ⊕ type/key/kicker
+one-hots ⊕ bomb_tier_oh[9] ⊕ seq_length_oh[13] ⊕ wild_count_oh[3] ⊕ scalars`.
 
-Plus `ml/scripts/eval/paired_eval.py` — block-bootstrap by deal seed, 5
-disjoint seed ranges (distill / training / validation / budget / sealed),
-4 seat rotations per deal. Reports promotion-diff ± CI, win rate, finish
-split (1-2 / 1-3 / 1-4).
+**Critic input (875)** = `state[755] ⊕ privileged_tail[120]`. Action-independent.
+The privileged tail is the *only* place ablations differ:
+- `PV-AC`: zeros[120]
+- `PV-PTIE`: `opp_l_hand[60] ⊕ opp_r_hand[60]`
 
-### Test suite (124 tests passing)
+**Network**: two separate 4-layer MLPs, no shared trunk, no fusion.
 
-- `test_encoders.py` (40 tests): dims, slice constants, bomb-tier enum,
-  ComboType injectivity, current-trick-after-beat, pass-sequence reset,
-  move-history mean-pool over actual T.
-- `test_seat_reflection.py` (15 tests): both coordinate bases — team-fixed
-  for Groups 1-3, self-relative for Groups 4-6.
-- `test_no_leakage.py` (8 tests): actor and critic encoders both invariant
-  to opponent repartition; PV-AC privileged slots all zero; PV-PTIE
-  privileged slots equal opponent encoding; critic state action-independent.
-- `test_buffer.py` (5 tests): per-player GAE for full participation, early
-  finisher, 4-player interleaving; V_old frozen.
-- `test_ppo.py` (16 tests): ratio/clip math, masked-softmax, entropy>0, KL
-  schedule, actor freeze during warmup → unfreeze.
-- `test_actor_critic.py` (8 tests): forward shapes, save/load, zero-init
-  critic at cold start.
-- `test_reward_mapping.py` (21 tests): finish-order → ±{1,2,3} per LEVEL_CHANGE.
-- `test_scheduler.py` (14 tests): hash64 determinism under simulated worker
-  timing variance.
-- `test_checkpoint_io.py` (7 tests): actor-only / critic-only / full
-  round-trip; load_warmstart leaves critic at zero-init.
-- `test_supervisor_no_leakage.py` (10 tests): `PartnerVisibleInfoState` has
-  no opponent-hand fields and is invariant to opponent repartition.
+```
+actor_head:  Linear(962, 256) → ReLU → ... → Linear(256, 1)
+             input = state[764] ⊕ action[198] = 962
+             output = scalar logit per (state, action) pair
+critic_head: Linear(875, 256) → ReLU → ... → Linear(256, 1)
+             output = scalar V(s)
+             ← final layer zero-init so V=0 at cold-start;
+               hidden layers Xavier so gradients flow
+```
 
-### Bug found and fixed during build
+Actor scoring is bilinear in (state, action): to score K candidates the
+network is called K times with the same state and different actions.
 
-`ml/src/guandan/azguan/behavior_flags.py` had `from ...cards import ComboType`
-(3 dots) but is only 2 levels deep in the package — caused
-`ImportError: attempted relative import beyond top-level package` and made
-the auto-formatter's rewrites of `pvguan/encoders.py` imports break the
-test suite. Fixed by changing to `from ..cards`.
+**One decision** (player p about to act):
+
+```
+legal = env.legal_moves(p)                              # K candidates, mean ~100
+state_actor[K, 764] = stack(encode_actor_pair_features(env, p, a_k, legal))
+actions[K, 198]     = stack(encode_action(a_k, hand, level_rank))
+logits[K] = actor_head(state_actor ⊕ actions) / τ
+logits = logits.masked_fill(~legal_mask, -1e9)
+log_probs = log_softmax(logits)
+k* = sample (rollout) or argmax (eval)
+state_critic[875] = encode_critic_state(env, p, mode)   # one vector, all K share it
+V_old = critic_head(state_critic)                        # frozen for the rollout
+```
+
+Critical invariant: `state_critic` is **bit-identical across all K
+candidates** at the same decision (`test_no_leakage.py::
+test_critic_state_action_independent`). This is what makes the
+privileged-critic ablation valid.
+
+**One hand → terminal rewards**: `env.get_rewards()` per LEVEL_CHANGE
+returns `±{1, 2, 3}`; the buffer divides by 3 to normalise to `[-1, 1]`.
+Intermediate decisions get reward 0; only each player's *terminal* step
+in their own track carries the team reward. This is the credit-assignment
+shape PPO must learn through.
+
+**One iter** (~4096 decisions, complete-hand budget — may overshoot):
+
+1. **Per-player GAE** — bootstrap from same player's next decision:
+   `δ_t = r_t + γ·V_olds[t+1] − V_olds[t]`, `gae = δ + γλ·gae`. `V_next = 0`
+   at the player's terminal step. **Never** crosses players.
+2. Normalise advantages across the batch (mean=0, std=1).
+3. Pad ragged candidate sets to `max_K` and **freeze**
+   `(V_old, returns, advantages)` for the whole update — they are *not*
+   recomputed between epochs.
+4. **K=4 PPO epochs** over minibatches of 256:
+
+```
+ratio = exp(new_log_prob − old_log_prob)
+L_π   = -min(ratio·adv, clip(ratio, 1±ε)·adv).mean()
+L_V   = MSE(critic_head(state_critic), returns)
+H     = entropy of legal-only log-softmax
+L_KL  = KL(π_warm || π_θ) over legal subset (warm = frozen iter-0 actor)
+total = L_π + 0.5·L_V − 0.01·H + c_KL(t)·L_KL
+```
+
+**Critic warm-up phase** (first 30 iters): actor gradients zeroed manually
+post-backward, only critic updates. Lets V converge before policy starts
+trusting its advantages.
+
+**KL schedule**: `c_KL` stays at `kl_init = 0.05` while actor frozen, then
+linearly decays to 0 over 100 iters after unfreezing. Protects the policy
+from running too far from the warmstart in the early post-thaw phase.
+
+**Information flow**:
+
+```
+                env (full info)
+                   │
+        ┌──────────┴──────────┐
+        ▼                     ▼
+ encode_actor_pair    encode_critic_state
+ (own+partner+pub)   (state + privileged)
+        │                     │
+        ▼                     ▼
+   [K, 764]                [875]
+        │                     │
+        ▼                     ▼
+   actor_head            critic_head
+        │                     │
+   logits[K]                V(s)
+        │                     │
+   masked softmax             │
+        │                     │
+   sample ── reward ─────────►│
+                              ▼
+                       GAE advantages
+                              │
+                              ▼
+                  PPO clip + value + entropy + KL
+                              │
+                              ▼
+                  gradient update both heads
+```
+
+The privileged channel `[755:875]` flows **only into critic_head**, only
+contributes to V loss and indirectly to advantages. It never sees the actor.
+At deployment, critic_head is discarded entirely — the actor was always
+partner-visible-only; privileged info just shaped better advantages during
+training. The 120-dim slice is the only experimental knob.
 
 ### M1 smoke runs
 
@@ -876,24 +953,6 @@ needs — if the actor already plays cooperatively (Path A), there's less
 room for the privileged critic to demonstrate its effect.
 
 Decision pending; logbook will be updated when chosen and run.
-
-### Verification status
-
-- All 124 tests pass (`uv run pytest ml/tests/pvguan/`).
-- Both PPO ablation paths (`--critic pv`, `--critic ptie`) run end-to-end on
-  M1 with the smoke checkpoint.
-- Distillation pipeline runs end-to-end with both `jidan` (no search) and
-  `oracle` (with PIMC search) supervisors.
-- Encoder dims confirmed: 764 actor / 198 action / 875 critic.
-
-### Commits (this entry)
-
-- `5d2bac4` — initial pvguan module (encoders, actor-critic, buffer, PPO,
-  diagnostics, agent, rollout, distillation, train, Modal launcher,
-  10 test files at 77 tests)
-- `a28da03` — refactor `training/` → `azguan/` (covered in §30)
-- `12a094f` — `test_checkpoint_io.py`, `test_supervisor_no_leakage.py`,
-  `paired_eval.py` (this commit brings test count to 124)
 
 ---
 

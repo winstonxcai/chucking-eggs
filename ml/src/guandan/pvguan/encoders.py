@@ -20,7 +20,7 @@ import numpy as np
 
 from ..cards import BOMB_TYPES, Card, ComboType, Rank, is_wild
 from ..game import GuanDanEnv
-from ..training.encoding import (
+from ..azguan.encoding import (  # noqa: PLC2701
     INITIAL_HAND_SIZE,
     MAX_BOMBS,
     MAX_COMBO_SIZE,
@@ -33,7 +33,7 @@ from ..training.encoding import (
     cards_to_matrix,
     encode_move_event,
 )
-from ..training.visibility.behavior_flags import FLAG_DIM, compute_behavior_flags
+from ..azguan.behavior_flags import FLAG_DIM, compute_behavior_flags
 
 # ─── Dimension constants ──────────────────────────────────────────────────────
 

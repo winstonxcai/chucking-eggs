@@ -72,7 +72,7 @@ def verify_bit_exact(orig_path: Path, padded_path: Path, old_d_state: int) -> No
     """Forward pass with zeroed flag dims must equal original output."""
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
-    from guandan.training import QValueNet
+    from guandan.azguan import QValueNet
 
     orig_ckpt = torch.load(orig_path, map_location="cpu", weights_only=True)
     pad_ckpt = torch.load(padded_path, map_location="cpu", weights_only=True)

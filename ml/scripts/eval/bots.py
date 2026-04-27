@@ -34,7 +34,7 @@ def build_agent(name: str, n_det: int, n_cands: int, top_k: int, checkpoint: str
         if checkpoint is None:
             raise ValueError("--checkpoint is required for partner_oracle")
         import torch
-        from guandan.training import QValueNet
+        from guandan.azguan import QValueNet
         agent = PartnerOracleBot(
             checkpoint_path=checkpoint,
             level_rank=Rank.TWO,

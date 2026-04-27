@@ -1,7 +1,7 @@
 """Generate AZ self-play training data using PartnerOracleBot (Direction D, Phase 2).
 
 Each decision records:
-  base_state   [480]       encode_state_tier1_team (no action-specific flags) — for V head
+  base_state   [480]       encode_state_team (no action-specific flags) — for V head
   cand_states  [K, 489]    per-candidate state (base + 9-dim behavior flags) — for Q-policy
   actions      [K, 160]    top-K policy candidates, encoded
   pi_search    [K]         softmax of PIMC scores over those K candidates
@@ -40,11 +40,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from guandan.training import ACTION_DIM
-from guandan.training.visibility import (
-    STATE_DIM_TIER1_TEAM,
-    STATE_DIM_TIER1_TEAM_WITH_FLAGS,
-)
+from guandan.azguan import ACTION_DIM, STATE_DIM_TEAM, STATE_DIM_TEAM_WITH_FLAGS
 
 TOP_K_MAX = 10  # maximum top_k supported (for padding)
 K_NEG = 5       # hard negative non-candidates to store (for ranking loss)
@@ -67,11 +63,13 @@ def _worker(args: tuple) -> list[dict]:
     from guandan.agents.partner_oracle_bot import PartnerOracleBot, _reflect_env
     from guandan.cards import Rank
     from guandan.game import GuanDanEnv
-    from guandan.training import ACTION_DIM, QValueNet, encode_action
-    from guandan.training.visibility import (
-        STATE_DIM_TIER1_TEAM,
-        encode_state_tier1_team,
-        encode_state_tier1_team_with_flags,
+    from guandan.azguan import (
+        ACTION_DIM,
+        QValueNet,
+        STATE_DIM_TEAM,
+        encode_action,
+        encode_state_team,
+        encode_state_team_with_flags,
     )
 
     oracle = PartnerOracleBot(
@@ -149,11 +147,11 @@ def _worker(args: tuple) -> list[dict]:
             else:
                 enc_env, enc_player = _reflect_env(env), player ^ 1
 
-            base_state = encode_state_tier1_team(enc_env, enc_player).astype(np_w.float32)
+            base_state = encode_state_team(enc_env, enc_player).astype(np_w.float32)
 
             # Per-candidate state with action-specific behavior flags
             cand_states = np_w.stack([
-                encode_state_tier1_team_with_flags(enc_env, enc_player, a, legal)
+                encode_state_team_with_flags(enc_env, enc_player, a, legal)
                 for a in candidates
             ]).astype(np_w.float32)
             actions = np_w.stack([
@@ -168,7 +166,7 @@ def _worker(args: tuple) -> list[dict]:
             if n_neg > 0:
                 neg_sample = random.sample(non_cands, n_neg)
                 neg_states = np_w.stack([
-                    encode_state_tier1_team_with_flags(enc_env, enc_player, a, legal)
+                    encode_state_team_with_flags(enc_env, enc_player, a, legal)
                     for a in neg_sample
                 ]).astype(np_w.float32)
                 neg_actions = np_w.stack([
@@ -247,8 +245,8 @@ def generate(
     # Pack into numpy arrays (zero-pad to top_k / K_NEG)
     N = len(all_decisions)
     K = top_k
-    D_FLAGS = STATE_DIM_TIER1_TEAM_WITH_FLAGS
-    base_states = np.zeros((N, STATE_DIM_TIER1_TEAM), dtype=np.float32)
+    D_FLAGS = STATE_DIM_TEAM_WITH_FLAGS
+    base_states = np.zeros((N, STATE_DIM_TEAM), dtype=np.float32)
     cand_states = np.zeros((N, K, D_FLAGS), dtype=np.float32)
     actions = np.zeros((N, K, ACTION_DIM), dtype=np.float32)
     pi_search = np.zeros((N, K), dtype=np.float32)

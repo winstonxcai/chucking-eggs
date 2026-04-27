@@ -149,7 +149,7 @@ def test_critic_state_no_action_parameter():
 
 
 def test_critic_state_does_not_call_behavior_flags(monkeypatch):
-    from guandan.training.visibility import behavior_flags as bf_mod
+    from guandan.azguan import behavior_flags as bf_mod
 
     def _raise(*a, **kw):
         raise AssertionError("encode_critic_state must not call compute_behavior_flags")
@@ -263,7 +263,7 @@ def test_move_history_mean_zero_when_empty():
 
 def test_move_history_mean_over_actual_T():
     from guandan.pvguan.encoders import _MAX_HISTORY
-    from guandan.training.encoding import encode_move_event
+    from guandan.azguan.encoding import encode_move_event
 
     env = _fresh_env()
     # Play a few moves manually

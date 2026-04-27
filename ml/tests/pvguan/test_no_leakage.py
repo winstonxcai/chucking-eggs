@@ -149,7 +149,7 @@ def test_critic_no_action_parameter():
 
 
 def test_critic_does_not_call_behavior_flags(monkeypatch):
-    from guandan.training.visibility import behavior_flags as bf_mod
+    from guandan.azguan import behavior_flags as bf_mod
 
     called = {"flag": False}
 

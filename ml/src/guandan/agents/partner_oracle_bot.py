@@ -18,10 +18,13 @@ import torch
 from ..cards import Rank
 from ..combos import Combo
 from ..game import GuanDanEnv
-from ..training import ACTION_DIM, QValueNet, encode_action, get_device
-from ..training.visibility import (
-    STATE_DIM_TIER1_TEAM_WITH_FLAGS,
-    encode_state_tier1_team_with_flags,
+from ..azguan import (
+    ACTION_DIM,
+    QValueNet,
+    STATE_DIM_TEAM_WITH_FLAGS,
+    encode_action,
+    encode_state_team_with_flags,
+    get_device,
 )
 from .base import Agent
 from .belief import BeliefModel
@@ -117,7 +120,7 @@ class PartnerOracleBot(Agent):
             enc_player = player ^ 1
 
         states = np.stack([
-            encode_state_tier1_team_with_flags(enc_env, enc_player, a, legal)
+            encode_state_team_with_flags(enc_env, enc_player, a, legal)
             for a in legal
         ]).astype(np.float32)
         actions = np.stack([

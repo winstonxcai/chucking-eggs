@@ -40,10 +40,13 @@ import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from guandan.training import ACTION_DIM, QValueNet, encode_action, get_device
-from guandan.training.visibility import (
-    STATE_DIM_TIER1_TEAM_WITH_FLAGS,
-    encode_state_tier1_team_with_flags,
+from guandan.azguan import (
+    ACTION_DIM,
+    QValueNet,
+    STATE_DIM_TEAM_WITH_FLAGS,
+    encode_action,
+    encode_state_team_with_flags,
+    get_device,
 )
 
 
@@ -209,7 +212,7 @@ def _eval_vs_jidan(
         else:
             enc_env, enc_player = _reflect_env(env), player ^ 1
         states = np.stack([
-            encode_state_tier1_team_with_flags(enc_env, enc_player, a, legal)
+            encode_state_team_with_flags(enc_env, enc_player, a, legal)
             for a in legal
         ]).astype(np.float32)
         actions = np.stack([
@@ -265,7 +268,7 @@ def train(
     n_neg_np = data.get("n_neg")
     N = len(base_states_np)
 
-    net = QValueNet(d_state=STATE_DIM_TIER1_TEAM_WITH_FLAGS, d_action=ACTION_DIM, hidden=hidden).to(device)
+    net = QValueNet(d_state=STATE_DIM_TEAM_WITH_FLAGS, d_action=ACTION_DIM, hidden=hidden).to(device)
     if init_checkpoint:
         ckpt = torch.load(init_checkpoint, map_location=device, weights_only=True)
         missing, unexpected = net.load_state_dict(ckpt["state_dict"], strict=False)
@@ -404,7 +407,7 @@ def train(
             latest_path = Path(out_path).with_name(Path(out_path).stem + "_latest.pt")
             torch.save({
                 "state_dict": net.state_dict(),
-                "config": {"d_state": STATE_DIM_TIER1_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": hidden},
+                "config": {"d_state": STATE_DIM_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": hidden},
                 "metrics": metrics, "epoch": epoch + 1,
             }, latest_path)
 
@@ -420,7 +423,7 @@ def train(
         wr_path = Path(out_path).with_name(Path(out_path).stem + "_bestwr.pt")
         torch.save({
             "state_dict": best_wr_state,
-            "config": {"d_state": STATE_DIM_TIER1_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": hidden},
+            "config": {"d_state": STATE_DIM_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": hidden},
             "metrics": metrics,
         }, wr_path)
         print(f"  Best-WR checkpoint saved → {wr_path}  (WR={best_wr:.1%})")
@@ -485,7 +488,7 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
         "state_dict": net.state_dict(),
-        "config": {"d_state": STATE_DIM_TIER1_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": args.hidden},
+        "config": {"d_state": STATE_DIM_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": args.hidden},
         "metrics": metrics,
         "args": vars(args),
     }, out)

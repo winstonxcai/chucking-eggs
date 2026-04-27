@@ -3,7 +3,7 @@
 Pipeline:
   1. Generate (state, legal_actions, jidan_pick_idx) samples by self-playing
      Jidan-vs-Jidan games in parallel worker processes. State uses
-     encode_state_tier1_team (480-dim, both teammate hands visible). Only
+     encode_state_team (480-dim, both teammate hands visible). Only
      collect decisions from team {0,2}; seat reflection happens at inference.
   2. Train QNetwork(state ⊕ action → Q) with cross-entropy loss over softmax
      of Q-values per legal-action set, target = one-hot of Jidan's pick.
@@ -41,10 +41,13 @@ from guandan.agents import JidanBot
 from guandan.cards import Rank
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
-from guandan.training import ACTION_DIM, QNetwork, encode_action, get_device
-from guandan.training.visibility import (
-    STATE_DIM_TIER1_TEAM_WITH_FLAGS,
-    encode_state_tier1_team_with_flags,
+from guandan.azguan import (
+    ACTION_DIM,
+    QNetwork,
+    STATE_DIM_TEAM_WITH_FLAGS,
+    encode_action,
+    encode_state_team_with_flags,
+    get_device,
 )
 
 # Cap legal moves per sample to bound batch padding / memory.
@@ -97,7 +100,7 @@ def _gen_worker(args: tuple) -> list[dict]:
                     pick_idx = pick_idx_full
 
                 states = np.stack([
-                    encode_state_tier1_team_with_flags(env, player, a, capped_legal)
+                    encode_state_team_with_flags(env, player, a, capped_legal)
                     for a in capped_legal
                 ]).astype(np.float32)
                 actions = np.stack([
@@ -189,7 +192,7 @@ def train(
     seed: int = 0,
 ) -> tuple[QNetwork, dict]:
     net = QNetwork(
-        d_state=STATE_DIM_TIER1_TEAM_WITH_FLAGS, d_action=ACTION_DIM, hidden=hidden
+        d_state=STATE_DIM_TEAM_WITH_FLAGS, d_action=ACTION_DIM, hidden=hidden
     ).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr * 0.05)
@@ -326,7 +329,7 @@ def main() -> None:
     torch.save({
         "state_dict": net.state_dict(),
         "config": {
-            "d_state": STATE_DIM_TIER1_TEAM_WITH_FLAGS,
+            "d_state": STATE_DIM_TEAM_WITH_FLAGS,
             "d_action": ACTION_DIM,
             "hidden": args.hidden,
             "level_rank": int(Rank.TWO),

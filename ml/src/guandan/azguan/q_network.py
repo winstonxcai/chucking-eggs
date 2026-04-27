@@ -1,4 +1,4 @@
-"""Bare MLP Q-network for Direction C (Jidan-distillation).
+"""Bare MLP Q-network for Jidan-distillation and AlphaZero training.
 
 No LSTM, no GNN, no aux heads. Single forward pass: (state, action) -> Q.
 Stripped from the archived QNetworkLSTM after LOGBOOK §9 (GNN dead) and §13

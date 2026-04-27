@@ -1,6 +1,5 @@
 """Per-action team-coordination behavior flags.
 
-Resurrected from commit 3237fa8 (Apr 10, 2026 — archived with Tier 1 work).
 Three 3-dim axes encode team-coordination intent for the (player, action)
 pair: cooperating, dwarfing, assisting. Each axis is one-hot over
 [not_applicable, doing_it, refusing].
@@ -13,8 +12,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ...cards import ComboType
-from ...game import GuanDanEnv
+from ..cards import ComboType
+from ..game import GuanDanEnv
 
 FLAG_DIM = 9
 

@@ -73,7 +73,7 @@ def test_teammate_lo_hand_is_seat0():
     env.current_player = 0
     s = encode_state_features(env, 0)
 
-    from guandan.training.encoding import cards_to_matrix
+    from guandan.azguan.encoding import cards_to_matrix
     expected = cards_to_matrix(env.hands[0]).flatten()
     assert np.array_equal(s[TEAMMATE_LO_HAND], expected)
 
@@ -82,7 +82,7 @@ def test_teammate_hi_hand_is_seat2():
     env = _fresh_env()
     s = encode_state_features(env, 0)
 
-    from guandan.training.encoding import cards_to_matrix
+    from guandan.azguan.encoding import cards_to_matrix
     expected = cards_to_matrix(env.hands[2]).flatten()
     assert np.array_equal(s[TEAMMATE_HI_HAND], expected)
 
@@ -92,7 +92,7 @@ def test_opp_l_played_is_seat1():
     env = _fresh_env()
     for player in (0, 2):
         s = encode_state_features(env, player)
-        from guandan.training.encoding import cards_to_matrix
+        from guandan.azguan.encoding import cards_to_matrix
         expected = cards_to_matrix(env.played[1]).flatten()
         assert np.array_equal(s[OPP_L_PLAYED], expected), f"player={player}"
 
@@ -101,7 +101,7 @@ def test_opp_r_played_is_seat3():
     env = _fresh_env()
     for player in (0, 2):
         s = encode_state_features(env, player)
-        from guandan.training.encoding import cards_to_matrix
+        from guandan.azguan.encoding import cards_to_matrix
         expected = cards_to_matrix(env.played[3]).flatten()
         assert np.array_equal(s[OPP_R_PLAYED], expected), f"player={player}"
 

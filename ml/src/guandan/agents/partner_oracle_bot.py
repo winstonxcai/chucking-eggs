@@ -73,6 +73,7 @@ class PartnerOracleBot(Agent):
         n_workers: int = _N_WORKERS,
         use_value_leaf: bool = False,
         device: torch.device | None = None,
+        rollout_policies: str | list[str] = "jidan",
     ):
         self.level_rank = level_rank
         self.use_search = use_search
@@ -98,7 +99,7 @@ class PartnerOracleBot(Agent):
                 n_cands=top_k,
                 depth_limit=0,
                 pre_filter=self._policy_top_k,
-                rollout_policy="jidan",
+                rollout_policy=rollout_policies,
                 belief=BeliefModel() if use_belief else None,
                 n_workers=n_workers,
                 value_net=self.net if use_value_leaf else None,

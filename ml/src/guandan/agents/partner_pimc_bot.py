@@ -40,6 +40,8 @@ from .belief import BeliefModel
 from .greedy_bot import GreedyBot
 from .heuristic_bot import HeuristicBot
 from .jidan_bot import JidanBot
+from .strategic_bot import StrategicBot
+from .yaoji_bot import YaojiBot
 
 # Registry of rollout-policy factories. Workers receive a string name
 # (picklable) and instantiate the agent in-process.
@@ -47,6 +49,8 @@ ROLLOUT_FACTORIES: dict[str, type[Agent]] = {
     "greedy": GreedyBot,
     "heuristic": HeuristicBot,
     "jidan": JidanBot,
+    "strategic": StrategicBot,
+    "yaoji": YaojiBot,
 }
 
 # Full 108-card deck built once at module load.
@@ -212,7 +216,8 @@ def _pimc_worker(
     Must be a module-level function so pickle can locate it across spawn.
     """
     det_env, candidates, player, depth_limit, level_rank, rollout_policy = args
-    cls = ROLLOUT_FACTORIES[rollout_policy]
+    policy = random.choice(rollout_policy) if isinstance(rollout_policy, list) else rollout_policy
+    cls = ROLLOUT_FACTORIES[policy]
     rollout_agents = [cls(level_rank) for _ in range(4)]
     scores = []
     for move in candidates:
@@ -248,7 +253,7 @@ class PartnerPIMCBot(Agent):
         n_workers: int = _N_WORKERS,
         seed: int | None = None,
         pre_filter: Callable | None = None,
-        rollout_policy: str = "greedy",
+        rollout_policy: str | list[str] = "greedy",
         belief: BeliefModel | None = None,
         value_net=None,
     ):
@@ -299,9 +304,12 @@ class PartnerPIMCBot(Agent):
                 for i, s in enumerate(det_scores):
                     scores[i] += s
         else:
-            cls = ROLLOUT_FACTORIES[self.rollout_policy]
-            rollout_agents = [cls(self.level_rank) for _ in range(4)]
             for det in dets:
+                policy = (random.choice(self.rollout_policy)
+                          if isinstance(self.rollout_policy, list)
+                          else self.rollout_policy)
+                cls = ROLLOUT_FACTORIES[policy]
+                rollout_agents = [cls(self.level_rank) for _ in range(4)]
                 for i, move in enumerate(candidates):
                     sim = _clone_env(det)
                     sim.step(move)

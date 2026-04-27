@@ -50,7 +50,7 @@ K_NEG = 5       # hard negative non-candidates to store (for ranking loss)
 
 def _worker(args: tuple) -> list[dict]:
     """Run games in one worker process, return list of decision dicts."""
-    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint, pi_temp = args
+    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint, pi_temp, rollout_mix = args
 
     import random
     import numpy as np_w
@@ -82,6 +82,7 @@ def _worker(args: tuple) -> list[dict]:
         n_workers=1,  # single-process PIMC — we're already inside a worker
         use_value_leaf=use_value_leaf,
         device=torch.device("cpu"),  # avoid GPU contention across self-play workers
+        rollout_policies=rollout_mix,
     )
 
     if policy_checkpoint is not None:
@@ -214,10 +215,13 @@ def generate(
     use_value_leaf: bool = False,
     policy_checkpoint: str | None = None,
     pi_temp: float = 1.0,
+    rollout_mix: list[str] | None = None,
 ) -> dict[str, np.ndarray]:
+    if rollout_mix is None:
+        rollout_mix = ["jidan"]
     per_worker = math.ceil(n_decisions / workers)
     args_list = [
-        (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf, policy_checkpoint, pi_temp)
+        (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf, policy_checkpoint, pi_temp, rollout_mix)
         for w in range(workers)
     ]
     print(
@@ -301,14 +305,19 @@ def main() -> None:
     p.add_argument("--pi-temp", type=float, default=1.0,
                    help="Temperature for PIMC score softmax (>1 = softer π_search targets). "
                         "Use 2.0-3.0 with V-at-leaf to prevent training target collapse.")
+    p.add_argument("--rollout-mix", default="jidan",
+                   help="Comma-separated rollout policies sampled per-determinization "
+                        "(e.g. 'jidan,yaoji,strategic'). Default: 'jidan'.")
     args = p.parse_args()
+
+    rollout_mix = [p.strip() for p in args.rollout_mix.split(",") if p.strip()]
 
     print(f"AZ self-play data generation")
     print(f"  checkpoint: {args.checkpoint}")
     if args.policy_checkpoint:
         print(f"  policy-checkpoint: {args.policy_checkpoint}  (hybrid oracle)")
     print(f"  decisions={args.decisions}  n_det={args.n_det}  K={args.top_k}  "
-          f"workers={args.workers}", flush=True)
+          f"workers={args.workers}  rollout_mix={rollout_mix}", flush=True)
 
     data = generate(
         checkpoint=args.checkpoint,
@@ -320,6 +329,7 @@ def main() -> None:
         use_value_leaf=args.use_value_leaf,
         policy_checkpoint=args.policy_checkpoint,
         pi_temp=args.pi_temp,
+        rollout_mix=rollout_mix,
     )
 
     out = Path(args.out)

@@ -27,16 +27,21 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import math
 import random
 import sys
 import time
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
@@ -48,6 +53,24 @@ from guandan.azguan import (
     encode_state_team_with_flags,
     get_device,
 )
+
+
+# ── Logging setup ──────────────────────────────────────────────────────────────
+
+def _setup_logging(run_dir: Path) -> logging.Logger:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fmt = "%(asctime)s  %(levelname)-8s %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    log = logging.getLogger("train_az")
+    log.setLevel(logging.INFO)
+    log.handlers.clear()
+    fh = logging.FileHandler(run_dir / "train.log")
+    fh.setFormatter(logging.Formatter(fmt, datefmt))
+    log.addHandler(fh)
+    sh = logging.StreamHandler()
+    sh.setFormatter(logging.Formatter(fmt, datefmt))
+    log.addHandler(sh)
+    return log
 
 
 # ── Data loading ───────────────────────────────────────────────────────────────
@@ -256,7 +279,11 @@ def train(
     early_stop_patience: int = 3,
     seed: int = 0,
     out_path: str | None = None,
+    log: logging.Logger | None = None,
+    run_dir: Path | None = None,
 ) -> tuple[QValueNet, dict]:
+    if log is None:
+        log = logging.getLogger("train_az")
     base_states_np = data["base_states"]
     cand_states_np = data["cand_states"]
     actions_np = data["actions"]
@@ -272,9 +299,9 @@ def train(
     if init_checkpoint:
         ckpt = torch.load(init_checkpoint, map_location=device, weights_only=True)
         missing, unexpected = net.load_state_dict(ckpt["state_dict"], strict=False)
-        print(f"  loaded {init_checkpoint}  (missing={len(missing)}, unexpected={len(unexpected)})")
+        log.info(f"  loaded {init_checkpoint}  (missing={len(missing)}, unexpected={len(unexpected)})")
     n_params = sum(p.numel() for p in net.parameters())
-    print(f"  net: {n_params:,} params on {device} (hidden={hidden})")
+    log.info(f"  net: {n_params:,} params on {device} (hidden={hidden})")
 
     opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr * 0.05)
@@ -285,9 +312,9 @@ def train(
     n_val = int(N * val_split)
     val_idx = indices[:n_val]
     train_idx = indices[n_val:]
-    print(f"  split: {len(train_idx)} train / {len(val_idx)} val")
-    print(f"  z stats: mean={z_np.mean():+.3f}  std={z_np.std():.3f}  "
-          f"  baseline_value_loss={(z_np**2).mean():.3f} (V≡0)")
+    log.info(f"  split: {len(train_idx):,} train / {len(val_idx):,} val")
+    log.info(f"  z stats: mean={z_np.mean():+.3f}  std={z_np.std():.3f}  "
+             f"baseline_V_loss={(z_np**2).mean():.3f} (V≡0)")
 
     has_negatives = (
         neg_states_np is not None and neg_actions_np is not None and n_neg_np is not None
@@ -316,104 +343,114 @@ def train(
     best_wr_state = None
     patience_count = 0
 
-    # Initial eval (epoch 0): how good is the prior?
+    # Initial eval (epoch 0): baseline quality of the prior
     if eval_games > 0:
         net.eval()
         wr0, t_eval = _eval_vs_jidan(net, device, eval_games, seed=seed)
-        print(f"  baseline (epoch 0): WR vs Jidan (policy-only, {eval_games} games) = "
-              f"{wr0:.1%}  ({t_eval:.0f}s)", flush=True)
+        log.info(f"  baseline ep 0: WR_jidan={wr0:.1%}  ({eval_games} games, {t_eval:.0f}s)")
 
-    for epoch in range(epochs):
-        rng.shuffle(train_idx)
-        net.train()
-        ep_total = ep_policy = ep_value = ep_rank = 0.0
-        n_batches = 0
-        for bs in range(0, len(train_idx), batch_size):
-            bst, cst, ac, pi, nc, zb, ns, na, nn_ = to_tensors(train_idx[bs: bs + batch_size])
-            tl, pl, vl, rl = _train_step(net, bst, cst, ac, pi, nc, zb, opt, ns, na, nn_)
-            ep_total += tl
-            ep_policy += pl
-            ep_value += vl
-            ep_rank += rl
-            n_batches += 1
-        train_total = ep_total / max(1, n_batches)
-        train_policy = ep_policy / max(1, n_batches)
-        train_value = ep_value / max(1, n_batches)
-        train_rank = ep_rank / max(1, n_batches)
+    log.info("─" * 64)
+    log.info("Training ...")
 
-        # Val
-        net.eval()
-        agg = {"policy_loss_sum": 0, "value_loss_sum": 0, "value_mae_sum": 0,
-               "entropy_sum": 0, "correct": 0, "n": 0}
-        for bs in range(0, len(val_idx), batch_size):
-            bst, cst, ac, pi, nc, zb, _ns, _na, _nn = to_tensors(val_idx[bs: bs + batch_size])
-            m = _eval_step(net, bst, cst, ac, pi, nc, zb)
-            for k in agg:
-                agg[k] += m[k]
-        n = max(1, agg["n"])
-        val_policy = agg["policy_loss_sum"] / n
-        val_value = agg["value_loss_sum"] / n
-        val_total = val_policy + 0.5 * val_value
-        val_mae = agg["value_mae_sum"] / n
-        val_entropy = agg["entropy_sum"] / n
-        val_acc = agg["correct"] / n
+    with logging_redirect_tqdm(loggers=[log]):
+        pbar = tqdm(range(epochs), unit="ep", desc="train_az", dynamic_ncols=True)
+        for epoch in pbar:
+            rng.shuffle(train_idx)
+            net.train()
+            ep_total = ep_policy = ep_value = ep_rank = 0.0
+            n_batches = 0
+            for bs in range(0, len(train_idx), batch_size):
+                bst, cst, ac, pi, nc, zb, ns, na, nn_ = to_tensors(train_idx[bs: bs + batch_size])
+                tl, pl, vl, rl = _train_step(net, bst, cst, ac, pi, nc, zb, opt, ns, na, nn_)
+                ep_total += tl
+                ep_policy += pl
+                ep_value += vl
+                ep_rank += rl
+                n_batches += 1
+            train_total = ep_total / max(1, n_batches)
+            train_policy = ep_policy / max(1, n_batches)
+            train_value = ep_value / max(1, n_batches)
+            train_rank = ep_rank / max(1, n_batches)
 
-        # Inline eval vs Jidan
-        eval_str = ""
-        wr_jidan = None
-        if eval_games > 0 and (epoch + 1) % eval_every == 0:
-            wr_jidan, t_eval = _eval_vs_jidan(net, device, eval_games, seed=seed + epoch + 1)
-            eval_str = f"  WR_jidan={wr_jidan:.1%} ({t_eval:.0f}s)"
-            if wr_jidan > best_wr:
-                best_wr = wr_jidan
-                best_wr_state = deepcopy(net.state_dict())
+            # Val
+            net.eval()
+            agg = {"policy_loss_sum": 0, "value_loss_sum": 0, "value_mae_sum": 0,
+                   "entropy_sum": 0, "correct": 0, "n": 0}
+            for bs in range(0, len(val_idx), batch_size):
+                bst, cst, ac, pi, nc, zb, _ns, _na, _nn = to_tensors(val_idx[bs: bs + batch_size])
+                m = _eval_step(net, bst, cst, ac, pi, nc, zb)
+                for k in agg:
+                    agg[k] += m[k]
+            n = max(1, agg["n"])
+            val_policy = agg["policy_loss_sum"] / n
+            val_value = agg["value_loss_sum"] / n
+            val_total = val_policy + 0.5 * val_value
+            val_mae = agg["value_mae_sum"] / n
+            val_entropy = agg["entropy_sum"] / n
+            val_acc = agg["correct"] / n
 
-        cur_lr = opt.param_groups[0]["lr"]
-        sched.step()
-        elapsed = time.time() - t0
+            # Inline eval vs Jidan
+            wr_jidan = None
+            wr_str = ""
+            if eval_games > 0 and (epoch + 1) % eval_every == 0:
+                wr_jidan, t_eval = _eval_vs_jidan(net, device, eval_games, seed=seed + epoch + 1)
+                wr_str = f" | WR={wr_jidan:.1%}({t_eval:.0f}s)"
+                if wr_jidan > best_wr:
+                    best_wr = wr_jidan
+                    best_wr_state = deepcopy(net.state_dict())
 
-        improved = val_total < best_val_loss - 1e-4
-        if improved:
-            best_val_loss = val_total
-            best_state = deepcopy(net.state_dict())
-            patience_count = 0
-            tag = "  (best)"
-        else:
-            patience_count += 1
-            tag = f"  (no-improve {patience_count}/{early_stop_patience})"
+            cur_lr = opt.param_groups[0]["lr"]
+            sched.step()
+            elapsed = time.time() - t0
 
-        rank_str = f" r={train_rank:.3f}" if has_negatives else ""
-        print(
-            f"  ep {epoch+1:2d}/{epochs}  "
-            f"tr={train_total:.3f}(p={train_policy:.3f} v={train_value:.3f}{rank_str})  "
-            f"val={val_total:.3f}(p={val_policy:.3f} v={val_value:.3f})  "
-            f"H={val_entropy:.3f} acc={val_acc:.2f} v_mae={val_mae:.2f}  "
-            f"lr={cur_lr:.1e}  ({elapsed:.0f}s){eval_str}{tag}",
-            flush=True,
-        )
+            improved = val_total < best_val_loss - 1e-4
+            if improved:
+                best_val_loss = val_total
+                best_state = deepcopy(net.state_dict())
+                patience_count = 0
+                tag = "  ★ best"
+            else:
+                patience_count += 1
+                tag = f"  (no-improve {patience_count}/{early_stop_patience})"
 
-        metrics["epochs"].append({
-            "epoch": epoch + 1,
-            "train_total": train_total, "train_policy": train_policy,
-            "train_value": train_value, "train_rank": train_rank,
-            "val_total": val_total, "val_policy": val_policy, "val_value": val_value,
-            "val_entropy": val_entropy, "val_acc": val_acc, "val_mae": val_mae,
-            "wr_jidan": wr_jidan,
-            "lr": cur_lr, "elapsed_s": elapsed,
-        })
+            rank_str = f" r={train_rank:.3f}" if has_negatives else ""
+            log.info(
+                f"ep {epoch+1:2d}/{epochs} | "
+                f"val={val_total:.3f}(p={val_policy:.3f} v={val_value:.3f}) | "
+                f"tr={train_total:.3f}(p={train_policy:.3f} v={train_value:.3f}{rank_str}) | "
+                f"H={val_entropy:.3f} acc={val_acc:.2f} v_mae={val_mae:.2f} | "
+                f"lr={cur_lr:.1e} t={elapsed:.0f}s"
+                f"{wr_str}{tag}"
+            )
 
-        # Save latest checkpoint (so we can recover if interrupted)
-        if out_path:
-            latest_path = Path(out_path).with_name(Path(out_path).stem + "_latest.pt")
-            torch.save({
-                "state_dict": net.state_dict(),
-                "config": {"d_state": STATE_DIM_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": hidden},
-                "metrics": metrics, "epoch": epoch + 1,
-            }, latest_path)
+            row = {
+                "epoch": epoch + 1,
+                "train_total": round(train_total, 4), "train_policy": round(train_policy, 4),
+                "train_value": round(train_value, 4), "train_rank": round(train_rank, 4),
+                "val_total": round(val_total, 4), "val_policy": round(val_policy, 4),
+                "val_value": round(val_value, 4), "val_entropy": round(val_entropy, 4),
+                "val_acc": round(val_acc, 4), "val_mae": round(val_mae, 4),
+                "wr_jidan": round(wr_jidan, 4) if wr_jidan is not None else None,
+                "lr": cur_lr, "elapsed_s": round(elapsed, 1),
+            }
+            metrics["epochs"].append(row)
+            if run_dir:
+                with open(run_dir / "metrics.jsonl", "a") as f:
+                    f.write(json.dumps(row) + "\n")
 
-        if patience_count >= early_stop_patience:
-            print(f"  early stop at epoch {epoch+1}")
-            break
+            # Save latest checkpoint (recoverable if interrupted)
+            if out_path:
+                latest_path = Path(out_path).with_name(Path(out_path).stem + "_latest.pt")
+                torch.save({
+                    "state_dict": net.state_dict(),
+                    "config": {"d_state": STATE_DIM_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": hidden},
+                    "metrics": metrics, "epoch": epoch + 1,
+                }, latest_path)
+
+            if patience_count >= early_stop_patience:
+                log.info(f"  early stop at epoch {epoch + 1}")
+                pbar.close()
+                break
 
     if best_state is not None:
         net.load_state_dict(best_state)
@@ -426,48 +463,66 @@ def train(
             "config": {"d_state": STATE_DIM_TEAM_WITH_FLAGS, "d_action": ACTION_DIM, "hidden": hidden},
             "metrics": metrics,
         }, wr_path)
-        print(f"  Best-WR checkpoint saved → {wr_path}  (WR={best_wr:.1%})")
+        log.info(f"  ★ best-WR checkpoint → {wr_path}  (WR={best_wr:.1%})")
 
     metrics["n_train"] = len(train_idx)
     metrics["n_val"] = len(val_idx)
     metrics["best_val_loss"] = best_val_loss
     metrics["best_wr"] = best_wr
-    metrics["total_train_time_s"] = time.time() - t0
+    metrics["total_train_time_s"] = round(time.time() - t0, 1)
     return net, metrics
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="AZ training: policy + value heads")
-    p.add_argument("--data", required=True)
-    p.add_argument("--init-checkpoint", default=None)
-    p.add_argument("--out", required=True)
-    p.add_argument("--epochs", type=int, default=10)
-    p.add_argument("--batch-size", type=int, default=256)
-    p.add_argument("--lr", type=float, default=3e-4)
-    p.add_argument("--weight-decay", type=float, default=1e-4)
-    p.add_argument("--hidden", type=int, default=512)
-    p.add_argument("--patience", type=int, default=3)
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--eval-games", type=int, default=50,
-                   help="Inline policy-only Jidan eval games per epoch (0 = disabled)")
-    p.add_argument("--eval-every", type=int, default=1,
-                   help="Run inline Jidan eval every N epochs (default 1)")
-    args = p.parse_args()
+    ap = argparse.ArgumentParser(description="AZ training: policy + value heads")
+    ap.add_argument("--data", required=True)
+    ap.add_argument("--init-checkpoint", default=None)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--epochs", type=int, default=10)
+    ap.add_argument("--batch-size", type=int, default=256)
+    ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--weight-decay", type=float, default=1e-4)
+    ap.add_argument("--hidden", type=int, default=512)
+    ap.add_argument("--patience", type=int, default=3)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--eval-games", type=int, default=50,
+                    help="Inline policy-only Jidan eval games per epoch (0 = disabled)")
+    ap.add_argument("--eval-every", type=int, default=1,
+                    help="Run inline Jidan eval every N epochs (default 1)")
+    ap.add_argument("--run-dir", default=None,
+                    help="Run directory for logs/config (default: ml/runs/az_{stem}_{ts}).")
+    args = ap.parse_args()
 
-    print("AZ training: policy + value heads")
-    print(f"  data: {args.data}")
-    print(f"  init: {args.init_checkpoint or '(none)'}")
-    print(f"  epochs={args.epochs}  batch={args.batch_size}  lr={args.lr}  "
-          f"hidden={args.hidden}  eval_games={args.eval_games}", flush=True)
+    out = Path(args.out)
+    if args.run_dir:
+        run_dir = Path(args.run_dir)
+    else:
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        run_dir = Path("ml/runs") / f"az_{out.stem}_{ts}"
+
+    log = _setup_logging(run_dir)
+    device = get_device()
+
+    log.info("=" * 64)
+    log.info(f"[train_az]  run_dir={run_dir}  device={device}")
+    log.info(f"  data           = {args.data}")
+    log.info(f"  init_ckpt      = {args.init_checkpoint or '(none)'}")
+    log.info(f"  epochs={args.epochs}  batch={args.batch_size}  lr={args.lr}  "
+             f"wd={args.weight_decay}  hidden={args.hidden}  patience={args.patience}")
+    log.info(f"  eval_games={args.eval_games}  eval_every={args.eval_every}  seed={args.seed}")
+    log.info("=" * 64)
+
+    config = vars(args)
+    config["run_dir"] = str(run_dir)
+    (run_dir / "config.json").write_text(json.dumps(config, indent=2))
 
     data = load_data(args.data)
     N = len(data["base_states"])
     K = data["actions"].shape[1]
-    print(f"  loaded {N} decisions (K={K})")
+    log.info(f"  loaded {N:,} decisions (K={K})")
 
-    device = get_device()
     net, metrics = train(
         data=data,
         init_checkpoint=args.init_checkpoint,
@@ -482,9 +537,10 @@ def main() -> None:
         early_stop_patience=args.patience,
         seed=args.seed,
         out_path=args.out,
+        log=log,
+        run_dir=run_dir,
     )
 
-    out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
         "state_dict": net.state_dict(),
@@ -492,11 +548,14 @@ def main() -> None:
         "metrics": metrics,
         "args": vars(args),
     }, out)
-    print(f"\nSaved → {out}")
+
     final = metrics["epochs"][-1]
-    print(f"Final ep: val={final['val_total']:.3f}  "
-          f"acc={final['val_acc']:.2f}  H={final['val_entropy']:.3f}  "
-          f"WR_jidan={final.get('wr_jidan')}  (best val={metrics['best_val_loss']:.3f})")
+    log.info("─" * 64)
+    log.info(
+        f"[train_az]  done  {metrics['total_train_time_s']:.0f}s  "
+        f"best_val={metrics['best_val_loss']:.3f}  best_WR={metrics['best_wr']:.1%}  "
+        f"→  {out}"
+    )
 
 
 if __name__ == "__main__":

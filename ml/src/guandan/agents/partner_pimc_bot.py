@@ -167,23 +167,14 @@ def _rollout_limited(
     return _leaf_value(env, player)
 
 
-def _value_at_leaf(env: GuanDanEnv, player: int, value_net) -> float:
-    """Evaluate V(s) at leaf instead of rolling out. AlphaZero-style.
+def _encode_for_value(env: GuanDanEnv, player: int):
+    """Encode state for V-net (action-agnostic, padded to FLAGS dim).
 
-    `player` is the original acting player (whose perspective the value is).
-    We seat-reflect to match the team-{0,2} encoding contract.
+    Returns a numpy array. Caller batches multiple states for one forward pass.
     """
-    if env.done:
-        return float(env.get_rewards()[player])
-
-    # Lazy imports to avoid loading torch in main process unnecessarily.
     import numpy as np
-    import torch
     from .partner_oracle_bot import _reflect_env
-    from ..azguan import (
-        STATE_DIM_TEAM_WITH_FLAGS,
-        encode_state_team,
-    )
+    from ..azguan import STATE_DIM_TEAM_WITH_FLAGS, encode_state_team
 
     if player in (0, 2):
         enc_env, enc_player = env, player
@@ -195,6 +186,19 @@ def _value_at_leaf(env: GuanDanEnv, player: int, value_net) -> float:
     pad = STATE_DIM_TEAM_WITH_FLAGS - base.shape[0]
     if pad > 0:
         base = np.concatenate([base, np.zeros(pad, dtype=np.float32)])
+    return base
+
+
+def _value_at_leaf(env: GuanDanEnv, player: int, value_net) -> float:
+    """Single-leaf V(s) evaluation. Kept for compatibility / single-call use.
+
+    Prefer batched evaluation in _score_candidates for hot paths.
+    """
+    if env.done:
+        return float(env.get_rewards()[player])
+    import numpy as np
+    import torch
+    base = _encode_for_value(env, player)
     with torch.no_grad():
         st = torch.from_numpy(base).to(value_net.v_net[0].weight.device).unsqueeze(0)
         return float(value_net.value(st).item())
@@ -289,12 +293,28 @@ class PartnerPIMCBot(Agent):
         ]
         scores = [0.0] * len(candidates)
         if self.value_net is not None:
-            # AZ V-at-leaf path: skip rollouts, query value net directly.
+            # AZ V-at-leaf path: skip rollouts, batch all leaves into one
+            # forward pass. Terminal leaves bypass the net (use exact reward).
+            import numpy as _np
+            import torch as _torch
+            leaf_states: list = []
+            leaf_idx: list[int] = []
             for det in dets:
                 for i, move in enumerate(candidates):
                     sim = _clone_env(det)
                     sim.step(move)
-                    scores[i] += _value_at_leaf(sim, player, self.value_net)
+                    if sim.done:
+                        scores[i] += float(sim.get_rewards()[player])
+                    else:
+                        leaf_states.append(_encode_for_value(sim, player))
+                        leaf_idx.append(i)
+            if leaf_states:
+                device = self.value_net.v_net[0].weight.device
+                st = _torch.from_numpy(_np.stack(leaf_states)).to(device)
+                with _torch.no_grad():
+                    v = self.value_net.value(st).cpu().numpy()
+                for k, i in enumerate(leaf_idx):
+                    scores[i] += float(v[k])
         elif self._pool is not None:
             worker_args = [
                 (det, candidates, player, self.depth_limit, self.level_rank, self.rollout_policy)

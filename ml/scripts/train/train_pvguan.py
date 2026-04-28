@@ -49,6 +49,8 @@ from guandan.pvguan.diagnostics import (
     compute_policy_diagnostics,
     compute_value_diagnostics,
     critic_priv_sensitivity,
+    actor_group_weight_norms,
+    build_actor_group_init_weights,
     critic_priv_weight_norms,
     opp_style_weight_norms,
     pv_ac_priv_slots_zero,
@@ -344,8 +346,9 @@ def main():
 
     # Capture initial weights for delta_norm diagnostics
     with torch.no_grad():
-        init_priv_w      = net.critic_head.net[0].weight[:, CRITIC_PRIV].clone()
-        init_opp_style_w = net.actor_head.net[0].weight[:, OPP_STYLE_FEATURES].clone()
+        init_priv_w         = net.critic_head.net[0].weight[:, CRITIC_PRIV].clone()
+        init_opp_style_w    = net.actor_head.net[0].weight[:, OPP_STYLE_FEATURES].clone()
+        init_actor_groups   = build_actor_group_init_weights(net)
 
     # ── PPO trainer ───────────────────────────────────────────────────────────
     ppo_cfg = PPOConfig(
@@ -503,8 +506,9 @@ def main():
             # 4. Diagnostics
             val_diag    = compute_value_diagnostics(batch)
             pol_diag    = compute_policy_diagnostics(net, batch, temperature=run_cfg.temperature)
-            priv_norms  = critic_priv_weight_norms(net, init_priv_w)
-            opp_s_norms = opp_style_weight_norms(net, init_opp_style_w)
+            priv_norms   = critic_priv_weight_norms(net, init_priv_w)
+            opp_s_norms  = opp_style_weight_norms(net, init_opp_style_w)
+            group_norms  = actor_group_weight_norms(net, init_actor_groups)
             roll_stats = buf.stats.summary()
 
             # Build the priv-sensitivity probe set on the first batch, then
@@ -536,6 +540,7 @@ def main():
                 **pol_diag,
                 **priv_norms,
                 **opp_s_norms,
+                **group_norms,
                 **roll_stats,
             }
 

@@ -83,6 +83,13 @@ LAST_CARDS          = slice(612, 672)   # 60 count vector
 # Group 6 — Move-history summary (83 dims)
 MOVE_HISTORY_MEAN   = slice(672, 755)   # mean of encode_move_event over last T
 
+# G1 sub-group aliases (for per-group weight-norm analysis)
+G1_OWN_HAND     = TEAMMATE_LO_HAND      # slice(0,   60)
+G1_PARTNER_HAND = TEAMMATE_HI_HAND      # slice(60,  120)
+G1_TEAM_PLAYED  = slice(120, 240)       # lo + hi played cards
+G1_OPP_PLAYED   = slice(240, 360)       # opp_l + opp_r played cards
+G1_UNKNOWN      = UNKNOWN_REMAINING     # slice(360, 420)
+
 # Group 7 — Online opponent-style features (12 dims): 6 features × 2 opp seats
 # Order: [opp_l_pass_rate, opp_l_bomb_rate, opp_l_avg_size, opp_l_avg_key,
 #         opp_l_count_norm, opp_l_pair_plus_rate,  ... opp_r ...]

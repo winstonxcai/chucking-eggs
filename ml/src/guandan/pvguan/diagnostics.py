@@ -18,7 +18,11 @@ import torch.nn.functional as F
 
 from .actor_critic import ActorCriticNet
 from .buffer import PPOBatch
-from .encoders import CRITIC_PRIV, OPP_STYLE_FEATURES
+from .encoders import (
+    ACTOR_DIM, ACTION_DIM,
+    CRITIC_PRIV, OPP_STYLE_FEATURES,
+    G1_OWN_HAND, G1_PARTNER_HAND, G1_TEAM_PLAYED, G1_OPP_PLAYED, G1_UNKNOWN,
+)
 
 
 class RunLogger:
@@ -179,6 +183,57 @@ def opp_style_weight_norms(
     return {
         "opp_style_weight_norm":       norm,
         "opp_style_weight_delta_norm": delta,
+    }
+
+
+# Ordered dict of actor weight-column groups for per-group delta-norm tracking.
+# Keys are short names used as metric prefixes (e.g. "g1_own_hand_wdelta").
+# Values are column slices into the actor first linear layer weight matrix
+# (shape [hidden, ACTOR_DIM + ACTION_DIM]).
+ACTOR_GROUPS: dict[str, slice] = {
+    "g1_own_hand":     G1_OWN_HAND,                       # 60
+    "g1_partner_hand": G1_PARTNER_HAND,                   # 60
+    "g1_team_played":  G1_TEAM_PLAYED,                    # 120
+    "g1_opp_played":   G1_OPP_PLAYED,                     # 120
+    "g1_unknown":      G1_UNKNOWN,                        # 60
+    "g2_seat_status":  slice(420, 460),                   # 40
+    "g3_acting_ctx":   slice(460, 478),                   # 18
+    "g4_active_trick": slice(478, 576),                   # 98
+    "g5_last_action":  slice(576, 672),                   # 96
+    "g6_move_history": slice(672, 755),                   # 83
+    "g7_opp_style":    OPP_STYLE_FEATURES,                # 12
+    "g8_behavior":     slice(ACTOR_DIM - 9, ACTOR_DIM),   # 9
+    "action":          slice(ACTOR_DIM, ACTOR_DIM + ACTION_DIM),  # 198
+}
+
+
+def actor_group_weight_norms(
+    net: ActorCriticNet,
+    init_weights: dict[str, torch.Tensor],
+) -> dict[str, float]:
+    """Per encoder-group normalized delta-norm for the actor first linear layer.
+
+    For each group in ACTOR_GROUPS, computes delta_norm / sqrt(n_cols) so values
+    are comparable across groups of different sizes.
+
+    Returns {group_name}_wdelta for every group.
+    """
+    w = net.actor_head.net[0].weight  # [hidden, ACTOR_DIM + ACTION_DIM]
+    result = {}
+    for name, col_slice in ACTOR_GROUPS.items():
+        w_group = w[:, col_slice]
+        n_cols = col_slice.stop - col_slice.start
+        delta = (w_group - init_weights[name]).norm(2).item() / (n_cols ** 0.5)
+        result[f"{name}_wdelta"] = delta
+    return result
+
+
+def build_actor_group_init_weights(net: ActorCriticNet) -> dict[str, torch.Tensor]:
+    """Snapshot actor first-layer column weights for each group. Call once at startup."""
+    w = net.actor_head.net[0].weight
+    return {
+        name: w[:, col_slice].clone()
+        for name, col_slice in ACTOR_GROUPS.items()
     }
 
 

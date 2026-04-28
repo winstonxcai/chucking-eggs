@@ -55,7 +55,9 @@ K_NEG = 5       # hard negative non-candidates to store (for ranking loss)
 
 def _worker(args: tuple) -> list[dict]:
     """Run games in one worker process, return list of decision dicts."""
-    checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf, policy_checkpoint, pi_temp, rollout_mix, worker_id, log_file = args
+    (checkpoint_path, n_decisions, n_det, top_k, seed, use_value_leaf,
+     policy_checkpoint, pi_temp, rollout_mix, opponents, selfplay_frac,
+     worker_id, log_file) = args
 
     import random
     import numpy as np_w
@@ -80,6 +82,7 @@ def _worker(args: tuple) -> list[dict]:
     torch.manual_seed(seed)
 
     from guandan.agents.partner_oracle_bot import PartnerOracleBot, _reflect_env
+    from guandan.agents.partner_pimc_bot import ROLLOUT_FACTORIES
     from guandan.cards import Rank
     from guandan.game import GuanDanEnv
     from guandan.azguan import (
@@ -138,12 +141,31 @@ def _worker(args: tuple) -> list[dict]:
         dynamic_ncols=True,
     )
 
+    # Pre-instantiate opponent bots once (reused across games for cheap reset).
+    opp_bots = {name: ROLLOUT_FACTORIES[name](Rank.TWO) for name in (opponents or [])}
+
     while len(all_decisions) < n_decisions:
         env.reset()
         game_buf: list[dict] = []  # decisions this game (z backfilled at end)
 
+        # Pick game mode: opponent game (seats 1,3 are a fixed external bot)
+        # or self-play (all 4 seats are our policy).
+        if opp_bots and random.random() >= selfplay_frac:
+            opp_name = random.choice(list(opp_bots.keys()))
+            opp_bot = opp_bots[opp_name]
+            our_team = (0, 2)
+        else:
+            opp_bot = None
+            our_team = (0, 1, 2, 3)
+
         while not env.done:
             player = env.current_player
+
+            # Opponent seats: play their action, do not record.
+            if opp_bot is not None and player not in our_team:
+                env.step(opp_bot.act(env, player))
+                continue
+
             legal = env.legal_moves(player)
 
             if len(legal) == 1:
@@ -277,6 +299,8 @@ def generate(
     policy_checkpoint: str | None = None,
     pi_temp: float = 1.0,
     rollout_mix: list[str] | None = None,
+    opponents: list[str] | None = None,
+    selfplay_frac: float = 0.0,
     run_dir: Path | None = None,
 ) -> dict[str, np.ndarray]:
     if rollout_mix is None:
@@ -288,7 +312,8 @@ def generate(
     log_file = str(run_dir / "train.log") if run_dir else None
     args_list = [
         (checkpoint, per_worker, n_det, top_k, seed + w, use_value_leaf,
-         policy_checkpoint, pi_temp, rollout_mix, w, log_file)
+         policy_checkpoint, pi_temp, rollout_mix, opponents, selfplay_frac,
+         w, log_file)
         for w in range(workers)
     ]
 
@@ -299,6 +324,8 @@ def generate(
         log.info(f"  policy_ckpt    = {policy_checkpoint}  (hybrid oracle)")
     log.info(f"  decisions      = {n_decisions:,}  n_det={n_det}  K={top_k}  workers={workers}")
     log.info(f"  rollout_mix    = {rollout_mix}  pi_temp={pi_temp}")
+    if opponents:
+        log.info(f"  opponents      = {opponents}  selfplay_frac={selfplay_frac}")
     log.info("=" * 64)
 
     if run_dir:
@@ -313,6 +340,8 @@ def generate(
             "use_value_leaf": use_value_leaf,
             "pi_temp": pi_temp,
             "rollout_mix": rollout_mix,
+            "opponents": opponents,
+            "selfplay_frac": selfplay_frac,
             "run_dir": str(run_dir),
         }
         (run_dir / "config.json").write_text(json.dumps(config, indent=2))
@@ -428,11 +457,19 @@ def main() -> None:
     ap.add_argument("--rollout-mix", default="jidan",
                     help="Comma-separated rollout policies sampled per-determinization "
                          "(e.g. 'jidan,yaoji,strategic'). Default: 'jidan'.")
+    ap.add_argument("--opponents", default="",
+                    help="Comma-separated opponent bots played at seats {1,3} for the "
+                         "fraction (1 - selfplay-frac) of games. Empty = pure self-play.")
+    ap.add_argument("--selfplay-frac", type=float, default=0.0,
+                    help="Fraction of games where all 4 seats are our policy "
+                         "(0.0 = pure opponent games when --opponents is set; "
+                         "0.5 = half self-play, half opponent).")
     ap.add_argument("--run-dir", default=None,
                     help="Run directory for logs/config (default: ml/runs/selfplay_{stem}_{ts}).")
     args = ap.parse_args()
 
     rollout_mix = [s.strip() for s in args.rollout_mix.split(",") if s.strip()]
+    opponents = [s.strip() for s in args.opponents.split(",") if s.strip()] or None
 
     out = Path(args.out)
     if args.run_dir:
@@ -452,6 +489,8 @@ def main() -> None:
         policy_checkpoint=args.policy_checkpoint,
         pi_temp=args.pi_temp,
         rollout_mix=rollout_mix,
+        opponents=opponents,
+        selfplay_frac=args.selfplay_frac,
         run_dir=run_dir,
     )
 

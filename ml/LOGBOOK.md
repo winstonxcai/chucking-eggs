@@ -1129,7 +1129,142 @@ distribution:
 
 ---
 
-## 33. What this logbook is for
+## 33. Run 7 — opp-style features + reactive curriculum (2026-04-29)
+
+**Setup**: from-scratch (no warmstart), `selfplay_frac=0.0`, opponent_mix=jidan/yaoji/strategic,
+reactive curriculum (`curriculum_temp=0.3`), Group 7 opp-style features (12 dims, slots 755–767),
+`val_patience=8` (run 1), then resumed best checkpoint with `val_patience=0` (run 2 / r2).
+
+**Key changes vs run 6**: opponent-style encoder features, reactive curriculum, no self-play.
+
+### Run 1 (from-scratch → early stop at 2.95M)
+
+| iter | dec | metric | jidan | yaoji | strategic | note |
+|---|---|---|---|---|---|---|
+| 50 | 0.10M | −0.940 | 42.0% | 14.0% | 27.0% | first eval |
+| 100 | 0.20M | −0.370 | 37.0% | 26.0% | 33.0% | |
+| 150 | 0.31M | +0.163 | 45.0% | 40.0% | 51.0% | metric crosses 0 |
+| 200 | 0.40M | +0.280 | 52.0% | 34.0% | 61.0% | |
+| 250 | 0.50M | +0.187 | 55.0% | 33.0% | 48.0% | yaoji dip |
+| 300 | 0.62M | −0.117 | 40.0% | 30.0% | 43.0% | regression |
+| 350 | 0.73M | +0.300 | 52.0% | 36.0% | 53.0% | recovery |
+| 400 | 0.85M | +0.373 | 57.0% | 42.0% | 51.0% | |
+| 450 | 0.96M | +0.277 | 53.0% | 39.0% | 52.0% | |
+| 500 | 1.07M | +0.387 | 64.0% | 35.0% | 51.0% | jidan spikes |
+| 550 | 1.19M | +0.287 | 59.0% | 36.0% | 49.0% | |
+| 600 | 1.30M | +0.187 | 57.0% | 33.0% | 45.0% | |
+| 650 | 1.41M | +0.430 | 60.0% | 34.0% | 56.0% | |
+| 700 | 1.53M | +0.557 | 60.0% | 41.0% | 57.0% | |
+| 750 | 1.63M | +0.457 | 61.0% | 37.0% | 59.0% | |
+| 800 | 1.73M | +0.537 | 59.0% | 42.0% | 60.0% | |
+| 850 | 1.84M | +0.523 | 68.0% | 42.0% | 52.0% | jidan all-time high |
+| 900 | 1.94M | +0.593 | 65.0% | 34.0% | 61.0% | |
+| 950 | 2.05M | +0.723 | 62.0% | 49.0% | 58.0% | yaoji breaks 49% |
+| 1000 | 2.16M | +0.770 | 63.0% | 48.0% | 64.0% | best (run 1 main) |
+| 1050 | 2.25M | +0.643 | 66.0% | 41.0% | 65.0% | |
+| 1100 | 2.35M | +0.560 | 65.0% | 46.0% | 59.0% | |
+| 1150 | 2.45M | +0.737 | 68.0% | 47.0% | 59.0% | |
+| 1200 | 2.55M | +0.680 | 63.0% | 51.0% | 58.0% | yaoji breaks 50% |
+| 1250 | 2.65M | +0.680 | 60.0% | 54.0% | 56.0% | yaoji all-time high |
+| 1300 | 2.75M | +0.703 | 63.0% | 50.0% | 58.0% | |
+| 1350 | 2.85M | +0.550 | 63.0% | 52.0% | 54.0% | |
+| 1400 | 2.95M | +0.597 | 60.0% | 46.0% | 55.0% | early stop (patience=8) |
+| — | 3.18M | **+0.960** | — | — | — | concurrent job best; resumed here |
+
+Three concurrent jobs ran into the same volume (accidental duplicate launches). The best
+checkpoint (metric=+0.960 at 3.18M) came from the first job and was used to seed run 2.
+
+### Run 2 (resume from best checkpoint, val_patience=0)
+
+Resumed at cumulative_decisions=3,181,364 / iter=1501. No early stopping.
+
+| iter | dec | metric | jidan | yaoji | strategic | note |
+|---|---|---|---|---|---|---|
+| 1550 | 3.28M | +0.737 | 58.0% | 45.0% | 62.0% | |
+| 1600 | 3.38M | +0.720 | 60.0% | 49.0% | 60.0% | |
+| 1650 | 3.48M | +0.671 | 54.0% | 50.0% | 64.0% | |
+| 1700 | 3.58M | +0.690 | 59.0% | 47.0% | 65.0% | |
+| 1750 | 3.68M | +0.837 | 60.0% | 52.0% | 62.0% | |
+| 1800 | 3.78M | +0.827 | 59.0% | 47.0% | 70.0% | strategic breaks 70% |
+| 1850 | 3.88M | +0.880 | 60.0% | 42.0% | 77.0% | strategic all-time high |
+| 1900 | 3.98M | +0.880 | 63.0% | 47.0% | 67.0% | |
+| 1950 | 4.08M | +0.727 | 61.0% | 45.0% | 63.0% | |
+| 2000 | 4.18M | +0.883 | 65.0% | 49.0% | 66.0% | |
+| 2050 | 4.28M | +0.787 | 64.0% | 46.0% | 64.0% | |
+| 2100 | 4.38M | +0.823 | 59.0% | 48.0% | 66.0% | |
+| 2150 | 4.48M | +0.887 | 63.0% | 47.0% | 70.0% | best so far (r2) |
+| 2200 | 4.58M | +0.763 | 63.0% | 52.0% | 59.0% | yaoji ties best |
+| 2250 | 4.68M | +0.633 | 57.0% | 50.0% | 60.0% | |
+| 2300 | 4.78M | +0.697 | 56.0% | 52.0% | 62.0% | |
+| 2350 | 4.88M | +0.697 | 56.0% | 52.0% | 62.0% | |
+| 2400 | 4.98M | +0.867 | 57.0% | 51.0% | 61.0% | |
+| 2450 | 5.08M | +0.920 | 60.0% | 52.0% | 69.0% | |
+| 2500 | 5.18M | +0.803 | 60.0% | 52.0% | 60.0% | |
+| 2550 | 5.28M | +0.713 | 62.0% | 42.0% | 68.0% | |
+| 2600 | 5.38M | +0.897 | 59.0% | 52.0% | 69.0% | |
+| 2650 | 5.48M | +0.730 | 61.0% | 40.0% | 65.0% | |
+| 2700 | 5.58M | +0.940 | 66.0% | 56.0% | 61.0% | yaoji hits 56% |
+| 2750 | 5.68M | +0.683 | 58.0% | 51.0% | 59.0% | |
+| 2800 | 5.78M | +0.890 | 62.0% | 47.0% | 67.0% | |
+| 2850 | 5.88M | +1.023 | 70.0% | 52.0% | 71.0% | new best (r2); jidan 70% |
+| 2900 | 5.98M | +0.820 | 61.0% | 52.0% | 68.0% | |
+| 2950 | 6.08M | +1.030 | 68.0% | 52.0% | 77.0% | all-time high metric; strategic 77% again |
+| 3000 | 6.18M | +0.663 | 53.0% | 50.0% | 64.0% | |
+| 3050 | 6.28M | +0.770 | 61.0% | 48.0% | 64.0% | |
+| 3100 | 6.38M | +0.728 | 59.0% | 51.0% | 61.0% | *run in progress* |
+
+### Opp-style weight-norm diagnostic
+
+Delta norm (distance of actor first-layer opp-style columns from init) grows monotonically
+0.03 → 1.22 over 1.8M decisions (iters 1501→2441), confirming the network actively learns
+to use the opponent-style features. Norm grows 1.91 → 2.17 (rotation, not just scaling).
+
+---
+
+## 34. Rollout perf experiments — GPU inference server + worker scaling (2026-04-29)
+
+Goal: target a 3× rollout-throughput speedup. Two changes tested independently
+and in combination on Modal A10G (cpu=48), 60K decisions, 8K iter_decisions,
+hidden=256, no warmstart, opp-mix={jidan,yaoji,strategic}.
+
+| Config | Workers | GPU server | Wall | Decisions | dec/s | vs A |
+|---|---|---|---|---|---|---|
+| A | 32 | off (baseline) | 48 s | 60,221 | **1,335** | 1.00× |
+| B | 32 | on             | 86 s | 60,099 | 722   | 0.54× |
+| C | 64 | off            | 49 s | 60,186 | 1,380 | 1.03× |
+| D | 64 | on             | 92 s | 62,967 | 729   | 0.55× |
+
+**Key findings:**
+
+1. **GPU inference server hurts at hidden=256** (-45% on both 32 and 64 worker configs).
+   The IPC overhead (mp.Queue pickling each (state, action) batch + reply) exceeds
+   the time saved by GPU forward at this small network size. Server stats show
+   actor avg batch ≈ 56, critic avg batch ≈ 5.5 — far below GPU saturation.
+   Each decision pays 2 round-trips (~150-500 μs each) for what was a 50 μs CPU
+   forward; net loss.
+2. **Doubling workers 32 → 64 gives only +3% throughput** (1335 → 1380 dec/s).
+   We're hitting diminishing returns — likely the per-iter `torch.save(state_dict)`
+   to disk + Pool dispatch overhead, not raw CPU compute. cpu=48 oversubscription
+   may also limit 64-worker mode.
+
+**What this means for the 3× speedup target:**
+
+- The GPU server design is correct and validated (actor batches form, replies
+  return in order, weight sync each iter works), but the *economics* don't pay
+  off until the network is large enough that GPU forward dominates IPC. At
+  hidden=512+, this likely flips. Re-evaluate alongside any capacity bump.
+- The CPU baseline at 1380 dec/s on 64 workers is already the best we can do
+  without changing the rollout architecture. Further gains require attacking
+  Python overhead (Numba/Cython on `combos.py` + `encoders.py`), or amortizing
+  weight sync (broadcast via mp.Manager / shared memory instead of disk save).
+
+**Not a bug to fix; a finding to remember:** keep `--use-gpu-inference` off in
+production until/unless we move to a larger network or replace mp.Queue IPC
+with a faster shared-memory transport.
+
+---
+
+## 35. What this logbook is for
 
 When designing the next training run:
 - Do NOT propose QMIX, GNN, PIMC, or aux-head-without-selection-pressure. They are all on the failure list above.

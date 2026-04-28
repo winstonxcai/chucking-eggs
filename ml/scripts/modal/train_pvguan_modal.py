@@ -70,6 +70,7 @@ def train_remote(
     val_patience:         int,
     warmstart_path:       str | None,
     going_out_shape:      float,
+    curriculum_temp:      float,
     run_dir_override:     str | None,
 ) -> str:
     import os
@@ -101,6 +102,7 @@ def train_remote(
         "--selfplay-frac",           str(selfplay_frac),
         "--val-patience",            str(val_patience),
         "--going-out-shape",         str(going_out_shape),
+        "--curriculum-temp",         str(curriculum_temp),
     ]
     if opponent_mix:
         cmd.extend(["--opponent-mix", opponent_mix])
@@ -143,6 +145,7 @@ def main(
     val_patience:         int   = 0,
     warmstart_path:       str   = "",
     going_out_shape:      float = 0.0,
+    curriculum_temp:      float = 0.3,
     run_dir_override:     str   = "",
 ) -> None:
     result = train_remote.remote(
@@ -166,6 +169,7 @@ def main(
         val_patience=val_patience,
         warmstart_path=warmstart_path if warmstart_path else None,
         going_out_shape=going_out_shape,
+        curriculum_temp=curriculum_temp,
         run_dir_override=run_dir_override if run_dir_override else None,
     )
     print(result)

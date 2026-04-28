@@ -18,7 +18,7 @@ import torch.nn.functional as F
 
 from .actor_critic import ActorCriticNet
 from .buffer import PPOBatch
-from .encoders import CRITIC_PRIV
+from .encoders import CRITIC_PRIV, OPP_STYLE_FEATURES
 
 
 class RunLogger:
@@ -168,12 +168,26 @@ def pv_ac_priv_slots_zero(batch: PPOBatch) -> bool:
     return bool(priv.abs().max().item() == 0.0)
 
 
+def opp_style_weight_norms(
+    net: ActorCriticNet,
+    init_opp_style_weights: torch.Tensor,
+) -> dict[str, float]:
+    """L2 norm and delta-norm of actor first-layer opp-style-feature columns."""
+    w = net.actor_head.net[0].weight[:, OPP_STYLE_FEATURES]
+    norm  = w.norm(2).item()
+    delta = (w - init_opp_style_weights).norm(2).item()
+    return {
+        "opp_style_weight_norm":       norm,
+        "opp_style_weight_delta_norm": delta,
+    }
+
+
 def critic_priv_weight_norms(
     net: ActorCriticNet,
     init_priv_weights: torch.Tensor,
 ) -> dict[str, float]:
     """L2 norm and delta-norm of critic first-layer privileged-slot weights."""
-    # Privileged columns start at index 755 in the critic input
+    # Privileged columns start at index 767 in the critic input
     w = net.critic_head.net[0].weight[:, CRITIC_PRIV]
     norm  = w.norm(2).item()
     delta = (w - init_priv_weights).norm(2).item()
@@ -207,7 +221,7 @@ def build_priv_probe_set(
 
     For PV-AC mode the privileged slots are already zero, so both tensors are
     identical (sensitivity will be ~0). For PV-PTIE the with_priv tensor has
-    real opponent hands and zero_priv has slots[755:875] zeroed out.
+    real opponent hands and zero_priv has slots[767:887] zeroed out.
     """
     N = batch.state_critic.shape[0]
     g = torch.Generator(device="cpu")

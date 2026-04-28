@@ -93,6 +93,10 @@ class RolloutConfig:
     # Mixed-opponent mode (see module docstring)
     opponent_mix:    tuple[str, ...] = ()
     selfplay_frac:   float = 1.0
+    # Reactive curriculum: per-opponent sampling weights (unnormalized).
+    # Updated by trainer after each validation eval via softmax(-wr/temp).
+    # None = uniform (default).
+    opp_weights: dict[str, float] | None = None
     # Going-out reward shaping (potential-based, preserves optimal policy).
     # 0.0 = off (legacy terminal-only). When > 0: player gets +shape at the
     # step they go out, and -shape adjustment to their terminal reward.
@@ -168,7 +172,12 @@ def _play_one_hand(
     rng = random.Random(deal_seed)
 
     if opp_bots and rng.random() >= cfg.selfplay_frac:
-        opp_name = rng.choice(list(opp_bots.keys()))
+        names = list(opp_bots.keys())
+        if cfg.opp_weights:
+            weights = [cfg.opp_weights.get(n, 1.0) for n in names]
+            opp_name = rng.choices(names, weights=weights, k=1)[0]
+        else:
+            opp_name = rng.choice(names)
         opp_bot  = opp_bots[opp_name]
         our_team: set[int] = {0, 2}
     else:

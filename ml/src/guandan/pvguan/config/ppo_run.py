@@ -59,6 +59,12 @@ class PPORunConfig:
     opponent_mix:    tuple[str, ...] = ()  # e.g. ("jidan", "yaoji", "strategic")
     selfplay_frac:   float = 1.0           # 1.0 = pure self-play (legacy)
 
+    # ── reactive curriculum ──────────────────────────────────────────────────
+    # After each val eval, opponent sampling weights are recomputed as
+    # softmax(-wr / curriculum_temp). Higher temp → more uniform sampling.
+    # 0.0 = off (uniform, legacy behavior).
+    curriculum_temp: float = 0.3
+
     # ── reward shaping ───────────────────────────────────────────────────────
     going_out_shape: float = 0.0           # 0 = off; >0 enables potential-based shaping
 
@@ -144,6 +150,7 @@ class PPORunConfig:
                 if s.strip()
             ),
             selfplay_frac=getattr(args, "selfplay_frac", 1.0),
+            curriculum_temp=getattr(args, "curriculum_temp", 0.3),
             going_out_shape=getattr(args, "going_out_shape", 0.0),
         )
 
@@ -169,7 +176,8 @@ class PPORunConfig:
                 f"opponents={list(self.val_opponents)}  "
                 f"patience={self.val_patience or 'off'}",
             f"  rollout opp_mix = {list(self.opponent_mix) or 'none (pure self-play)'}  "
-                f"selfplay_frac={self.selfplay_frac}",
+                f"selfplay_frac={self.selfplay_frac}  "
+                f"curriculum_temp={self.curriculum_temp or 'off'}",
             f"  run_dir         = {self.resolved_run_dir}  (auto-timestamped)",
         ]
         return "\n".join(lines)

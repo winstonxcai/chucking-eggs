@@ -7,8 +7,8 @@ Coordinate convention (always applied after _reflect_env in the caller):
   teammate_lo = seat 0, teammate_hi = seat 2
   opp_l = seat 1,  opp_r = seat 3
 
-Both ablations (PV-AC, PV-PTIE) share the same 875-dim critic width.
-The only difference is whether privileged slots [755:875] carry opponent cards.
+Both ablations (PV-AC, PV-PTIE) share the same 887-dim critic width.
+The only difference is whether privileged slots [767:887] carry opponent cards.
 """
 
 from __future__ import annotations
@@ -37,10 +37,10 @@ from ..azguan.behavior_flags import FLAG_DIM, compute_behavior_flags
 
 # ─── Dimension constants ──────────────────────────────────────────────────────
 
-STATE_FEATURES_DIM = 755   # Groups 1–6, action-independent
-ACTOR_DIM = 764            # 755 + 9 behavior flags
+STATE_FEATURES_DIM = 767   # Groups 1–7, action-independent
+ACTOR_DIM = 776            # 767 + 9 behavior flags
 ACTION_DIM = 198
-CRITIC_DIM = 875           # 755 + 120 privileged slots
+CRITIC_DIM = 887           # 767 + 120 privileged slots
 
 _PRIV_DIM = 120            # 2 × 60 opponent hand vectors
 _HISTORY_DIM = 83          # encode_move_event output dimension
@@ -83,13 +83,18 @@ LAST_CARDS          = slice(612, 672)   # 60 count vector
 # Group 6 — Move-history summary (83 dims)
 MOVE_HISTORY_MEAN   = slice(672, 755)   # mean of encode_move_event over last T
 
-# Group 7 — Per-action behavior flags (9 dims, actor only)
-BEHAVIOR_FLAGS      = slice(755, 764)
+# Group 7 — Online opponent-style features (12 dims): 6 features × 2 opp seats
+# Order: [opp_l_pass_rate, opp_l_bomb_rate, opp_l_avg_size, opp_l_avg_key,
+#         opp_l_count_norm, opp_l_pair_plus_rate,  ... opp_r ...]
+OPP_STYLE_FEATURES  = slice(755, 767)
+
+# Group 8 — Per-action behavior flags (9 dims, actor only)
+BEHAVIOR_FLAGS      = slice(767, 776)
 
 # Critic privileged tail
-CRITIC_PRIV         = slice(755, 875)   # [755:815] = opp_l hand, [815:875] = opp_r hand
-CRITIC_PRIV_OPP_L   = slice(755, 815)
-CRITIC_PRIV_OPP_R   = slice(815, 875)
+CRITIC_PRIV         = slice(767, 887)   # [767:827] = opp_l hand, [827:887] = opp_r hand
+CRITIC_PRIV_OPP_L   = slice(767, 827)
+CRITIC_PRIV_OPP_R   = slice(827, 887)
 
 # ─── Bomb tier ordering (9 tiers) ────────────────────────────────────────────
 
@@ -184,7 +189,7 @@ def _seq_length(combo) -> int | None:
 
 
 def encode_state_features(env: GuanDanEnv, player: int) -> np.ndarray:
-    """Action-independent state features (Groups 1–6). 755 dims.
+    """Action-independent state features (Groups 1–7). 767 dims.
 
     Single source of truth used by encode_actor_pair_features and
     encode_critic_state. Assumes player ∈ {0, 2} (after _reflect_env).
@@ -295,6 +300,9 @@ def encode_state_features(env: GuanDanEnv, player: int) -> np.ndarray:
     else:
         history_mean = np.zeros(_HISTORY_DIM, dtype=np.float32)
 
+    # ── Group 7: Online opponent-style features (12 dims) ────────────────────
+    opp_style = _compute_opp_style_features(env, OL, OR)
+
     return np.concatenate([
         # Group 1 (420)
         hand_lo, hand_hi, played_lo, played_hi, played_opl, played_opr,
@@ -310,8 +318,49 @@ def encode_state_features(env: GuanDanEnv, player: int) -> np.ndarray:
         last_actor_oh, last_type_oh, last_key_oh, last_cards_vec,
         # Group 6 (83)
         history_mean,
+        # Group 7 (12)
+        opp_style,
     ])
-    # Total: 420 + 40 + 18 + 98 + 96 + 83 = 755
+    # Total: 420 + 40 + 18 + 98 + 96 + 83 + 12 = 767
+
+
+def _compute_opp_style_features(
+    env: GuanDanEnv, opp_l_seat: int, opp_r_seat: int
+) -> np.ndarray:
+    """Per-opponent online playstyle stats from move_history. 12 dims total.
+
+    For each opponent seat: 6 features = pass_rate, bomb_rate, avg_combo_size,
+    avg_combo_key, actions_count_norm, pair_plus_rate. All in [0, 1] range.
+    Computed from this hand only (resets each hand).
+    """
+    feats = np.zeros(12, dtype=np.float32)
+    for slot, seat in enumerate((opp_l_seat, opp_r_seat)):
+        seat_moves = [combo for actor, combo in env.move_history if actor == seat]
+        if not seat_moves:
+            continue
+        total = len(seat_moves)
+        non_pass = [m for m in seat_moves if m.type != ComboType.PASS]
+        n_np = len(non_pass)
+        n_pass = total - n_np
+
+        pass_rate = n_pass / total
+        if n_np > 0:
+            bomb_rate = sum(1 for m in non_pass if m.type in BOMB_TYPES) / n_np
+            avg_size = sum(len(m.cards) for m in non_pass) / n_np / 10.0   # normalize ~[0,1]
+            avg_key = (sum(m.key for m in non_pass) / n_np - 2) / 13.0     # ranks 2..15 → [0,1]
+            pair_plus_rate = sum(1 for m in non_pass if len(m.cards) >= 2) / n_np
+        else:
+            bomb_rate = avg_size = avg_key = pair_plus_rate = 0.0
+        count_norm = min(total / 30.0, 1.0)   # roughly [0,1]; ~30 actions per hand max
+
+        base = slot * 6
+        feats[base + 0] = pass_rate
+        feats[base + 1] = bomb_rate
+        feats[base + 2] = avg_size
+        feats[base + 3] = max(0.0, min(1.0, avg_key))
+        feats[base + 4] = count_norm
+        feats[base + 5] = pair_plus_rate
+    return feats
 
 
 def encode_actor_pair_features(
@@ -320,9 +369,9 @@ def encode_actor_pair_features(
     action,
     legal_moves: list,
 ) -> np.ndarray:
-    """State features + 9-dim per-action behavior flags. 764 dims.
+    """State features + 9-dim per-action behavior flags. 776 dims.
 
-    The first 755 dims are exactly encode_state_features(env, player).
+    The first 767 dims are exactly encode_state_features(env, player).
     """
     state = encode_state_features(env, player)
     flags = compute_behavior_flags(env, player, action, legal_moves)
@@ -429,15 +478,15 @@ def encode_critic_state(
     player: int,
     mode: Literal["pv", "ptie"],
 ) -> np.ndarray:
-    """Action-independent critic state. 875 dims.
+    """Action-independent critic state. 887 dims.
 
-    mode="pv"  : privileged slots [755:875] are all zeros.
+    mode="pv"  : privileged slots [767:887] are all zeros.
     mode="ptie": privileged slots carry opponent hand count vectors.
 
     MUST NOT be called with a candidate-action argument.
-    The state-only portion [0:755] is bit-identical to encode_state_features.
+    The state-only portion [0:767] is bit-identical to encode_state_features.
     """
-    state = encode_state_features(env, player)           # [755]
+    state = encode_state_features(env, player)           # [767]
 
     if mode == "ptie":
         priv_l = cards_to_matrix(env.hands[1]).flatten()  # opp_l = seat 1
@@ -446,4 +495,4 @@ def encode_critic_state(
     else:
         priv = np.zeros(_PRIV_DIM, dtype=np.float32)      # [120]
 
-    return np.concatenate([state, priv])                  # [875]
+    return np.concatenate([state, priv])                  # [887]

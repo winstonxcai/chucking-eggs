@@ -50,9 +50,10 @@ from guandan.pvguan.diagnostics import (
     compute_value_diagnostics,
     critic_priv_sensitivity,
     critic_priv_weight_norms,
+    opp_style_weight_norms,
     pv_ac_priv_slots_zero,
 )
-from guandan.pvguan.encoders import ACTOR_DIM, ACTION_DIM, CRITIC_DIM, CRITIC_PRIV
+from guandan.pvguan.encoders import ACTOR_DIM, ACTION_DIM, CRITIC_DIM, CRITIC_PRIV, OPP_STYLE_FEATURES
 from guandan.pvguan.plot_run import plot_ppo
 from guandan.pvguan.ppo import PPOConfig, PPOTrainer
 from guandan.pvguan.rollout import (
@@ -292,6 +293,10 @@ def main():
                         help="Going-out reward shaping coefficient (0 = off). "
                              "Player gets +shape when they go out; terminal "
                              "reward adjusted -shape to preserve total reward.")
+    parser.add_argument("--curriculum-temp", type=float, default=0.3,
+                        help="Temperature for reactive curriculum opponent weighting. "
+                             "Weights = softmax(-wr / temp) after each val eval. "
+                             "0 = off (uniform sampling).")
     args = parser.parse_args()
 
     device  = get_device()
@@ -337,9 +342,10 @@ def main():
     else:
         log.info("  no warmstart — training from scratch")
 
-    # Capture initial privileged-column weights for delta_norm diagnostic
+    # Capture initial weights for delta_norm diagnostics
     with torch.no_grad():
-        init_priv_w = net.critic_head.net[0].weight[:, CRITIC_PRIV].clone()
+        init_priv_w      = net.critic_head.net[0].weight[:, CRITIC_PRIV].clone()
+        init_opp_style_w = net.actor_head.net[0].weight[:, OPP_STYLE_FEATURES].clone()
 
     # ── PPO trainer ───────────────────────────────────────────────────────────
     ppo_cfg = PPOConfig(
@@ -495,9 +501,10 @@ def main():
             update_wall = time.time() - t_update_start
 
             # 4. Diagnostics
-            val_diag   = compute_value_diagnostics(batch)
-            pol_diag   = compute_policy_diagnostics(net, batch, temperature=run_cfg.temperature)
-            priv_norms = critic_priv_weight_norms(net, init_priv_w)
+            val_diag    = compute_value_diagnostics(batch)
+            pol_diag    = compute_policy_diagnostics(net, batch, temperature=run_cfg.temperature)
+            priv_norms  = critic_priv_weight_norms(net, init_priv_w)
+            opp_s_norms = opp_style_weight_norms(net, init_opp_style_w)
             roll_stats = buf.stats.summary()
 
             # Build the priv-sensitivity probe set on the first batch, then
@@ -528,6 +535,7 @@ def main():
                 **val_diag,
                 **pol_diag,
                 **priv_norms,
+                **opp_s_norms,
                 **roll_stats,
             }
 
@@ -555,7 +563,10 @@ def main():
 
             # Live figures (every 10 iters)
             if iter_idx % 10 == 0:
-                plot_ppo(run_dir)
+                try:
+                    plot_ppo(run_dir)
+                except Exception:
+                    pass
 
             # ── Inline validation ─────────────────────────────────────────────
             if (run_cfg.val_every > 0
@@ -598,6 +609,26 @@ def main():
                         f"consecutive evals (best={best_val_metric:+.3f})"
                     )
                     break
+
+                # Reactive curriculum: update opponent sampling weights
+                if run_cfg.curriculum_temp > 0 and run_cfg.opponent_mix:
+                    wrs = {
+                        name: val_row[f"vs_{name}"]["win_rate"]
+                        for name in run_cfg.opponent_mix
+                        if f"vs_{name}" in val_row
+                    }
+                    if wrs:
+                        names = list(wrs.keys())
+                        neg_wrs = np.array([-wrs[n] for n in names])
+                        logits = neg_wrs / run_cfg.curriculum_temp
+                        logits -= logits.max()  # numerical stability
+                        w = np.exp(logits)
+                        w /= w.sum()
+                        rollout_cfg.opp_weights = dict(zip(names, w.tolist()))
+                        log.info(
+                            "  curriculum: "
+                            + " ".join(f"{n}={v:.3f}" for n, v in rollout_cfg.opp_weights.items())
+                        )
 
             # Periodic snapshot checkpoints (every snapshot_interval decisions)
             while cumulative_decisions >= next_snapshot:

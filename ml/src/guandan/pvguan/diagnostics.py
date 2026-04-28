@@ -1,11 +1,13 @@
 """Per-iter telemetry for pvguan PPO runs.
 
 Metrics are written to metrics.jsonl (one JSON line per iter).
+Console + file logging via the standard logging module.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -20,41 +22,73 @@ from .encoders import CRITIC_PRIV
 
 
 class RunLogger:
-    """Writes config.json, train.log, and metrics.jsonl to a run directory."""
+    """Structured logging for a PPO training run.
+
+    Files written to run_dir:
+      config.json          — hyperparameters (written once at init)
+      train.log            — timestamped human-readable log
+      metrics.jsonl        — one JSON line per iter (all metrics)
+      validation_eval.jsonl
+      snapshot_eval.jsonl
+    """
 
     def __init__(self, run_dir: Path, config: dict) -> None:
         run_dir.mkdir(parents=True, exist_ok=True)
         self.run_dir = run_dir
         self._metrics_path = run_dir / "metrics.jsonl"
-        self._log_path = run_dir / "train.log"
-        self._val_path = run_dir / "validation_eval.jsonl"
-        self._snap_path = run_dir / "snapshot_eval.jsonl"
-        self._start_time = time.time()
+        self._val_path     = run_dir / "validation_eval.jsonl"
+        self._snap_path    = run_dir / "snapshot_eval.jsonl"
+        self._start_time   = time.time()
 
         with open(run_dir / "config.json", "w") as f:
             json.dump(config, f, indent=2)
 
+        # ── Python logger ───────────────────────────────────────────────────
+        log_name = f"train_pvguan.{run_dir.name}"
+        self.log = logging.getLogger(log_name)
+        self.log.setLevel(logging.DEBUG)
+        self.log.handlers.clear()
+        self.log.propagate = False
+
+        fmt_file = logging.Formatter(
+            "%(asctime)s  %(levelname)-7s  %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        fmt_con = logging.Formatter("%(message)s")
+
+        fh = logging.FileHandler(run_dir / "train.log", mode="w", encoding="utf-8")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(fmt_file)
+
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        ch.setFormatter(fmt_con)
+
+        self.log.addHandler(fh)
+        self.log.addHandler(ch)
+
     def log_iter(self, metrics: dict[str, Any]) -> None:
+        # Structured record
         with open(self._metrics_path, "a") as f:
             f.write(json.dumps(metrics) + "\n")
 
-        # Console summary
-        it = metrics.get("iter", "?")
-        dec = metrics.get("cumulative_decisions", 0)
-        r = metrics.get("terminal_reward_mean", 0.0)
-        H = metrics.get("entropy_legal", 0.0)
-        ev = metrics.get("explained_variance_current", 0.0)
-        cf = metrics.get("clip_fraction", 0.0)
-        kl = metrics.get("approx_kl", 0.0)
+        # Human-readable summary line (file + console via logging)
+        it     = metrics.get("iter", 0)
+        dec    = metrics.get("cumulative_decisions", 0)
+        total  = metrics.get("total_decisions", 0)
+        r      = metrics.get("terminal_reward_mean", 0.0)
+        H      = metrics.get("entropy_legal", 0.0)
+        ev     = metrics.get("explained_variance_old", 0.0)
+        cf     = metrics.get("clip_fraction", 0.0)
+        kl     = metrics.get("approx_kl", 0.0)
         t_iter = metrics.get("iter_wall_s", 0.0)
-        line = (
-            f"iter {it:4d} | dec {dec/1e3:.0f}k | "
+        frozen = " [critic-warmup]" if metrics.get("actor_frozen") else ""
+        pct    = f"{100*dec/total:.1f}%" if total else ""
+        self.log.info(
+            f"iter {it:4d} | {dec/1e3:.0f}k/{total/1e3:.0f}k dec ({pct}) | "
             f"r̄={r:+.3f} | H={H:.2f} | EV={ev:.2f} | "
-            f"clip={cf:.2f} | KL={kl:.4f} | t={t_iter:.1f}s"
+            f"clip={cf:.2f} | KL={kl:.4f} | t={t_iter:.1f}s{frozen}"
         )
-        print(line)
-        with open(self._log_path, "a") as f:
-            f.write(line + "\n")
 
     def log_val(self, row: dict[str, Any]) -> None:
         with open(self._val_path, "a") as f:
@@ -72,6 +106,7 @@ def compute_policy_diagnostics(
     net: ActorCriticNet,
     batch: PPOBatch,
     temperature: float = 1.0,
+    chunk: int = 4096,
 ) -> dict[str, float]:
     """Entropy, top-1 prob, logit std, KL to warm-start (if available)."""
     net.eval()
@@ -79,7 +114,12 @@ def compute_policy_diagnostics(
         N, max_K, _ = batch.state_actor.shape
         sa_flat = batch.state_actor.view(N * max_K, -1)
         ac_flat = batch.actions.view(N * max_K, -1)
-        logits_flat = net.score_actions(sa_flat, ac_flat) / temperature
+        # Chunked forward pass to avoid OOM on large batches
+        logits_parts = [
+            net.score_actions(sa_flat[i:i+chunk], ac_flat[i:i+chunk])
+            for i in range(0, N * max_K, chunk)
+        ]
+        logits_flat = torch.cat(logits_parts, dim=0) / temperature
         logits = logits_flat.view(N, max_K).masked_fill(~batch.legal_mask, -1e9)
         log_probs = F.log_softmax(logits, dim=-1)
         probs = log_probs.exp() * batch.legal_mask.float()
@@ -156,3 +196,24 @@ def critic_priv_sensitivity(
         sens = (v_real - v_zero).abs().mean().item()
     net.train()
     return sens
+
+
+def build_priv_probe_set(
+    batch: PPOBatch,
+    n_probe: int = 100,
+    seed: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample n_probe critic states from a batch, return (with_priv, zero_priv).
+
+    For PV-AC mode the privileged slots are already zero, so both tensors are
+    identical (sensitivity will be ~0). For PV-PTIE the with_priv tensor has
+    real opponent hands and zero_priv has slots[755:875] zeroed out.
+    """
+    N = batch.state_critic.shape[0]
+    g = torch.Generator(device="cpu")
+    g.manual_seed(seed)
+    idx = torch.randperm(N, generator=g)[: min(n_probe, N)]
+    with_priv = batch.state_critic[idx].clone()
+    zero_priv = with_priv.clone()
+    zero_priv[:, CRITIC_PRIV] = 0.0
+    return with_priv, zero_priv

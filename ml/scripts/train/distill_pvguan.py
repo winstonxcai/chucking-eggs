@@ -20,7 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
+import logging
 import math
 import multiprocessing as mp
 import random
@@ -33,6 +33,9 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
+from tqdm.contrib.concurrent import process_map
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
@@ -46,6 +49,8 @@ from guandan.cards import Rank
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
 from guandan.pvguan.actor_critic import ActorCriticNet, get_device
+from guandan.pvguan.config import DistillConfig
+from guandan.pvguan.plot_run import plot_distill
 from guandan.pvguan.encoders import (
     ACTION_DIM,
     ACTOR_DIM,
@@ -54,6 +59,40 @@ from guandan.pvguan.encoders import (
 )
 
 MAX_LEGAL_PER_SAMPLE = 64
+
+log = logging.getLogger("distill_pvguan")
+
+
+# ─── Logging setup ────────────────────────────────────────────────────────────
+
+def _setup_logger(output_path: Path) -> None:
+    log_path = output_path.with_suffix(".log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    root = logging.getLogger("distill_pvguan")
+    root.setLevel(logging.DEBUG)
+    root.handlers.clear()
+
+    # File: full timestamps + level
+    fmt_file = logging.Formatter(
+        "%(asctime)s  %(levelname)-7s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    # Console: clean message only (tqdm handles its own output)
+    fmt_con = logging.Formatter("%(message)s")
+
+    fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(fmt_file)
+
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(fmt_con)
+
+    root.addHandler(fh)
+    root.addHandler(ch)
+    root.propagate = False
+    log.debug(f"Log file: {log_path}")
 
 
 # ─── Partner-Visible Info State ───────────────────────────────────────────────
@@ -144,7 +183,6 @@ def _worker(args: tuple) -> list[dict]:
 
         while not env.done:
             player = env.current_player
-            # Always collect from both canonical teams; reflect if needed
             needs_reflect = player in (1, 3)
             canonical_player = player ^ 1 if needs_reflect else player
             enc_env = _reflect_env(env) if needs_reflect else env
@@ -155,8 +193,6 @@ def _worker(args: tuple) -> list[dict]:
                 env.step(pick)
                 continue
 
-            # Get supervisor pick from partner-visible info state
-            info = PartnerVisibleInfoState.from_env(enc_env, canonical_player)
             sup_pick = supervisor.act(enc_env, canonical_player)
             pick_key = _combo_key(sup_pick)
 
@@ -164,7 +200,6 @@ def _worker(args: tuple) -> list[dict]:
                 (i for i, a in enumerate(legal) if _combo_key(a) == pick_key), 0
             )
 
-            # Cap legal moves to bound memory
             if len(legal) > MAX_LEGAL_PER_SAMPLE:
                 scored = sorted(range(len(legal)),
                                 key=lambda i: sum(c.rank for c in legal[i].cards))
@@ -188,11 +223,49 @@ def _worker(args: tuple) -> list[dict]:
                 for a in capped_legal
             ]).astype(np.float32)
 
-            samples.append({"states": sa, "actions": ac, "pick_idx": pick_idx})
+            samples.append({
+                "states":     sa,
+                "actions":    ac,
+                "pick_idx":   pick_idx,
+                "n_legal":    len(capped_legal),
+                "is_pass":    sup_pick.type.name == "PASS",
+                "level_rank": level_rank,
+            })
             env.step(sup_pick)
 
     return samples[:n_dec]
 
+
+# ─── Collection stats ─────────────────────────────────────────────────────────
+
+def _log_collection_stats(samples: list[dict]) -> None:
+    Ks        = np.array([s["n_legal"]    for s in samples])
+    is_pass   = np.array([s["is_pass"]    for s in samples], dtype=bool)
+    ranks     = np.array([s["level_rank"] for s in samples])
+
+    log.info(f"  K (legal moves/decision):  "
+             f"mean={Ks.mean():.1f}  "
+             f"p50={np.percentile(Ks, 50):.0f}  "
+             f"p95={np.percentile(Ks, 95):.0f}  "
+             f"max={Ks.max()}")
+    log.info(f"  pass_rate={is_pass.mean():.3f}  "
+             f"non_trivial (K>1)={(Ks > 1).mean():.3f}")
+
+    # Level rank distribution (should be roughly uniform over 2..14)
+    rank_names  = "2  3  4  5  6  7  8  9  T  J  Q  K  A"
+    rank_counts = "  ".join(f"{(ranks == r).sum():4d}" for r in range(2, 15))
+    log.info(f"  level_rank dist:  {rank_names}")
+    log.info(f"                    {rank_counts}")
+
+    # Memory estimate for 764+198 tensors at float32
+    mem_mb = sum(
+        s["states"].nbytes + s["actions"].nbytes for s in samples
+    ) / 1e6
+    log.info(f"  dataset RAM: {mem_mb:.0f} MB  "
+             f"({len(samples):,} samples)")
+
+
+# ─── Data collection ──────────────────────────────────────────────────────────
 
 def collect_data(
     n_decisions: int,
@@ -204,61 +277,73 @@ def collect_data(
     seed: int,
     level_range: tuple[int, int] = (2, 14),
 ) -> list[dict]:
-    per_worker = math.ceil(n_decisions / workers)
-    print(f"  data: {workers} workers × {per_worker} decisions (target {n_decisions})",
-          flush=True)
-    t0 = time.time()
+    # Split into workers*4 chunks for a smoother progress bar
+    n_chunks  = max(workers * 4, 4)
+    per_chunk = math.ceil(n_decisions / n_chunks)
+
+    log.info(f"  data collection:  {workers} workers  "
+             f"{n_chunks} chunks × ~{per_chunk:,} decisions  "
+             f"(target {n_decisions:,})")
 
     arg_list = [
-        (per_worker, level_range, seed + w, sup_name, use_search, n_det, ckpt_path)
-        for w in range(workers)
+        (per_chunk, level_range, seed + w, sup_name, use_search, n_det, ckpt_path)
+        for w in range(n_chunks)
     ]
 
-    if workers == 1:
-        all_samples = _worker(arg_list[0])
-    else:
-        ctx = mp.get_context("spawn")
-        with ctx.Pool(workers) as pool:
-            results = pool.map(_worker, arg_list)
-        all_samples = [s for chunk in results for s in chunk]
+    t0 = time.time()
+    with logging_redirect_tqdm(loggers=[log]):
+        results = process_map(
+            _worker, arg_list,
+            max_workers=workers,
+            desc="collecting",
+            unit="chunk",
+            leave=True,
+        )
 
+    all_samples = [s for chunk in results for s in chunk][:n_decisions]
     elapsed = time.time() - t0
-    print(f"  collected {len(all_samples)} samples in {elapsed:.1f}s "
-          f"({len(all_samples)/elapsed:.0f}/s)", flush=True)
-    return all_samples[:n_decisions]
+    log.info(f"  collected {len(all_samples):,} samples in "
+             f"{elapsed:.1f}s  ({len(all_samples)/elapsed:.0f}/s)")
+    _log_collection_stats(all_samples)
+    return all_samples
 
 
 # ─── Training step ────────────────────────────────────────────────────────────
 
-def _train_step(net: ActorCriticNet, batch: list[dict], device, opt=None) -> tuple[float, int, int]:
-    B = len(batch)
+def _train_step(
+    net: ActorCriticNet,
+    batch: list[dict],
+    device,
+    opt=None,
+    label_smoothing: float = 0.0,
+) -> tuple[float, int, int]:
+    B     = len(batch)
     max_K = max(s["states"].shape[0] for s in batch)
 
-    sa = torch.zeros(B, max_K, ACTOR_DIM, dtype=torch.float32, device=device)
-    ac = torch.zeros(B, max_K, ACTION_DIM, dtype=torch.float32, device=device)
-    mask = torch.zeros(B, max_K, dtype=torch.bool, device=device)
-    targets = torch.zeros(B, dtype=torch.long, device=device)
+    sa      = torch.zeros(B, max_K, ACTOR_DIM,  dtype=torch.float32, device=device)
+    ac      = torch.zeros(B, max_K, ACTION_DIM, dtype=torch.float32, device=device)
+    mask    = torch.zeros(B, max_K, dtype=torch.bool,  device=device)
+    targets = torch.zeros(B,       dtype=torch.long,   device=device)
 
     for i, s in enumerate(batch):
         K = s["states"].shape[0]
-        sa[i, :K]    = torch.from_numpy(s["states"])
-        ac[i, :K]    = torch.from_numpy(s["actions"])
-        mask[i, :K]  = True
-        targets[i]   = s["pick_idx"]
+        sa[i, :K]   = torch.from_numpy(s["states"])
+        ac[i, :K]   = torch.from_numpy(s["actions"])
+        mask[i, :K] = True
+        targets[i]  = s["pick_idx"]
 
-    sa_flat = sa.view(B * max_K, ACTOR_DIM)
-    ac_flat = ac.view(B * max_K, ACTION_DIM)
+    sa_flat     = sa.view(B * max_K, ACTOR_DIM)
+    ac_flat     = ac.view(B * max_K, ACTION_DIM)
     logits_flat = net.actor_head(torch.cat([sa_flat, ac_flat], dim=-1))
-    logits = logits_flat.view(B, max_K).masked_fill(~mask, -1e9)
+    logits      = logits_flat.view(B, max_K).masked_fill(~mask, -1e9)
 
-    loss = F.cross_entropy(logits, targets)
+    loss = F.cross_entropy(logits, targets, label_smoothing=label_smoothing)
     if opt is not None:
         opt.zero_grad()
         loss.backward()
         opt.step()
 
-    pred = logits.argmax(dim=-1)
-    correct = (pred == targets).sum().item()
+    correct = (logits.argmax(dim=-1) == targets).sum().item()
     return loss.item(), correct, B
 
 
@@ -275,73 +360,142 @@ def train_distillation(
     val_split: float = 0.10,
     patience: int = 3,
     seed: int = 0,
+    run_dir: Path | None = None,
 ) -> tuple[ActorCriticNet, dict]:
-    net = ActorCriticNet(hidden=hidden).to(device)
-    opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
+    net   = ActorCriticNet(hidden=hidden).to(device)
+    opt   = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr * 0.05)
 
     n_params = sum(p.numel() for p in net.parameters())
-    print(f"  net: {n_params:,} params on {device} (hidden={hidden})")
+    log.info(f"  net: {n_params:,} params on {device} (hidden={hidden})")
+    log.info(f"  optimizer: AdamW  lr={lr}  weight_decay=1e-4  "
+             f"label_smoothing={label_smoothing}")
 
-    rng = random.Random(seed)
-    n = len(samples)
-    idxs = list(range(n))
+    rng        = random.Random(seed)
+    n          = len(samples)
+    idxs       = list(range(n))
     rng.shuffle(idxs)
-    n_val = int(n * val_split)
-    val_idxs = idxs[:n_val]
+    n_val      = int(n * val_split)
+    val_idxs   = idxs[:n_val]
     train_idxs = idxs[n_val:]
-    print(f"  split: {len(train_idxs)} train / {len(val_idxs)} val")
+    n_batches  = math.ceil(len(train_idxs) / batch_size)
+    log.info(f"  split: {len(train_idxs):,} train / {n_val:,} val  "
+             f"({n_batches} batches/epoch  bs={batch_size})")
 
     best_val_acc = 0.0
-    best_state = None
-    stale = 0
+    best_epoch   = 0
+    best_state   = None
+    stale        = 0
+    history: list[dict] = []
 
-    for epoch in range(epochs):
-        rng.shuffle(train_idxs)
-        net.train()
-        tr_loss = tr_correct = tr_total = 0
-        for bs in range(0, len(train_idxs), batch_size):
-            batch = [samples[i] for i in train_idxs[bs: bs + batch_size]]
-            l, c, t = _train_step(net, batch, device, opt=opt)
-            tr_loss += l; tr_correct += c; tr_total += t
-        sched.step()
+    with logging_redirect_tqdm(loggers=[log]):
+        epoch_bar = tqdm(range(epochs), desc="training", unit="epoch", leave=True)
 
-        net.eval()
-        val_correct = val_total = 0
-        with torch.no_grad():
-            for bs in range(0, len(val_idxs), batch_size):
-                batch = [samples[i] for i in val_idxs[bs: bs + batch_size]]
-                _, c, t = _train_step(net, batch, device, opt=None)
-                val_correct += c; val_total += t
+        for epoch in epoch_bar:
+            t_ep = time.time()
 
-        tr_acc = tr_correct / max(tr_total, 1)
-        val_acc = val_correct / max(val_total, 1)
-        print(f"  epoch {epoch+1}/{epochs}  tr_acc={tr_acc:.3f}  val_acc={val_acc:.3f}")
+            # ── train ──
+            rng.shuffle(train_idxs)
+            net.train()
+            tr_loss_sum = tr_correct = tr_total = 0
+            batch_bar = tqdm(
+                range(0, len(train_idxs), batch_size),
+                desc=f"  ep {epoch+1:2d}/{epochs}",
+                unit="batch",
+                leave=False,
+                total=n_batches,
+            )
+            for bs in batch_bar:
+                batch = [samples[i] for i in train_idxs[bs: bs + batch_size]]
+                l, c, t = _train_step(net, batch, device, opt=opt,
+                                      label_smoothing=label_smoothing)
+                tr_loss_sum += l * t
+                tr_correct  += c
+                tr_total    += t
+                batch_bar.set_postfix(
+                    loss=f"{l:.4f}",
+                    acc=f"{tr_correct / max(tr_total, 1):.3f}",
+                )
+            sched.step()
 
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            best_state = {k: v.clone() for k, v in net.state_dict().items()}
-            stale = 0
-        else:
-            stale += 1
-            if stale >= patience:
-                print(f"  early stop at epoch {epoch+1}")
-                break
+            # ── val (no label smoothing for clean accuracy) ──
+            net.eval()
+            val_correct = val_total = 0
+            with torch.no_grad():
+                for bs in range(0, len(val_idxs), batch_size):
+                    batch = [samples[i] for i in val_idxs[bs: bs + batch_size]]
+                    _, c, t = _train_step(net, batch, device)
+                    val_correct += c
+                    val_total   += t
+
+            tr_loss  = tr_loss_sum / max(tr_total, 1)
+            tr_acc   = tr_correct  / max(tr_total, 1)
+            val_acc  = val_correct / max(val_total, 1)
+            epoch_s  = time.time() - t_ep
+            cur_lr   = sched.get_last_lr()[0]
+            is_best  = val_acc > best_val_acc
+
+            row = dict(
+                epoch=epoch + 1, tr_loss=tr_loss, tr_acc=tr_acc,
+                val_acc=val_acc, lr=cur_lr, wall_s=epoch_s, is_best=is_best,
+            )
+            history.append(row)
+
+            # Live figure after every epoch
+            if run_dir is not None:
+                plot_distill(history, run_dir)
+
+            best_tag = "  ← best" if is_best else ""
+            log.info(
+                f"  epoch {epoch+1:3d}/{epochs}  "
+                f"tr_loss={tr_loss:.4f}  tr_acc={tr_acc:.4f}  "
+                f"val_acc={val_acc:.4f}  lr={cur_lr:.2e}  "
+                f"t={epoch_s:.1f}s{best_tag}"
+            )
+
+            epoch_bar.set_postfix(
+                val=f"{val_acc:.4f}",
+                best=f"{best_val_acc:.4f}",
+                lr=f"{cur_lr:.1e}",
+            )
+
+            if is_best:
+                best_val_acc = val_acc
+                best_epoch   = epoch + 1
+                best_state   = {k: v.clone() for k, v in net.state_dict().items()}
+                stale        = 0
+            else:
+                stale += 1
+                if stale >= patience:
+                    log.info(f"  early stop at epoch {epoch+1}  (patience={patience})")
+                    break
 
     if best_state is not None:
         net.load_state_dict(best_state)
+        log.info(f"  restored best weights from epoch {best_epoch}")
 
-    # Final val accuracy
+    # Final val accuracy on best weights
     net.eval()
     val_correct = val_total = 0
     with torch.no_grad():
         for bs in range(0, len(val_idxs), batch_size):
             batch = [samples[i] for i in val_idxs[bs: bs + batch_size]]
-            _, c, t = _train_step(net, batch, device, opt=None)
-            val_correct += c; val_total += t
+            _, c, t = _train_step(net, batch, device)
+            val_correct += c
+            val_total   += t
     final_val_acc = val_correct / max(val_total, 1)
 
-    return net, {"val_acc": final_val_acc, "best_val_acc": best_val_acc}
+    log.info(
+        f"  final val_acc={final_val_acc:.4f}  "
+        f"best_val_acc={best_val_acc:.4f}  "
+        f"best_epoch={best_epoch}"
+    )
+    return net, {
+        "val_acc":      final_val_acc,
+        "best_val_acc": best_val_acc,
+        "best_epoch":   best_epoch,
+        "history":      history,
+    }
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
@@ -353,81 +507,104 @@ def main():
     parser.add_argument("--supervisor-search", default="on", choices=["on", "off"])
     parser.add_argument("--supervisor-pimc-n-det", type=int, default=16)
     parser.add_argument("--supervisor-checkpoint", default=None,
-        help="Path to supervisor's model checkpoint (for oracle)")
+        help="Path to supervisor model checkpoint (for oracle)")
     parser.add_argument("--n-decisions", type=int, default=500_000)
-    parser.add_argument("--epochs", type=int, default=8)
-    parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--hidden", type=int, default=256)
-    parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--label-mode", default="hard", choices=["hard", "soft", "hybrid"])
+    parser.add_argument("--epochs",     type=int,   default=8)
+    parser.add_argument("--batch-size", type=int,   default=512)
+    parser.add_argument("--lr",         type=float, default=3e-4)
+    parser.add_argument("--hidden",     type=int,   default=256)
+    parser.add_argument("--workers",    type=int,   default=4)
+    parser.add_argument("--seed",       type=int,   default=0)
+    parser.add_argument("--label-mode", default="hard",
+        choices=["hard", "soft", "hybrid"])
     parser.add_argument("--label-smoothing", type=float, default=0.1)
     parser.add_argument("--output", default="ml/checkpoints/pvguan_distilled.pt")
     args = parser.parse_args()
 
-    use_search = args.supervisor_search == "on"
-    device = get_device()
-    print(f"[distill_pvguan] supervisor={args.supervisor} search={use_search} "
-          f"n_det={args.supervisor_pimc_n_det} device={device}")
+    cfg         = DistillConfig.from_args(args)
+    device      = get_device()
+    output_path = Path(cfg.resolved_output)
+    run_dir     = Path(cfg.resolved_run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Log to run_dir/train.log (timestamped dir) AND checkpoint dir
+    _setup_logger(run_dir / "train")
+
+    log.info("=" * 64)
+    log.info(f"[distill_pvguan]  device={device}")
+    log.info(str(cfg))
+    log.info("=" * 64)
+
+    # Save config to run dir
+    cfg.save(run_dir / "config.json")
 
     # 1. Collect labels
+    t_total = time.time()
     samples = collect_data(
-        n_decisions=args.n_decisions,
-        workers=args.workers,
-        sup_name=args.supervisor,
-        use_search=use_search,
-        n_det=args.supervisor_pimc_n_det,
-        ckpt_path=args.supervisor_checkpoint,
-        seed=args.seed,
+        n_decisions=cfg.n_decisions,
+        workers=cfg.workers,
+        sup_name=cfg.supervisor,
+        use_search=cfg.supervisor_search,
+        n_det=cfg.supervisor_pimc_n_det,
+        ckpt_path=cfg.supervisor_checkpoint,
+        seed=cfg.seed,
     )
 
     # 2. Train actor head
+    log.info("─" * 64)
+    log.info("Training ...")
     net, metrics = train_distillation(
         samples=samples,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        hidden=args.hidden,
+        epochs=cfg.epochs,
+        batch_size=cfg.batch_size,
+        lr=cfg.lr,
+        hidden=cfg.hidden,
         device=device,
-        label_smoothing=args.label_smoothing,
-        seed=args.seed,
+        label_smoothing=cfg.label_smoothing,
+        seed=cfg.seed,
+        run_dir=run_dir,
     )
 
-    val_acc = metrics["val_acc"]
-    print(f"\n[distill_pvguan] val_acc={val_acc:.4f}")
+    val_acc    = metrics["val_acc"]
+    total_time = time.time() - t_total
+    log.info("─" * 64)
+    log.info(f"[distill_pvguan]  val_acc={val_acc:.4f}  "
+             f"best_val_acc={metrics['best_val_acc']:.4f}  "
+             f"best_epoch={metrics['best_epoch']}  "
+             f"total_time={total_time:.0f}s")
 
     # 3. Acceptance gates
     if val_acc < 0.90:
-        print(f"WARN: val_acc {val_acc:.3f} < 0.90 (target ≥ 0.95 for production)")
+        log.warning(f"WARN  val_acc {val_acc:.3f} < 0.90  "
+                    f"(target ≥ 0.95 for production)")
     if val_acc < 0.95:
-        print(f"WARN: argmax agreement {val_acc:.3f} below 95% gate — review before PPO")
+        log.warning(f"WARN  argmax agreement {val_acc:.3f} below 95% gate — "
+                    f"review before PPO")
+    else:
+        log.info("PASS  acceptance gate  val_acc ≥ 0.95")
 
     # 4. Save checkpoint
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     metadata = {
-        "actor_dim":   ACTOR_DIM,
-        "action_dim":  ACTION_DIM,
-        "critic_dim":  875,
-        "hidden":      args.hidden,
-        "supervisor":  args.supervisor,
-        "supervisor_search": use_search,
-        "supervisor_pimc_n_det": args.supervisor_pimc_n_det,
-        "n_samples":   len(samples),
-        "val_acc":     val_acc,
-        "label_mode":  args.label_mode,
-        "label_smoothing": args.label_smoothing,
+        "actor_dim":             ACTOR_DIM,
+        "action_dim":            ACTION_DIM,
+        "critic_dim":            875,
+        "hidden":                cfg.hidden,
+        "supervisor":            cfg.supervisor,
+        "supervisor_search":     cfg.supervisor_search,
+        "supervisor_pimc_n_det": cfg.supervisor_pimc_n_det,
+        "n_samples":             len(samples),
+        "val_acc":               val_acc,
+        "label_mode":            cfg.label_mode,
+        "label_smoothing":       cfg.label_smoothing,
     }
 
     torch.save({
         "actor_state_dict": net.actor_head.state_dict(),
         "full_state_dict":  net.state_dict(),
-        "metadata": metadata,
+        "metadata":         metadata,
     }, output_path)
-    print(f"[distill_pvguan] saved → {output_path}")
-    print(f"  metadata: {metadata}")
+    log.info(f"[distill_pvguan]  saved → {output_path}")
+    log.info(f"  metadata: {metadata}")
 
 
 if __name__ == "__main__":

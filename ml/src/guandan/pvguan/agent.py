@@ -61,6 +61,24 @@ class PVGuanBot(Agent):
         self.net.actor_head.load_state_dict(ckpt["actor_state_dict"])
         self.net.eval()
 
+    @classmethod
+    def from_net(
+        cls,
+        net: ActorCriticNet,
+        level_rank: int = Rank.TWO,
+        sample: bool = False,
+        temperature: float = 1.0,
+    ) -> "PVGuanBot":
+        """Wrap a live training net (no checkpoint I/O). Net is used as-is —
+        the caller is responsible for net.eval() / net.train() bookkeeping."""
+        bot = cls.__new__(cls)
+        bot.level_rank  = level_rank
+        bot.sample      = sample
+        bot.temperature = temperature
+        bot.device      = next(net.parameters()).device
+        bot.net         = net
+        return bot
+
     def act(self, env: GuanDanEnv, player: int):
         """Choose a legal action. Returns a Combo."""
         # Reflect env so team {player, partner} appears as {0, 2}

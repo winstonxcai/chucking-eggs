@@ -359,6 +359,40 @@ def _rollout_worker(args: tuple) -> RolloutBuffer:
     return _collect_for_hands(net, hand_specs, cfg, torch.device("cpu"))
 
 
+# mp.Queue cannot be pickled across pool.map — they must be inherited at
+# worker-spawn via Pool's initializer. These are populated by
+# init_gpu_worker_queues() at pool creation time and read by _rollout_worker_gpu.
+_GPU_REQUEST_Q: "mp.Queue | None" = None
+_GPU_REPLY_QS: "list[mp.Queue] | None" = None
+
+
+def init_gpu_worker_queues(request_q: "mp.Queue", reply_qs: "list[mp.Queue]") -> None:
+    """Pool initializer — stores GPU server queues in module globals so
+    _rollout_worker_gpu can pick the right reply_q by worker_id."""
+    global _GPU_REQUEST_Q, _GPU_REPLY_QS
+    _GPU_REQUEST_Q = request_q
+    _GPU_REPLY_QS = reply_qs
+
+
+def _rollout_worker_gpu(args: tuple) -> RolloutBuffer:
+    """GPU-server worker — uses a NetProxy that forwards calls via mp.Queue
+    to the main process's GPU inference server. No model loaded in worker.
+    Queues are read from module globals populated by init_gpu_worker_queues.
+    """
+    from .gpu_server import NetProxy
+    worker_id, hand_specs, cfg = args
+    if _GPU_REQUEST_Q is None or _GPU_REPLY_QS is None:
+        raise RuntimeError("GPU worker queues not initialized — Pool needs "
+                           "initializer=init_gpu_worker_queues")
+    torch.set_num_threads(1)
+    proxy = NetProxy(
+        request_q=_GPU_REQUEST_Q,
+        reply_q=_GPU_REPLY_QS[worker_id],
+        worker_id=worker_id,
+    )
+    return _collect_for_hands(proxy, hand_specs, cfg, torch.device("cpu"))
+
+
 def collect_rollout_parallel(
     net: ActorCriticNet,
     scheduler: HandScheduler,
@@ -368,29 +402,45 @@ def collect_rollout_parallel(
     state_path: str,
     hidden: int,
     mean_hand_length: float = 135.0,
+    gpu_server: "object | None" = None,
 ) -> RolloutBuffer:
     """Multiprocess rollout. Pool and state_path are reused across iters.
 
-    Writes net.state_dict() to state_path each call, then dispatches a
-    pre-allocated list of hand specs to each worker via pool.map.
+    Two modes:
+      - gpu_server is None (default): workers load weights from state_path
+        and run NN forward on CPU.
+      - gpu_server is a GPUInferenceServer: workers use a NetProxy that
+        forwards scoring calls via mp.Queue to the server thread; weights
+        are held in main process GPU memory and updated via update_weights().
     """
-    # 1. Sync weights to disk for workers to load
-    torch.save({k: v.detach().cpu() for k, v in net.state_dict().items()}, state_path)
-
-    # 2. Allocate hands per worker. Slight per-worker overshoot is fine —
+    # 1. Allocate hands per worker. Slight per-worker overshoot is fine —
     #    decision count is approximate (mean ~135 dec/hand).
     target_hands = max(
         math.ceil(cfg.target_decisions / mean_hand_length), n_workers
     )
     hands_per_worker = math.ceil(target_hands / n_workers)
 
-    # 3. Pull contiguous, deterministic hand specs from scheduler (main only)
+    # 2. Pull contiguous, deterministic hand specs from scheduler (main only)
     worker_specs: list[list[tuple[int, int, int]]] = []
     for _ in range(n_workers):
         specs = [scheduler.next_hand() for _ in range(hands_per_worker)]
         worker_specs.append(specs)
 
-    args = [(state_path, specs, cfg, hidden) for specs in worker_specs]
-    bufs = pool.map(_rollout_worker, args)
+    if gpu_server is not None:
+        # Workers obtain queue handles via the pool's initializer (see
+        # init_gpu_worker_queues); only pass worker_id + specs + cfg here.
+        args = [
+            (wid, specs, cfg)
+            for wid, specs in enumerate(worker_specs)
+        ]
+        bufs = pool.map(_rollout_worker_gpu, args, chunksize=1)
+    else:
+        # Sync weights to disk for workers to load
+        torch.save(
+            {k: v.detach().cpu() for k, v in net.state_dict().items()},
+            state_path,
+        )
+        args = [(state_path, specs, cfg, hidden) for specs in worker_specs]
+        bufs = pool.map(_rollout_worker, args)
 
     return RolloutBuffer.from_buffers(bufs)

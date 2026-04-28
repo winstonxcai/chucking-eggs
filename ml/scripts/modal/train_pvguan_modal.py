@@ -72,6 +72,9 @@ def train_remote(
     going_out_shape:      float,
     curriculum_temp:      float,
     run_dir_override:     str | None,
+    use_gpu_inference:    bool,
+    gpu_infer_batch:      int,
+    gpu_infer_wait_ms:    float,
 ) -> str:
     import os
     import subprocess
@@ -103,7 +106,11 @@ def train_remote(
         "--val-patience",            str(val_patience),
         "--going-out-shape",         str(going_out_shape),
         "--curriculum-temp",         str(curriculum_temp),
+        "--gpu-infer-batch",         str(gpu_infer_batch),
+        "--gpu-infer-wait-ms",       str(gpu_infer_wait_ms),
     ]
+    if use_gpu_inference:
+        cmd.append("--use-gpu-inference")
     if opponent_mix:
         cmd.extend(["--opponent-mix", opponent_mix])
     if resume:
@@ -147,6 +154,9 @@ def main(
     going_out_shape:      float = 0.0,
     curriculum_temp:      float = 0.3,
     run_dir_override:     str   = "",
+    use_gpu_inference:    bool  = False,
+    gpu_infer_batch:      int   = 256,
+    gpu_infer_wait_ms:    float = 1.0,
 ) -> None:
     result = train_remote.remote(
         critic=critic, seed=seed,
@@ -171,5 +181,8 @@ def main(
         going_out_shape=going_out_shape,
         curriculum_temp=curriculum_temp,
         run_dir_override=run_dir_override if run_dir_override else None,
+        use_gpu_inference=use_gpu_inference,
+        gpu_infer_batch=gpu_infer_batch,
+        gpu_infer_wait_ms=gpu_infer_wait_ms,
     )
     print(result)

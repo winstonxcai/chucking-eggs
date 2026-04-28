@@ -299,14 +299,6 @@ def main():
                         help="Temperature for reactive curriculum opponent weighting. "
                              "Weights = softmax(-wr / temp) after each val eval. "
                              "0 = off (uniform sampling).")
-    parser.add_argument("--use-gpu-inference", action="store_true",
-                        help="Route worker NN-forward calls through a centralized "
-                             "GPU inference server in the main process (instead of "
-                             "per-worker CPU inference). Requires --rollout-workers > 1.")
-    parser.add_argument("--gpu-infer-batch", type=int, default=256,
-                        help="Max batch size for GPU inference server")
-    parser.add_argument("--gpu-infer-wait-ms", type=float, default=1.0,
-                        help="Max wait (ms) per server tick to accumulate batch")
     args = parser.parse_args()
 
     device  = get_device()
@@ -444,55 +436,17 @@ def main():
     # ── Multiprocess rollout pool ─────────────────────────────────────────────
     rollout_pool = None
     rollout_state_path: str | None = None
-    gpu_server = None
     if run_cfg.rollout_workers > 1:
         import multiprocessing as mp
-        from guandan.pvguan.rollout import init_gpu_worker_queues
         ctx = mp.get_context("spawn")
         rollout_state_path = (
             f"/tmp/pvguan_rollout_state_{run_name}_{int(time.time())}.pt"
         )
-
-        if getattr(args, "use_gpu_inference", False):
-            from guandan.pvguan.gpu_server import GPUInferenceServer
-            # Server keeps its own copy of the net so weight updates can be
-            # swapped without touching the training net mid-iter.
-            server_net = ActorCriticNet(
-                d_state_actor=ACTOR_DIM,
-                d_action=ACTION_DIM,
-                d_state_critic=CRITIC_DIM,
-                hidden=run_cfg.hidden,
-            ).to(device)
-            server_net.load_state_dict(net.state_dict())
-            server_net.eval()
-            gpu_server = GPUInferenceServer(
-                net=server_net,
-                device=device,
-                n_workers=run_cfg.rollout_workers,
-                ctx=ctx,
-                max_batch=args.gpu_infer_batch,
-                max_wait_ms=args.gpu_infer_wait_ms,
-            )
-            gpu_server.start()
-            # Pool inherits queue handles via initializer (mp.Queue cannot
-            # be pickled across pool.map — must be passed at worker spawn).
-            rollout_pool = ctx.Pool(
-                processes=run_cfg.rollout_workers,
-                initializer=init_gpu_worker_queues,
-                initargs=(gpu_server.request_q, gpu_server.reply_qs),
-            )
-            log.info(
-                f"  rollout_pool: {run_cfg.rollout_workers} workers  "
-                f"gpu_inference_server=ON  "
-                f"(max_batch={args.gpu_infer_batch}, "
-                f"max_wait_ms={args.gpu_infer_wait_ms})"
-            )
-        else:
-            rollout_pool = ctx.Pool(processes=run_cfg.rollout_workers)
-            log.info(
-                f"  rollout_pool: {run_cfg.rollout_workers} workers  "
-                f"state_path={rollout_state_path}"
-            )
+        rollout_pool = ctx.Pool(processes=run_cfg.rollout_workers)
+        log.info(
+            f"  rollout_pool: {run_cfg.rollout_workers} workers  "
+            f"state_path={rollout_state_path}"
+        )
 
     # ── Training loop ─────────────────────────────────────────────────────────
     log.info("─" * 64)
@@ -527,8 +481,6 @@ def main():
                 eff_hand_len = 135.0 * (
                     run_cfg.selfplay_frac + (1 - run_cfg.selfplay_frac) * 0.5
                 )
-                if gpu_server is not None:
-                    gpu_server.update_weights(net)
                 buf = collect_rollout_parallel(
                     net, scheduler, rollout_cfg,
                     n_workers=run_cfg.rollout_workers,
@@ -536,7 +488,6 @@ def main():
                     state_path=rollout_state_path,
                     hidden=run_cfg.hidden,
                     mean_hand_length=eff_hand_len,
-                    gpu_server=gpu_server,
                 )
             else:
                 buf = collect_rollout(net, scheduler, rollout_cfg, device)
@@ -626,14 +577,6 @@ def main():
             if (run_cfg.val_every > 0
                     and iter_idx > 0
                     and iter_idx % run_cfg.val_every == 0):
-                # Validation workers always load weights from disk (separate
-                # from the GPU inference server path); ensure state_path is
-                # fresh when GPU server is active.
-                if gpu_server is not None and rollout_state_path is not None:
-                    torch.save(
-                        {k: v.detach().cpu() for k, v in net.state_dict().items()},
-                        rollout_state_path,
-                    )
                 val_row = _run_validation(
                     net, iter_idx, cumulative_decisions, run_cfg, log,
                     pool=rollout_pool,
@@ -746,10 +689,7 @@ def main():
         f"wall={run_logger.elapsed():.0f}s  →  {final_path}"
     )
 
-    # Cleanup GPU inference server, multiprocess pool, and temp state file
-    if gpu_server is not None:
-        log.info(f"  gpu_inference_server stats: {gpu_server.stats()}")
-        gpu_server.stop()
+    # Cleanup multiprocess pool and temp state file
     if rollout_pool is not None:
         rollout_pool.close()
         rollout_pool.join()

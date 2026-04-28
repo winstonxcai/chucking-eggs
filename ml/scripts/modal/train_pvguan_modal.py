@@ -67,6 +67,8 @@ def train_remote(
     resume:               str | None,
     opponent_mix:         str,
     selfplay_frac:        float,
+    val_patience:         int,
+    warmstart_path:       str | None,
 ) -> str:
     import os
     import subprocess
@@ -95,13 +97,15 @@ def train_remote(
         "--snapshot-interval",       str(snapshot_interval),
         "--run-dir",                 run_dir,
         "--selfplay-frac",           str(selfplay_frac),
+        "--val-patience",            str(val_patience),
     ]
     if opponent_mix:
         cmd.extend(["--opponent-mix", opponent_mix])
     if resume:
         cmd.extend(["--resume", resume])
     else:
-        cmd.extend(["--warmstart", WARMSTART_VOL_PATH])
+        ws = warmstart_path or WARMSTART_VOL_PATH
+        cmd.extend(["--warmstart", ws])
 
     print("=" * 64)
     print("Launching:", " ".join(cmd))
@@ -123,7 +127,7 @@ def main(
     temperature:          float = 1.0,
     hidden:               int   = 256,
     mini_batch:           int   = 1024,
-    val_every:            int   = 100,
+    val_every:            int   = 50,
     val_games:            int   = 100,
     val_opponents:        str   = "jidan,yaoji",
     rollout_workers:      int   = 16,
@@ -131,6 +135,8 @@ def main(
     resume:               str   = "",
     opponent_mix:         str   = "",
     selfplay_frac:        float = 1.0,
+    val_patience:         int   = 0,
+    warmstart_path:       str   = "",
 ) -> None:
     result = train_remote.remote(
         critic=critic, seed=seed,
@@ -150,5 +156,7 @@ def main(
         resume=resume if resume else None,
         opponent_mix=opponent_mix,
         selfplay_frac=selfplay_frac,
+        val_patience=val_patience,
+        warmstart_path=warmstart_path if warmstart_path else None,
     )
     print(result)

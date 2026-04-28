@@ -60,10 +60,11 @@ class PPORunConfig:
     selfplay_frac:   float = 1.0           # 1.0 = pure self-play (legacy)
 
     # ── validation eval ──────────────────────────────────────────────────────
-    val_every:     int  = 50              # iters between validation paired evals (0 = off)
+    val_every:     int  = 100             # iters between validation paired evals (0 = off)
     val_games:     int  = 200             # games per opponent (= n_decks × 4 rotations)
     val_opponents: tuple[str, ...] = ("jidan", "yaoji")
     val_bootstrap: int  = 200             # bootstrap resamples for CI
+    val_patience:  int  = 0              # stop if val metric doesn't improve for N evals (0 = off)
 
     # ── derived ───────────────────────────────────────────────────────────────
 
@@ -134,6 +135,7 @@ class PPORunConfig:
             ) if isinstance(getattr(args, "val_opponents", None), str)
               else getattr(args, "val_opponents", ("jidan", "yaoji")),
             val_bootstrap=getattr(args, "val_bootstrap", 200),
+            val_patience=getattr(args, "val_patience", 0),
             opponent_mix=tuple(
                 s.strip() for s in getattr(args, "opponent_mix", "").split(",")
                 if s.strip()
@@ -160,7 +162,8 @@ class PPORunConfig:
             f"  temperature     = τ={self.temperature}  τ_init={self.resolved_init_temperature}",
             f"  validation      = every {self.val_every} iters  "
                 f"games={self.val_games} (={self.val_games // 4} decks × 4 rot)  "
-                f"opponents={list(self.val_opponents)}",
+                f"opponents={list(self.val_opponents)}  "
+                f"patience={self.val_patience or 'off'}",
             f"  rollout opp_mix = {list(self.opponent_mix) or 'none (pure self-play)'}  "
                 f"selfplay_frac={self.selfplay_frac}",
             f"  run_dir         = {self.resolved_run_dir}  (auto-timestamped)",

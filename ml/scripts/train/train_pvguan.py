@@ -1,7 +1,8 @@
 """PPO training for the partner-visible PTIE experiment.
 
 Two ablations selected by --critic {pv,ptie}.
-Trains to a fixed --total-decisions budget (default 6M). No early stopping.
+Trains to a fixed --total-decisions budget (default 6M). Optional early
+stopping via --val-patience (stop after N consecutive non-improving evals).
 
 Usage:
     # smoke test (~10 min on M1, both ablations)
@@ -213,6 +214,9 @@ def main():
     parser.add_argument("--val-opponents",    default="jidan,yaoji",
                         help="Comma-separated opponent names")
     parser.add_argument("--val-bootstrap",    type=int,   default=200)
+    parser.add_argument("--val-patience",     type=int,   default=0,
+                        help="Early stopping: stop if val metric doesn't improve "
+                             "for this many consecutive evals (0 = disabled)")
     parser.add_argument("--opponent-mix",     default="",
                         help="Comma-separated opponent bot names mixed into rollout "
                              "(e.g. 'jidan,yaoji,strategic'). Empty = pure self-play.")
@@ -300,6 +304,7 @@ def main():
     cumulative_decisions = 0
     cumulative_hands = 0
     best_val_metric = float("-inf")
+    val_no_improve_count = 0
     iter_idx = 0
     t_run_start = time.time()
 
@@ -486,9 +491,10 @@ def main():
                 )
                 run_logger.log_val(val_row)
 
-                # Best-checkpoint selection by combined validation metric
+                # Best-checkpoint selection and early stopping
                 if val_row["validation_metric"] > best_val_metric:
                     best_val_metric = val_row["validation_metric"]
+                    val_no_improve_count = 0
                     best_path = run_dir / "checkpoints" / _ckpt_name(run_name, "best")
                     _save_checkpoint(best_path, net, {
                         **config,
@@ -504,6 +510,16 @@ def main():
                         "best_val_metric":      best_val_metric,
                     })
                     log.info(f"  ★ new best: validation_metric={best_val_metric:+.3f} → {best_path.name}")
+                else:
+                    val_no_improve_count += 1
+                    log.info(f"  no improvement ({val_no_improve_count}/{run_cfg.val_patience or '∞'})")
+
+                if run_cfg.val_patience > 0 and val_no_improve_count >= run_cfg.val_patience:
+                    log.info(
+                        f"  ★ early stopping: no improvement for {run_cfg.val_patience} "
+                        f"consecutive evals (best={best_val_metric:+.3f})"
+                    )
+                    break
 
             # Periodic snapshot checkpoints (every snapshot_interval decisions)
             while cumulative_decisions >= next_snapshot:

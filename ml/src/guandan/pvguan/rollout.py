@@ -9,11 +9,18 @@ GAE bootstraps from the same player's next decision — see buffer.py.
 Deterministic deal schedule: (deal_seed, level_seed) derived from
 (global_run_seed, global_hand_index) via hash, so matched PV-AC/PV-PTIE
 seeds draw from the same deterministic deal stream.
+
+Parallel rollout: collect_rollout_parallel() spawns N workers (spawn context),
+each loading network weights from a temp file and playing a fixed list of
+hand specs sequentially on CPU. Workers return per-worker RolloutBuffers
+which are merged via RolloutBuffer.from_buffers().
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
+import multiprocessing as mp
 import struct
 from dataclasses import dataclass
 from typing import Literal
@@ -28,6 +35,9 @@ from ..game import GuanDanEnv
 from .actor_critic import ActorCriticNet
 from .buffer import Decision, PlayerTrack, RolloutBuffer
 from .encoders import (
+    ACTOR_DIM,
+    ACTION_DIM,
+    CRITIC_DIM,
     encode_action,
     encode_actor_pair_features,
     encode_critic_state,
@@ -68,6 +78,41 @@ class RolloutConfig:
     target_decisions: int = 4096
     critic_mode: Literal["pv", "ptie"] = "pv"
     temperature: float = 1.0
+    max_legal_per_decision: int = 64   # cap legal moves for memory; bombs always kept
+
+
+def _cap_legal(
+    legal: list,
+    cap: int,
+) -> list[int]:
+    """Return indices into `legal` to keep, length ≤ cap.
+
+    Always preserves PASS and any BOMB/STRAIGHT_FLUSH (strategic moves).
+    Fills the remainder with the first cheapest-ranked moves (deterministic).
+    """
+    if len(legal) <= cap:
+        return list(range(len(legal)))
+
+    bomb_types = {
+        "BOMB_4", "BOMB_5", "BOMB_6", "BOMB_7", "BOMB_8", "BOMB_9", "BOMB_10",
+        "STRAIGHT_FLUSH", "BOMB_JOKER",
+    }
+    must_keep = [
+        i for i, m in enumerate(legal)
+        if m.type.name == "PASS" or m.type.name in bomb_types
+    ]
+    other = [i for i in range(len(legal)) if i not in set(must_keep)]
+    # Deterministic order: keep first (cheapest) — engine returns moves in
+    # ascending rank order within each combo type
+    remaining = cap - len(must_keep)
+    if remaining > 0:
+        other_sorted = sorted(other, key=lambda i: (
+            sum(c.rank for c in legal[i].cards), i
+        ))
+        keep = sorted(must_keep + other_sorted[:remaining])
+    else:
+        keep = sorted(must_keep)[:cap]
+    return keep
 
 
 def _canonical(player: int) -> tuple[GuanDanEnv | None, int]:
@@ -80,6 +125,104 @@ def _canonical(player: int) -> tuple[GuanDanEnv | None, int]:
     return (True, player ^ 1)
 
 
+def _play_one_hand(
+    net: ActorCriticNet,
+    deal_seed: int,
+    level_seed: int,
+    cfg: RolloutConfig,
+    device: torch.device,
+    buf: RolloutBuffer,
+) -> int:
+    """Play one hand, append decisions/tracks/stats to buf.
+    Returns the number of decisions collected in this hand.
+    """
+    level_rank = HandScheduler.level_from_seed(level_seed)
+    env = GuanDanEnv(level_rank=level_rank)
+    env.reset(seed=deal_seed)
+
+    tracks: dict[int, PlayerTrack] = {p: PlayerTrack(player=p) for p in range(4)}
+    hand_decisions = 0
+
+    while not env.done:
+        player = env.current_player
+        needs_reflect, canonical_player = _canonical(player)
+        enc_env = _reflect_env(env) if needs_reflect else env
+
+        legal = enc_env.legal_moves(canonical_player)
+
+        if len(legal) == 1 and legal[0].type.name == "PASS":
+            env.step(legal[0])
+            continue
+
+        if len(legal) > cfg.max_legal_per_decision:
+            keep_idx = _cap_legal(legal, cfg.max_legal_per_decision)
+            legal = [legal[i] for i in keep_idx]
+
+        buf.stats.K_values.append(len(legal))
+
+        hand = list(enc_env.hands[canonical_player])
+
+        state_actor_list = []
+        action_list = []
+        for move in legal:
+            sf = encode_actor_pair_features(enc_env, canonical_player, move, legal)
+            af = encode_action(move, hand, enc_env.level_rank)
+            state_actor_list.append(sf)
+            action_list.append(af)
+
+        sa = torch.tensor(np.array(state_actor_list, dtype=np.float32), device=device)
+        ac = torch.tensor(np.array(action_list, dtype=np.float32), device=device)
+        K = len(legal)
+        mask = torch.ones(K, dtype=torch.bool, device=device)
+
+        with torch.no_grad():
+            logits = net.policy_logits(sa, ac, mask)
+            log_probs_all = torch.nn.functional.log_softmax(logits, dim=0)
+            dist = torch.distributions.Categorical(logits=logits)
+            sampled_idx = dist.sample().item()
+            log_prob = log_probs_all[sampled_idx].item()
+
+            state_critic = encode_critic_state(enc_env, canonical_player, cfg.critic_mode)
+            sc_tensor = torch.tensor(
+                state_critic[None], dtype=torch.float32, device=device
+            )
+            v_old = net.value(sc_tensor).item()
+
+        decision = Decision(
+            state_actor=np.array(state_actor_list, dtype=np.float32),
+            actions=np.array(action_list, dtype=np.float32),
+            legal_mask=np.ones(K, dtype=bool),
+            sampled_idx=int(sampled_idx),
+            log_prob=float(log_prob),
+            state_critic=state_critic,
+            v_old=float(v_old),
+        )
+        tracks[player].add(decision)
+        hand_decisions += 1
+
+        chosen = legal[int(sampled_idx)]
+
+        ct = chosen.type.name
+        if ct == "PASS":
+            buf.stats.pass_count += 1
+        else:
+            buf.stats.non_pass_count += 1
+            if ct.startswith("BOMB") or ct == "STRAIGHT_FLUSH":
+                buf.stats.bomb_count += 1
+            if env.current_trick is None:
+                buf.stats.lead_count += 1
+
+        env.step(chosen)
+
+    rewards = env.get_rewards()
+    for p in range(4):
+        if tracks[p].decisions:
+            tracks[p].finalize(rewards[p] / 3.0)
+            buf.add_track(tracks[p])
+    buf.stats.hand_lengths.append(hand_decisions)
+    return hand_decisions
+
+
 def collect_rollout(
     net: ActorCriticNet,
     scheduler: HandScheduler,
@@ -87,94 +230,89 @@ def collect_rollout(
     device: torch.device,
 ) -> RolloutBuffer:
     """Run complete hands until decisions >= cfg.target_decisions.
-
     Returns a RolloutBuffer with finalized per-player tracks.
     """
     net.eval()
     buf = RolloutBuffer()
     decisions_collected = 0
-
     while decisions_collected < cfg.target_decisions:
         _, deal_seed, level_seed = scheduler.next_hand()
-        level_rank = HandScheduler.level_from_seed(level_seed)
-
-        env = GuanDanEnv(level_rank=level_rank)
-        env.reset(seed=deal_seed)
-
-        # Per-player open tracks for this hand
-        tracks: dict[int, PlayerTrack] = {p: PlayerTrack(player=p) for p in range(4)}
-
-        while not env.done:
-            player = env.current_player
-            needs_reflect, canonical_player = _canonical(player)
-
-            if needs_reflect:
-                enc_env = _reflect_env(env)
-            else:
-                enc_env = env
-
-            legal = enc_env.legal_moves(canonical_player)
-
-            if len(legal) == 1 and legal[0].type.name == "PASS":
-                # Forced pass — no decision to record
-                env.step(legal[0])
-                continue
-
-            hand = list(enc_env.hands[canonical_player])
-
-            # Encode candidates
-            state_actor_list = []
-            action_list = []
-            for move in legal:
-                sf = encode_actor_pair_features(enc_env, canonical_player, move, legal)
-                af = encode_action(move, hand, enc_env.level_rank)
-                state_actor_list.append(sf)
-                action_list.append(af)
-
-            sa = torch.tensor(
-                np.array(state_actor_list, dtype=np.float32), device=device
-            )
-            ac = torch.tensor(
-                np.array(action_list, dtype=np.float32), device=device
-            )
-            K = len(legal)
-            mask = torch.ones(K, dtype=torch.bool, device=device)
-
-            with torch.no_grad():
-                logits = net.policy_logits(sa, ac, mask)
-                log_probs_all = torch.nn.functional.log_softmax(logits, dim=0)
-                dist = torch.distributions.Categorical(logits=logits)
-                sampled_idx = dist.sample().item()
-                log_prob = log_probs_all[sampled_idx].item()
-
-                # Critic state (action-independent)
-                state_critic = encode_critic_state(enc_env, canonical_player, cfg.critic_mode)
-                sc_tensor = torch.tensor(
-                    state_critic[None], dtype=torch.float32, device=device
-                )
-                v_old = net.value(sc_tensor).item()
-
-            decision = Decision(
-                state_actor=np.array(state_actor_list, dtype=np.float32),
-                actions=np.array(action_list, dtype=np.float32),
-                legal_mask=np.ones(K, dtype=bool),
-                sampled_idx=int(sampled_idx),
-                log_prob=float(log_prob),
-                state_critic=state_critic,
-                v_old=float(v_old),
-            )
-            tracks[player].add(decision)
-            decisions_collected += 1
-
-            chosen = legal[int(sampled_idx)]
-            env.step(chosen)
-
-        # Hand done — assign terminal rewards and finalize tracks
-        rewards = env.get_rewards()
-        for p in range(4):
-            if tracks[p].decisions:
-                tracks[p].finalize(rewards[p] / 3.0)
-                buf.add_track(tracks[p])
-
+        decisions_collected += _play_one_hand(
+            net, deal_seed, level_seed, cfg, device, buf
+        )
     net.train()
     return buf
+
+
+def _collect_for_hands(
+    net: ActorCriticNet,
+    hand_specs: list[tuple[int, int, int]],
+    cfg: RolloutConfig,
+    device: torch.device,
+) -> RolloutBuffer:
+    """Play exactly the supplied list of hands. Used by parallel workers."""
+    net.eval()
+    buf = RolloutBuffer()
+    for _idx, deal_seed, level_seed in hand_specs:
+        _play_one_hand(net, deal_seed, level_seed, cfg, device, buf)
+    return buf
+
+
+def _rollout_worker(args: tuple) -> RolloutBuffer:
+    """Module-level worker — picklable for spawn context.
+
+    Loads network weights from disk, plays a fixed list of hands sequentially
+    on CPU, returns its RolloutBuffer. Workers stay off the GPU to avoid
+    contention with the main process's PPO update.
+    """
+    state_path, hand_specs, cfg, hidden = args
+    # PyTorch's intra-op threads — keep small per worker so 48 workers don't
+    # collectively spawn 48 × N threads and thrash the host
+    torch.set_num_threads(1)
+    net = ActorCriticNet(
+        d_state_actor=ACTOR_DIM,
+        d_action=ACTION_DIM,
+        d_state_critic=CRITIC_DIM,
+        hidden=hidden,
+    )
+    state = torch.load(state_path, map_location="cpu", weights_only=True)
+    net.load_state_dict(state)
+    net.eval()
+    return _collect_for_hands(net, hand_specs, cfg, torch.device("cpu"))
+
+
+def collect_rollout_parallel(
+    net: ActorCriticNet,
+    scheduler: HandScheduler,
+    cfg: RolloutConfig,
+    n_workers: int,
+    pool: "mp.pool.Pool",
+    state_path: str,
+    hidden: int,
+    mean_hand_length: float = 135.0,
+) -> RolloutBuffer:
+    """Multiprocess rollout. Pool and state_path are reused across iters.
+
+    Writes net.state_dict() to state_path each call, then dispatches a
+    pre-allocated list of hand specs to each worker via pool.map.
+    """
+    # 1. Sync weights to disk for workers to load
+    torch.save({k: v.detach().cpu() for k, v in net.state_dict().items()}, state_path)
+
+    # 2. Allocate hands per worker. Slight per-worker overshoot is fine —
+    #    decision count is approximate (mean ~135 dec/hand).
+    target_hands = max(
+        math.ceil(cfg.target_decisions / mean_hand_length), n_workers
+    )
+    hands_per_worker = math.ceil(target_hands / n_workers)
+
+    # 3. Pull contiguous, deterministic hand specs from scheduler (main only)
+    worker_specs: list[list[tuple[int, int, int]]] = []
+    for _ in range(n_workers):
+        specs = [scheduler.next_hand() for _ in range(hands_per_worker)]
+        worker_specs.append(specs)
+
+    args = [(state_path, specs, cfg, hidden) for specs in worker_specs]
+    bufs = pool.map(_rollout_worker, args)
+
+    return RolloutBuffer.from_buffers(bufs)

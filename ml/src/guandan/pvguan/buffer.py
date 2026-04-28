@@ -59,6 +59,40 @@ class PPOBatch:
     advantages:   torch.Tensor   # [N]  — normalised (mean=0, std=1)
 
 
+@dataclass
+class RolloutStats:
+    """Aggregate rollout statistics — diagnostic only."""
+    K_values:      list[int] = field(default_factory=list)   # legal-move count per decision
+    pass_count:    int = 0                                   # PASS actions sampled
+    non_pass_count:int = 0
+    bomb_count:    int = 0                                   # bomb-tier actions sampled
+    lead_count:    int = 0                                   # lead actions (no current_trick)
+    hand_lengths:  list[int] = field(default_factory=list)   # decisions per hand
+
+    def merge(self, other: "RolloutStats") -> None:
+        """Merge another RolloutStats in-place (used to aggregate worker stats)."""
+        self.K_values.extend(other.K_values)
+        self.pass_count     += other.pass_count
+        self.non_pass_count += other.non_pass_count
+        self.bomb_count     += other.bomb_count
+        self.lead_count     += other.lead_count
+        self.hand_lengths.extend(other.hand_lengths)
+
+    def summary(self) -> dict:
+        K = np.array(self.K_values, dtype=np.int32) if self.K_values else np.zeros(1)
+        total_actions = self.pass_count + self.non_pass_count
+        return {
+            "mean_K":              float(K.mean()),
+            "p95_K":               float(np.percentile(K, 95)),
+            "max_K":               int(K.max()),
+            "pass_rate":           self.pass_count / max(total_actions, 1),
+            "bomb_play_rate":      self.bomb_count / max(total_actions, 1),
+            "lead_rate":           self.lead_count / max(total_actions, 1),
+            "mean_hand_length":    float(np.mean(self.hand_lengths)) if self.hand_lengths else 0.0,
+            "n_hands_iter":        len(self.hand_lengths),
+        }
+
+
 class RolloutBuffer:
     """Collects per-player tracks across multiple hands, then computes GAE."""
 
@@ -66,11 +100,23 @@ class RolloutBuffer:
         self.gamma = gamma
         self.lam = lam
         self._completed_tracks: list[PlayerTrack] = []
+        self.stats = RolloutStats()
 
     def add_track(self, track: PlayerTrack) -> None:
         """Store a completed player track (must have is_complete=True)."""
         assert track.is_complete, "Track must be finalized before adding"
         self._completed_tracks.append(track)
+
+    @classmethod
+    def from_buffers(
+        cls, bufs: list["RolloutBuffer"], gamma: float = 1.0, lam: float = 0.95
+    ) -> "RolloutBuffer":
+        """Aggregate per-worker buffers into a single buffer for batch building."""
+        merged = cls(gamma=gamma, lam=lam)
+        for b in bufs:
+            merged._completed_tracks.extend(b._completed_tracks)
+            merged.stats.merge(b.stats)
+        return merged
 
     def size(self) -> int:
         """Total decisions stored."""

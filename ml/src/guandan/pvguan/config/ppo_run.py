@@ -52,6 +52,13 @@ class PPORunConfig:
     resume:          str | None = None    # path to checkpoint to resume from
     run_dir:         str | None = None    # defaults to ml/runs/pvguan_{critic}_seed{seed}
 
+    # ── mixed-opponent rollout ───────────────────────────────────────────────
+    # Per hand: with prob `selfplay_frac` all 4 seats are net (current behavior).
+    # Otherwise pick a random bot from `opponent_mix` and put it at seats {1,3};
+    # net plays {0,2}. Only seat-0/2 decisions enter the PPO buffer.
+    opponent_mix:    tuple[str, ...] = ()  # e.g. ("jidan", "yaoji", "strategic")
+    selfplay_frac:   float = 1.0           # 1.0 = pure self-play (legacy)
+
     # ── validation eval ──────────────────────────────────────────────────────
     val_every:     int  = 50              # iters between validation paired evals (0 = off)
     val_games:     int  = 200             # games per opponent (= n_decks × 4 rotations)
@@ -127,6 +134,11 @@ class PPORunConfig:
             ) if isinstance(getattr(args, "val_opponents", None), str)
               else getattr(args, "val_opponents", ("jidan", "yaoji")),
             val_bootstrap=getattr(args, "val_bootstrap", 200),
+            opponent_mix=tuple(
+                s.strip() for s in getattr(args, "opponent_mix", "").split(",")
+                if s.strip()
+            ),
+            selfplay_frac=getattr(args, "selfplay_frac", 1.0),
         )
 
     def __str__(self) -> str:
@@ -149,6 +161,8 @@ class PPORunConfig:
             f"  validation      = every {self.val_every} iters  "
                 f"games={self.val_games} (={self.val_games // 4} decks × 4 rot)  "
                 f"opponents={list(self.val_opponents)}",
+            f"  rollout opp_mix = {list(self.opponent_mix) or 'none (pure self-play)'}  "
+                f"selfplay_frac={self.selfplay_frac}",
             f"  run_dir         = {self.resolved_run_dir}  (auto-timestamped)",
         ]
         return "\n".join(lines)

@@ -1,14 +1,23 @@
-"""Self-play rollout collector for pvguan PPO.
+"""Self-play / mixed-opponent rollout collector for pvguan PPO.
 
 Complete-hand collection: each iter runs full hands until decisions_collected
-reaches the target. May overshoot (each hand adds ~135 decisions).
+reaches the target. May overshoot (each hand adds ~135 decisions in self-play,
+~half that in mixed-opponent hands since only 2 of 4 seats record).
 
 Per-player tracks: decisions stored in the acting player's track only.
 GAE bootstraps from the same player's next decision — see buffer.py.
 
 Deterministic deal schedule: (deal_seed, level_seed) derived from
 (global_run_seed, global_hand_index) via hash, so matched PV-AC/PV-PTIE
-seeds draw from the same deterministic deal stream.
+seeds draw from the same deterministic deal stream. Mode (self-play vs
+mixed-opponent) is also derived from deal_seed so it's reproducible.
+
+Mixed-opponent mode: per hand, with prob `cfg.selfplay_frac` we play pure
+self-play (all 4 seats = net). Otherwise pick a random bot from
+`cfg.opponent_mix` and seat it at {1,3}; net plays {0,2}. Only seat-0/2
+tracks enter the PPO buffer in mixed-opponent hands. This lets the policy
+see real jidan/yaoji/strategic playstyles during training and avoids the
+self-play distribution drift that caused the iter-200→400 WR collapse.
 
 Parallel rollout: collect_rollout_parallel() spawns N workers (spawn context),
 each loading network weights from a temp file and playing a fixed list of
@@ -21,14 +30,16 @@ from __future__ import annotations
 import hashlib
 import math
 import multiprocessing as mp
+import random
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
 import torch
 
 from ..agents.partner_oracle_bot import _reflect_env
+from ..agents.partner_pimc_bot import ROLLOUT_FACTORIES
 from ..cards import Rank
 from ..combos import Combo
 from ..game import GuanDanEnv
@@ -79,6 +90,9 @@ class RolloutConfig:
     critic_mode: Literal["pv", "ptie"] = "pv"
     temperature: float = 1.0
     max_legal_per_decision: int = 64   # cap legal moves for memory; bombs always kept
+    # Mixed-opponent mode (see module docstring)
+    opponent_mix:    tuple[str, ...] = ()
+    selfplay_frac:   float = 1.0
 
 
 def _cap_legal(
@@ -132,19 +146,42 @@ def _play_one_hand(
     cfg: RolloutConfig,
     device: torch.device,
     buf: RolloutBuffer,
+    opp_bots: dict[str, "object"] | None = None,
 ) -> int:
     """Play one hand, append decisions/tracks/stats to buf.
-    Returns the number of decisions collected in this hand.
+    Returns the number of net-controlled decisions collected.
+
+    If `opp_bots` is set and (rng.random() >= cfg.selfplay_frac), seats {1,3}
+    are controlled by a randomly chosen opponent bot; otherwise pure self-play.
+    The mode RNG is keyed on deal_seed so the same hand always picks the same
+    mode and opponent, preserving determinism across resumes.
     """
     level_rank = HandScheduler.level_from_seed(level_seed)
     env = GuanDanEnv(level_rank=level_rank)
     env.reset(seed=deal_seed)
+
+    # Per-hand RNG keyed on deal_seed → reproducible mode & opponent choice
+    rng = random.Random(deal_seed)
+
+    if opp_bots and rng.random() >= cfg.selfplay_frac:
+        opp_name = rng.choice(list(opp_bots.keys()))
+        opp_bot  = opp_bots[opp_name]
+        our_team: set[int] = {0, 2}
+    else:
+        opp_bot  = None
+        our_team = {0, 1, 2, 3}
 
     tracks: dict[int, PlayerTrack] = {p: PlayerTrack(player=p) for p in range(4)}
     hand_decisions = 0
 
     while not env.done:
         player = env.current_player
+
+        # Opponent seats: bot acts, no decision recorded
+        if opp_bot is not None and player not in our_team:
+            env.step(opp_bot.act(env, player))
+            continue
+
         needs_reflect, canonical_player = _canonical(player)
         enc_env = _reflect_env(env) if needs_reflect else env
 
@@ -215,12 +252,23 @@ def _play_one_hand(
         env.step(chosen)
 
     rewards = env.get_rewards()
-    for p in range(4):
+    for p in our_team:
         if tracks[p].decisions:
             tracks[p].finalize(rewards[p] / 3.0)
             buf.add_track(tracks[p])
     buf.stats.hand_lengths.append(hand_decisions)
     return hand_decisions
+
+
+def _build_opp_bots(cfg: RolloutConfig) -> dict[str, object] | None:
+    """Instantiate opponent bots from cfg.opponent_mix. Returns None if empty
+    or selfplay_frac >= 1 (no mixed-opponent hands will be played)."""
+    if not cfg.opponent_mix or cfg.selfplay_frac >= 1.0:
+        return None
+    return {
+        name: ROLLOUT_FACTORIES[name](Rank.TWO)
+        for name in cfg.opponent_mix
+    }
 
 
 def collect_rollout(
@@ -234,11 +282,12 @@ def collect_rollout(
     """
     net.eval()
     buf = RolloutBuffer()
+    opp_bots = _build_opp_bots(cfg)
     decisions_collected = 0
     while decisions_collected < cfg.target_decisions:
         _, deal_seed, level_seed = scheduler.next_hand()
         decisions_collected += _play_one_hand(
-            net, deal_seed, level_seed, cfg, device, buf
+            net, deal_seed, level_seed, cfg, device, buf, opp_bots
         )
     net.train()
     return buf
@@ -253,8 +302,9 @@ def _collect_for_hands(
     """Play exactly the supplied list of hands. Used by parallel workers."""
     net.eval()
     buf = RolloutBuffer()
+    opp_bots = _build_opp_bots(cfg)
     for _idx, deal_seed, level_seed in hand_specs:
-        _play_one_hand(net, deal_seed, level_seed, cfg, device, buf)
+        _play_one_hand(net, deal_seed, level_seed, cfg, device, buf, opp_bots)
     return buf
 
 

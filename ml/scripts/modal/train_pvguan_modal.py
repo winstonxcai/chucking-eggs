@@ -65,6 +65,8 @@ def train_remote(
     rollout_workers:      int,
     snapshot_interval:    int,
     resume:               str | None,
+    opponent_mix:         str,
+    selfplay_frac:        float,
 ) -> str:
     import os
     import subprocess
@@ -92,7 +94,10 @@ def train_remote(
         "--rollout-workers",         str(rollout_workers),
         "--snapshot-interval",       str(snapshot_interval),
         "--run-dir",                 run_dir,
+        "--selfplay-frac",           str(selfplay_frac),
     ]
+    if opponent_mix:
+        cmd.extend(["--opponent-mix", opponent_mix])
     if resume:
         cmd.extend(["--resume", resume])
     else:
@@ -124,6 +129,8 @@ def main(
     rollout_workers:      int   = 16,
     snapshot_interval:    int   = 1_000_000,
     resume:               str   = "",
+    opponent_mix:         str   = "",
+    selfplay_frac:        float = 1.0,
 ) -> None:
     result = train_remote.remote(
         critic=critic, seed=seed,
@@ -141,5 +148,7 @@ def main(
         rollout_workers=rollout_workers,
         snapshot_interval=snapshot_interval,
         resume=resume if resume else None,
+        opponent_mix=opponent_mix,
+        selfplay_frac=selfplay_frac,
     )
     print(result)

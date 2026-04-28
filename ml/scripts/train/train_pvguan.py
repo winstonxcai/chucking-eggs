@@ -213,6 +213,14 @@ def main():
     parser.add_argument("--val-opponents",    default="jidan,yaoji",
                         help="Comma-separated opponent names")
     parser.add_argument("--val-bootstrap",    type=int,   default=200)
+    parser.add_argument("--opponent-mix",     default="",
+                        help="Comma-separated opponent bot names mixed into rollout "
+                             "(e.g. 'jidan,yaoji,strategic'). Empty = pure self-play.")
+    parser.add_argument("--selfplay-frac",    type=float, default=1.0,
+                        help="Fraction of hands that are pure self-play. "
+                             "1.0 = legacy (no mixed opponents); "
+                             "0.25 = 75%% mixed-opponent hands. Ignored if "
+                             "--opponent-mix is empty.")
     args = parser.parse_args()
 
     device  = get_device()
@@ -284,6 +292,8 @@ def main():
         target_decisions=run_cfg.iter_decisions,
         critic_mode=run_cfg.critic,
         temperature=run_cfg.temperature,
+        opponent_mix=tuple(run_cfg.opponent_mix),
+        selfplay_frac=run_cfg.selfplay_frac,
     )
     scheduler = HandScheduler(global_run_seed=run_cfg.seed * 100_000)
 

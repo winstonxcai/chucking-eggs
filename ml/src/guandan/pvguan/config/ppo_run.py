@@ -59,6 +59,9 @@ class PPORunConfig:
     opponent_mix:    tuple[str, ...] = ()  # e.g. ("jidan", "yaoji", "strategic")
     selfplay_frac:   float = 1.0           # 1.0 = pure self-play (legacy)
 
+    # ── reward shaping ───────────────────────────────────────────────────────
+    going_out_shape: float = 0.0           # 0 = off; >0 enables potential-based shaping
+
     # ── validation eval ──────────────────────────────────────────────────────
     val_every:     int  = 100             # iters between validation paired evals (0 = off)
     val_games:     int  = 200             # games per opponent (= n_decks × 4 rotations)
@@ -141,6 +144,7 @@ class PPORunConfig:
                 if s.strip()
             ),
             selfplay_frac=getattr(args, "selfplay_frac", 1.0),
+            going_out_shape=getattr(args, "going_out_shape", 0.0),
         )
 
     def __str__(self) -> str:

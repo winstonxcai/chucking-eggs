@@ -93,6 +93,10 @@ class RolloutConfig:
     # Mixed-opponent mode (see module docstring)
     opponent_mix:    tuple[str, ...] = ()
     selfplay_frac:   float = 1.0
+    # Going-out reward shaping (potential-based, preserves optimal policy).
+    # 0.0 = off (legacy terminal-only). When > 0: player gets +shape at the
+    # step they go out, and -shape adjustment to their terminal reward.
+    going_out_shape: float = 0.0
 
 
 def _cap_legal(
@@ -249,12 +253,27 @@ def _play_one_hand(
             if env.current_trick is None:
                 buf.stats.lead_count += 1
 
+        prev_out = env.is_out[player]
         env.step(chosen)
+
+        # Going-out shaping: if this player just emptied their hand and they're
+        # net-controlled, give +shape at this decision step. Terminal reward is
+        # adjusted by -shape later so total per-track reward is preserved.
+        if (cfg.going_out_shape > 0.0
+                and player in our_team
+                and env.is_out[player]
+                and not prev_out):
+            tracks[player].intermediate_rewards[len(tracks[player].decisions) - 1] = (
+                cfg.going_out_shape
+            )
 
     rewards = env.get_rewards()
     for p in our_team:
         if tracks[p].decisions:
-            tracks[p].finalize(rewards[p] / 3.0)
+            terminal = rewards[p] / 3.0
+            if cfg.going_out_shape > 0.0 and tracks[p].intermediate_rewards:
+                terminal -= cfg.going_out_shape
+            tracks[p].finalize(terminal)
             buf.add_track(tracks[p])
     buf.stats.hand_lengths.append(hand_decisions)
     return hand_decisions

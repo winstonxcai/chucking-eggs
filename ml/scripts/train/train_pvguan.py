@@ -225,6 +225,10 @@ def main():
                              "1.0 = legacy (no mixed opponents); "
                              "0.25 = 75%% mixed-opponent hands. Ignored if "
                              "--opponent-mix is empty.")
+    parser.add_argument("--going-out-shape", type=float, default=0.0,
+                        help="Going-out reward shaping coefficient (0 = off). "
+                             "Player gets +shape when they go out; terminal "
+                             "reward adjusted -shape to preserve total reward.")
     args = parser.parse_args()
 
     device  = get_device()
@@ -298,6 +302,7 @@ def main():
         temperature=run_cfg.temperature,
         opponent_mix=tuple(run_cfg.opponent_mix),
         selfplay_frac=run_cfg.selfplay_frac,
+        going_out_shape=run_cfg.going_out_shape,
     )
     scheduler = HandScheduler(global_run_seed=run_cfg.seed * 100_000)
 

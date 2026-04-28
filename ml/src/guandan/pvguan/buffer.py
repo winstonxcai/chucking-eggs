@@ -34,6 +34,10 @@ class PlayerTrack:
     player: int
     decisions: list[Decision] = field(default_factory=list)
     terminal_reward: float = 0.0
+    # intermediate per-step rewards (e.g. going-out shaping). Keys are
+    # decision indices, values are reward to apply at that step. Empty by
+    # default to preserve legacy terminal-only behavior.
+    intermediate_rewards: dict[int, float] = field(default_factory=dict)
     is_complete: bool = False
 
     def add(self, decision: Decision) -> None:
@@ -150,7 +154,10 @@ class RolloutBuffer:
 
             v_olds = np.array([d.v_old for d in track.decisions], dtype=np.float64)
             rewards = np.zeros(T, dtype=np.float64)
-            rewards[-1] = track.terminal_reward  # only terminal step gets reward
+            for t, r in track.intermediate_rewards.items():
+                if 0 <= t < T:
+                    rewards[t] += r
+            rewards[-1] += track.terminal_reward  # terminal step adds terminal reward
 
             # Per-player GAE: V_next for terminal step = 0 (player is done)
             advantages = np.zeros(T, dtype=np.float64)

@@ -1004,6 +1004,7 @@ positive = we win).
 | **Going-out reward shaping** | Potential-based: +`shape` reward when net player goes out, −`shape` from terminal so total per-track reward is preserved (preserves optimal policy). |
 | **Early stopping** | `--val-patience N`: stop after N consecutive non-improving evals. |
 | **`mean_hand_length` correction** | `collect_rollout_parallel` was using 135 dec/hand (self-play assumption); corrected to `135 × (selfplay_frac + (1 - selfplay_frac) × 0.5)` since mixed-opp hands collect only 2/4 seats. Without this, target_decisions per iter undershoots ~50%. |
+| **Parallel validation eval** | `_run_validation` now dispatches one opponent eval per rollout-pool worker. Each worker loads net from disk (same path as rollout), instantiates `PVGuanBot` + opponent bot, runs `paired_eval`. **3-opp val: ~150s sequential → ~50s parallel** (~3× speedup, capped by longest opp). Reuses existing pool — zero extra infrastructure. |
 
 ### Run summary
 
@@ -1062,6 +1063,69 @@ true ceiling, or whether there's a deeper architectural / structural
 limit. If yaoji exceeds 56% at any point in run #6, the warmstart was the
 problem. If it stalls at the same level, the limit lives elsewhere
 (observation space, network capacity, or self-play distribution).
+
+### Run #6 — full eval trajectory (killed at iter 1125, ~52% of budget)
+
+10M decision budget, no warmstart, `selfplay_frac=0.25`, mixed-opp =
+`jidan,yaoji,strategic`, `val_every=50`, `val_games=300` per opp.
+**Killed early** — clear plateau in metric=0.6–0.78 band since iter 700;
+remaining budget would not have changed the conclusion.
+
+| iter | dec | metric | jidan | yaoji | strategic | note |
+|---|---|---|---|---|---|---|
+|  50 | 0.27M | −0.331 | 42.7% | 31.3% | 30.0% | first eval |
+| 100 | 0.53M | −0.256 | 48.7% | 32.0% | 34.0% | |
+| 150 | 0.77M | +0.056 | 52.0% | 39.3% | 42.7% | metric crosses 0 |
+| 200 | 1.01M | +0.227 | 56.0% | 39.3% | 48.0% | |
+| 250 | 1.24M | +0.247 | 56.7% | 36.7% | 51.3% | |
+| 300 | 1.47M | +0.218 | 60.0% | 36.7% | 49.3% | jidan >60% first time |
+| 350 | 1.70M | +0.422 | 56.0% | 38.7% | 56.7% | |
+| 400 | 1.92M | **+0.718** | 62.7% | **52.0%** | 66.0% | yaoji breaks 50% (1st) |
+| 450 | 2.15M | +0.524 | 64.7% | 37.3% | 59.3% | yaoji crash |
+| 500 | 2.38M | +0.536 | 67.3% | 41.3% | 54.0% | jidan all-time high |
+| 550 | 2.61M | +0.716 | 58.7% | 43.3% | 68.7% | strategic all-time high |
+| 600 | 2.84M | +0.773 | 66.7% | 48.7% | 61.3% | |
+| 650 | 3.06M | +0.562 | 58.0% | 42.7% | 63.3% | |
+| 700 | 3.29M | **+0.782** | 64.0% | 50.7% | 61.3% | yaoji breaks 50% (2nd); new best metric |
+| 750 | 3.52M | +0.689 | 64.0% | 43.3% | 61.3% | |
+| 800 | 3.75M | +0.713 | 62.0% | 49.3% | 64.0% | |
+| 850 | 3.98M | +0.624 | 63.3% | 44.0% | 64.7% | |
+| 900 | 4.20M | +0.760 | 66.7% | 50.7% | 62.0% | yaoji breaks 50% (3rd) |
+| 950 | 4.44M | +0.709 | 67.3% | 43.3% | 64.7% | jidan all-time high |
+| 1000 | 4.67M | +0.627 | 66.7% | 50.0% | 57.3% | |
+| 1050 | 4.91M | +0.671 | 64.7% | 46.7% | 58.7% | killed shortly after |
+
+**Final observations** (killed at iter 1125, ~52% of budget):
+- Steady upward trend from iter 50 → iter 400; plateau in metric=0.6–0.78 band thereafter.
+- **No new best metric in 350 iters** (iter 700 = +0.782 was final high). Mean of last 5 evals = +0.678 — clearly converged.
+- Yaoji crossed 50% three times (iter 400: 52%, iter 700: 50.7%, iter 900: 50.7%) but **never exceeded 52%**. Warmstart-era yaoji peak was 56%, so warmstart actually outperformed from-scratch on yaoji.
+- Best from-scratch metric **+0.782** vs run 4 warmstart-best **+1.144** — gap of 0.36 never closed.
+- Jidan stable 60–67%, strategic 57–69%; both within warmstart-era band.
+- High variance (metric swings ±0.15–0.25 between adjacent evals). `val_games=300` insufficient for low-noise tracking.
+
+### What run #6 actually proved
+
+The from-scratch experiment was designed to test "is jidan-prior bias the
+yaoji ceiling?" Answer: **no, in the opposite direction**. Yaoji peaks
+*lower* without warmstart (52% from-scratch vs 56% warmstart). The
+warmstart was a small *help* on yaoji, not a hindrance.
+
+The yaoji ~50-55% ceiling and the metric ~0.78 plateau appear to be
+structural to the (architecture × opponent_mix × selfplay_frac × val
+size) system. Reward shaping, warmstart removal, and longer training all
+fail to break it. Next experiments must target architecture or training
+distribution:
+
+1. **Online opponent-style features** (highest leverage, low cost): bolt
+   per-seat statistics (pass rate, lead aggression, bomb rate) onto the
+   state encoder. Currently the policy has zero observable signal
+   distinguishing yaoji from strategic from jidan.
+2. **Reactive curriculum** on opponent mix: weight harder opponents more
+   when their WR is below the others. Targets the structural pull toward
+   easier-opponent gradients.
+3. **Sequential history encoder**: replace pooled `move_history_mean[83]`
+   with a small RNN/transformer over the last 15 moves to preserve
+   sequential signal.
 
 ---
 

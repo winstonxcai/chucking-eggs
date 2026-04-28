@@ -403,12 +403,19 @@ def main():
             # 1. Rollout
             t_roll_start = time.time()
             if rollout_pool is not None:
+                # Mixed-opponent hands only collect decisions from 2 of 4 seats
+                # (~half the decisions of self-play). Adjust mean_hand_length so
+                # the parallel hand allocator hits the target_decisions budget.
+                eff_hand_len = 135.0 * (
+                    run_cfg.selfplay_frac + (1 - run_cfg.selfplay_frac) * 0.5
+                )
                 buf = collect_rollout_parallel(
                     net, scheduler, rollout_cfg,
                     n_workers=run_cfg.rollout_workers,
                     pool=rollout_pool,
                     state_path=rollout_state_path,
                     hidden=run_cfg.hidden,
+                    mean_hand_length=eff_hand_len,
                 )
             else:
                 buf = collect_rollout(net, scheduler, rollout_cfg, device)

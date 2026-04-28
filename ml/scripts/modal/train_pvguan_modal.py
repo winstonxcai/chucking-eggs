@@ -70,6 +70,7 @@ def train_remote(
     val_patience:         int,
     warmstart_path:       str | None,
     going_out_shape:      float,
+    run_dir_override:     str | None,
 ) -> str:
     import os
     import subprocess
@@ -77,7 +78,7 @@ def train_remote(
     env = os.environ.copy()
     env["PYTHONPATH"] = "/root/ml/src"
 
-    run_dir = f"{RUN_VOL}/pvguan_{critic}_seed{seed}"
+    run_dir = run_dir_override or f"{RUN_VOL}/pvguan_{critic}_seed{seed}"
 
     cmd = [
         "python", "/root/ml/scripts/train/train_pvguan.py",
@@ -140,6 +141,7 @@ def main(
     val_patience:         int   = 0,
     warmstart_path:       str   = "",
     going_out_shape:      float = 0.0,
+    run_dir_override:     str   = "",
 ) -> None:
     result = train_remote.remote(
         critic=critic, seed=seed,
@@ -162,5 +164,6 @@ def main(
         val_patience=val_patience,
         warmstart_path=warmstart_path if warmstart_path else None,
         going_out_shape=going_out_shape,
+        run_dir_override=run_dir_override if run_dir_override else None,
     )
     print(result)

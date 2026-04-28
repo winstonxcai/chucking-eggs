@@ -1301,7 +1301,39 @@ pursuing until the base architecture is upgraded.
 
 ---
 
-## 36. What this logbook is for
+## 36. Going-out shaping diagnostic — credit-assignment is not the bottleneck (2026-04-29)
+
+**Hypothesis:** Yaoji wins via partner coordination near the endgame (its scoring function
+has hard rules: "if mate.rest ≤ 1, lead my best non-bomb +100"; "if greater is partner with
+rest ≤ 6, PASS"). PPO with γ=1.0 over ~135-decision hands has poor credit assignment for
+"this lead 30 steps ago helped my partner go out." Going-out shaping (`+shape` when a
+teammate goes out, `-shape` from terminal) explicitly delivers that signal.
+
+**Setup:** Same 3-fan-out as §35, but with `--going-out-shape 0.5` and `seed=2`. Fine-tunes
+from `pvguan_ptie_seed0_best.pt`, single opponent each, 500-game evals.
+
+| Run | Best WR (shape) | Best WR (baseline §35) | Δ |
+|-----|---|---|---|
+| yaoji | **51.6%** | 50.4% | +1.2% |
+| jidan | **64.8%** | 64.4% | +0.4% |
+| strategic | **65.6%** | 69.2% | -3.6% |
+
+All deltas inside the 500-game CI band (~±5%). Shaping did **not** break the yaoji ceiling.
+
+**Verdict:** Credit assignment is not the dominant bottleneck. The yaoji ceiling is
+something else — most likely the architecture genuinely cannot represent yaoji's specific
+decision boundaries (no explicit `partner_can_win_now`, `opp_can_win_now` features) and/or
+the policy distribution doesn't cover the states yaoji-vs-yaoji teams steer the game into.
+
+**Killed at iter ~1750 / 4.2M decisions across all three.**
+
+**Next experiment:** Yaoji-distilled warmstart (mirror of `pvguan_distilled_jidan.pt`) →
+seed the policy directly into yaoji's coordination basin, then RL refines past its
+blind spots (no card counting, `Possibility=1`).
+
+---
+
+## 37. What this logbook is for
 
 When designing the next training run:
 - Do NOT propose QMIX, GNN, PIMC, or aux-head-without-selection-pressure. They are all on the failure list above.

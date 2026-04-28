@@ -1264,7 +1264,44 @@ with a faster shared-memory transport.
 
 ---
 
-## 35. What this logbook is for
+## 35. Specialist fine-tune diagnostic — architecture ceiling confirmed (2026-04-29)
+
+**Hypothesis:** Multi-opponent training dilutes the policy. Fine-tuning from the best checkpoint
+(+1.030 @ 6.08M) on a single opponent each should reveal whether 80% WR is achievable with
+the current 256-hidden architecture.
+
+**Setup:** Three independent Modal runs, each resuming from `pvguan_ptie_seed0_best.pt`,
+`selfplay_frac=0.0`, `curriculum_temp=0`, `val_games=500` (high-accuracy), 2M new decisions each.
+
+| Run | Opponent | Best WR | Trend |
+|-----|----------|---------|-------|
+| finetune_jidan | jidan | **64.4%** (iter 1550, first eval) | Immediate decline → 53–62% |
+| finetune_yaoji | yaoji | **50.4%** (iter 1850) | Flat throughout, 47–50% |
+| finetune_strategic | strategic | **69.2%** (iter 1600, 1700) | Stable oscillation 62–69% |
+
+**Key findings:**
+
+1. **Jidan peaked before any specialist training took effect.** The best checkpoint already encodes
+   ~64% vs jidan (with 500 games; the r2 peak of 75% was 100-game noise). Specialist training
+   degraded it — first eval was the best, then slow drift downward.
+
+2. **Yaoji is unresponsive.** Seven consecutive evals at 47–50%, CIs all spanning 50%. Dedicated
+   jidan-style rollouts produce zero learning signal against yaoji. This rules out dilution as the
+   cause — pure yaoji exposure for 2M decisions doesn't help.
+
+3. **Strategic is the only one that fine-tunes cleanly**, with two peaks at 69.2%. But 69% is still
+   well below 80%, and it oscillates — not a clear upward trend.
+
+**Verdict:** Dilution is **not** the bottleneck. The 256-hidden architecture genuinely cannot model
+yaoji's playstyle. The path to 80% requires a larger net (hidden ≥ 512) or richer opponent-style
+features. The specialist-checkpoint idea (router model) is viable for strategic but not worth
+pursuing until the base architecture is upgraded.
+
+**Action:** Kill all three runs (killed at iter ~1900 / 4.7M decisions). Next step: bump hidden to 512.
+
+---
+
+## 36. What this logbook is for
 
 When designing the next training run:
 - Do NOT propose QMIX, GNN, PIMC, or aux-head-without-selection-pressure. They are all on the failure list above.

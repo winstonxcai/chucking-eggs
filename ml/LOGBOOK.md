@@ -978,7 +978,94 @@ Decision pending; logbook will be updated when chosen and run.
 
 ---
 
-## 24. What this logbook is for
+## 32. PV-PTIE Modal experiments — chasing 80% WR (2026-04-28)
+
+After Path B (jidan warmstart) was selected and the initial 6M PV-PTIE
+production run completed, this session explored a series of follow-up
+experiments aimed at breaking past the warmstart-plateau ceiling. None
+reached the 80% target; the AZ pipeline failure mode (yaoji ~50-58%
+ceiling) reproduced cleanly here.
+
+### Validation setup
+
+All runs evaluated against `jidan`, `yaoji`, `strategic` (the three top-3
+bots from the Glicko-2 ladder). 300 hands per opponent (75 decks × 4 seat
+rotations). Headline metric `validation_metric` = mean of
+`promotion_diff_mean` across opponents (LEVEL_CHANGE diff per hand,
+positive = we win).
+
+### Infrastructure built this session
+
+| Feature | What it does |
+|---|---|
+| **Parallel rollout** | `mp.Pool(spawn)` with N CPU workers; persistent pool, weights synced via on-disk state file. **32 workers on A10G/cpu=48 = 22.6× speedup** (1.56s/iter for 4096 dec, was ~37s). Sweet spot, super-linear past 32 saw diminishing returns. |
+| **Resume from checkpoint** | `--resume <path>` restores optimizer state, trainer iter, scheduler counter, and loop counters. Mutually exclusive with `--warmstart`. Periodic `--snapshot-interval` replaces hardcoded `[1M, 3M, 6M]` list. |
+| **Mixed-opponent rollout** | Per hand with prob `1 - selfplay_frac`: randomly pick from `--opponent-mix` and seat at {1,3}; net plays {0,2}. Only seat-{0,2} decisions enter the PPO buffer. Deterministic mode/opponent choice keyed on `deal_seed`. |
+| **Going-out reward shaping** | Potential-based: +`shape` reward when net player goes out, −`shape` from terminal so total per-track reward is preserved (preserves optimal policy). |
+| **Early stopping** | `--val-patience N`: stop after N consecutive non-improving evals. |
+| **`mean_hand_length` correction** | `collect_rollout_parallel` was using 135 dec/hand (self-play assumption); corrected to `135 × (selfplay_frac + (1 - selfplay_frac) × 0.5)` since mixed-opp hands collect only 2/4 seats. Without this, target_decisions per iter undershoots ~50%. |
+
+### Run summary
+
+| # | Setup | Best metric | Best iter | jidan | yaoji | strategic | Outcome |
+|---|---|---|---|---|---|---|---|
+| 1 | Original 6M, jidan warmstart, pure self-play | n/a | ~200 | 70% | 50% | n/a | Peaked iter 200, then collapsed |
+| 2 | Resume 3M, selfplay=0.25, mixed-opp | +1.056 | 50 | 70.7% | 49.3% | n/a | Early peak, oscillation |
+| 3 | Resume 3M, selfplay=0.0 (pure mixed-opp) | +0.980 | 50 | — | — | — | Killed early; flat |
+| 4 | Resume 1M, selfplay=0.25, mixed-opp | **+1.144** | 100 | 69.3% | 56.0% | — | **Best with warmstart** |
+| 5 | Resume 1M, selfplay=0.25, going-out-shape=0.5 | +1.000 | 150 | 66.0% | 54.0% | 72.0% | Worse than #4; shaping no help |
+| 6 | **From scratch** (no warmstart), selfplay=0.25, mixed-opp | (in progress) | 50 (early) | 42.7% | 31.3% | 30.0% | Real learning trajectory; jidan>yaoji>strategic order from random init |
+
+### Lessons learned
+
+**1. Going-out shaping is a no-op for this setup.** A player's track usually
+ends at going-out (no more decisions for that track), so +shape at
+going-out and ±terminal land on adjacent or the same timestep. EV barely
+changed (~0.35 → ~0.35). The critic was already capturing what's
+predictable; remaining error is irreducible noise from partner play and
+dealing variance.
+
+**2. The yaoji ceiling is jidan-prior bias, not credit assignment.** Across
+all warmstart runs (1, 2, 4, 5), yaoji WR sat at 49-56% regardless of
+shaping, selfplay_frac, total_decisions, or warmstart depth. Distillation
+ancestry traces entirely to jidan_bot → KL-regularized PPO can't escape
+the jidan-shaped policy class. *No reward reshape inside that policy class
+breaks the yaoji ceiling.*
+
+**3. PPO + jidan warmstart is at a local optimum.** Metric oscillates around
+1.0 = warmstart baseline. Self-play symmetry makes per-track expected
+advantage ≈ 0; KL holds policy near jidan; gradients are tiny → equilibrium.
+
+**4. Self-play symmetry cancels gradient.** Real learning signal comes from
+the 75% of mixed-opponent hands where seats {0,2} face fixed bots. The
+remaining 25% pure self-play hands have ~zero gradient (both teams use the
+same network, so expected per-track advantage = 0). `selfplay_frac=0.0`
+(run #3) didn't help either — possibly because the partner-visible policy
+loses its joint-coordination training without any self-play.
+
+**5. Counter-intuitive WR ordering.** From scratch (run #6), the agent
+beats jidan more easily (42.7%) than yaoji (31.3%) or strategic (30.0%) —
+opposite of the bot tier table. Hypothesis: jidan plays sacrificially
+(over-passes, holds bombs for partner) which is exploitable by an
+aggressive learning net; yaoji/strategic punish weak play harder. Also
+both jidan and PVGuanBot share the partner-visible decision basis, so the
+policy class affinity favors jidan-shaped patterns.
+
+**6. Parallel rollout pays off massively.** 22.6× speedup at 32 workers
+made the iteration loop usable for these short-horizon experiments. Pure
+sequential at 200 dec/s would have made these comparisons cost-prohibitive.
+
+### Open question: from-scratch trajectory (run #6, in progress)
+
+The from-scratch run will tell us whether the jidan-prior bias was the
+true ceiling, or whether there's a deeper architectural / structural
+limit. If yaoji exceeds 56% at any point in run #6, the warmstart was the
+problem. If it stalls at the same level, the limit lives elsewhere
+(observation space, network capacity, or self-play distribution).
+
+---
+
+## 33. What this logbook is for
 
 When designing the next training run:
 - Do NOT propose QMIX, GNN, PIMC, or aux-head-without-selection-pressure. They are all on the failure list above.

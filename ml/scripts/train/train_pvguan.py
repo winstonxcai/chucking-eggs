@@ -119,19 +119,60 @@ def _git_sha() -> str:
         return "unknown"
 
 
+def _eval_worker(args: tuple) -> tuple[str, dict, float]:
+    """Module-level worker — picklable for spawn context.
+
+    Loads net weights from disk, builds PVGuanBot + opponent bot, runs paired
+    eval. Returns (opp_name, results_dict, wall_s). Workers run on CPU.
+    """
+    state_path, opp_name, deal_seeds, n_bootstrap, hidden = args
+    import time as _time
+    import torch as _torch
+    from guandan.cards import Rank
+    from guandan.pvguan.actor_critic import ActorCriticNet
+    from guandan.pvguan.agent import PVGuanBot
+    from guandan.pvguan.encoders import ACTOR_DIM, ACTION_DIM, CRITIC_DIM
+
+    _torch.set_num_threads(1)
+    net = ActorCriticNet(
+        d_state_actor=ACTOR_DIM,
+        d_action=ACTION_DIM,
+        d_state_critic=CRITIC_DIM,
+        hidden=hidden,
+    )
+    state = _torch.load(state_path, map_location="cpu", weights_only=True)
+    net.load_state_dict(state)
+    net.eval()
+
+    bot = PVGuanBot.from_net(net, level_rank=Rank.TWO, sample=False)
+    opp = _build_bot(opp_name, Rank.TWO)
+
+    t0 = _time.time()
+    results = run_paired_eval(bot, opp, deal_seeds, n_bootstrap=n_bootstrap)
+    wall = _time.time() - t0
+    return (opp_name, results, wall)
+
+
 def _run_validation(
     net: ActorCriticNet,
     iter_idx: int,
     cumulative_decisions: int,
     cfg: PPORunConfig,
     log,
+    *,
+    pool: "object | None" = None,
+    state_path: str | None = None,
+    hidden: int | None = None,
 ) -> dict:
-    """Run paired eval against each opponent. Returns the row written to JSONL."""
+    """Run paired eval against each opponent. Returns the row written to JSONL.
+
+    If `pool` and `state_path` are provided, dispatches one opponent eval per
+    worker (parallel). Otherwise runs sequentially in-process.
+    """
     from guandan.cards import Rank
 
     net.eval()
     try:
-        bot = PVGuanBot.from_net(net, level_rank=Rank.TWO, sample=False)
         # Each deck plays 4 seat rotations → games = decks × 4
         n_decks = max(cfg.val_games // 4, 1)
         deal_seeds = get_deal_seeds("validation", n_decks)
@@ -140,18 +181,40 @@ def _run_validation(
             "iter":                 iter_idx,
             "cumulative_decisions": cumulative_decisions,
         }
-        rank_advs: list[float] = []
-        for opp_name in cfg.val_opponents:
-            opp_name = opp_name.strip()
-            if not opp_name:
-                continue
-            t0 = time.time()
-            opp = _build_bot(opp_name, Rank.TWO)
-            results = run_paired_eval(
-                bot, opp, deal_seeds, n_bootstrap=cfg.val_bootstrap
+
+        opp_names = [n.strip() for n in cfg.val_opponents if n.strip()]
+
+        # Parallel path — dispatch each opp eval to a worker
+        if pool is not None and state_path is not None and hidden is not None:
+            torch.save(
+                {k: v.detach().cpu() for k, v in net.state_dict().items()},
+                state_path,
             )
-            wall = time.time() - t0
-            row[f"vs_{opp_name}"] = {
+            args = [
+                (state_path, name, deal_seeds, cfg.val_bootstrap, hidden)
+                for name in opp_names
+            ]
+            t0 = time.time()
+            outputs = pool.map(_eval_worker, args)
+            wall_total = time.time() - t0
+            log.info(f"  val parallel: {len(opp_names)} opps in {wall_total:.1f}s")
+            results_by_opp = {name: (res, wall) for name, res, wall in outputs}
+        else:
+            results_by_opp = {}
+            for name in opp_names:
+                t0 = time.time()
+                opp = _build_bot(name, Rank.TWO)
+                bot = PVGuanBot.from_net(net, level_rank=Rank.TWO, sample=False)
+                results = run_paired_eval(
+                    bot, opp, deal_seeds, n_bootstrap=cfg.val_bootstrap
+                )
+                wall = time.time() - t0
+                results_by_opp[name] = (results, wall)
+
+        rank_advs: list[float] = []
+        for name in opp_names:
+            results, wall = results_by_opp[name]
+            row[f"vs_{name}"] = {
                 "promotion_diff_mean": results["promotion_diff_mean"],
                 "promotion_diff_ci":   results["promotion_diff_ci"],
                 "win_rate":            results["win_rate"],
@@ -162,7 +225,7 @@ def _run_validation(
             }
             rank_advs.append(results["promotion_diff_mean"])
             log.info(
-                f"  val vs {opp_name:<10} "
+                f"  val vs {name:<10} "
                 f"Δ={results['promotion_diff_mean']:+.3f} "
                 f"CI=[{results['promotion_diff_ci'][0]:+.3f}, "
                 f"{results['promotion_diff_ci'][1]:+.3f}]  "
@@ -499,7 +562,10 @@ def main():
                     and iter_idx > 0
                     and iter_idx % run_cfg.val_every == 0):
                 val_row = _run_validation(
-                    net, iter_idx, cumulative_decisions, run_cfg, log
+                    net, iter_idx, cumulative_decisions, run_cfg, log,
+                    pool=rollout_pool,
+                    state_path=rollout_state_path,
+                    hidden=run_cfg.hidden,
                 )
                 run_logger.log_val(val_row)
 

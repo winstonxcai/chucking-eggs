@@ -106,6 +106,8 @@ def train_remote(
         cmd.extend(["--opponent-mix", opponent_mix])
     if resume:
         cmd.extend(["--resume", resume])
+    elif warmstart_path == "none":
+        pass  # train from scratch (no warmstart)
     else:
         ws = warmstart_path or WARMSTART_VOL_PATH
         cmd.extend(["--warmstart", ws])

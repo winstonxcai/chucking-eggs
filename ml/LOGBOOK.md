@@ -1416,7 +1416,212 @@ boundaries — not just more capacity.
 
 ---
 
-## 39. What this logbook is for
+## 39. Deep dive — opponent bot strategies (2026-04-29)
+
+Before deciding the next architecture move, this section catalogues exactly what each
+rule-based opponent does. The §35-38 ceiling story is shaped by these decision boundaries —
+some are smooth (jidan ✓), some are discontinuous cliffs (yaoji ✗).
+
+### 39.1 Yaoji (`_vendor/yaoji/mysolve.py`, 312 lines)
+
+NUAA 3rd place, 2020. Single-pass action scorer with explicit partner awareness.
+
+**Core formula:** `Score = Gain × (1 + Possibility) / Value`. `Possibility` is hard-coded
+to `1` everywhere — never used. So really `Score = 2 × Gain / Value`.
+
+**Per-card value `getval()`:**
+- Rank 2..A → 1..13, level rank → 14, hearts level rank → 340.
+- Big joker → 14 base, escalates with count: `+20` if pair held, `×100` if both jokers held.
+- Red joker → same escalation.
+- Same-rank multiplicity bonus: pairs +20, triples +40, quads +220, 5-of-kind +300, 6+ +400-600.
+- Suit-by-suit straight-flush scan: if 5 consecutive of same suit, override value to `320+rank`.
+
+**Action scoring per type:**
+- `Single`/`Pair`/`Trips`: `gain ∈ {1,2,3}`, `value = max(card_values)`.
+- `Straight`: `gain=5`, `value = sum(card_values)`.
+- `ThreePair`/`ThreeWithTwo`/`TwoTrips`: `gain ∈ {5,6}`, custom value averaging.
+
+**Partner-coordination rules — the CLIFFS (these are the architecture-ceiling problem):**
+
+| Condition | Effect on score |
+|---|---|
+| `mate.rest == 1` AND leading single | `score += 100` (set up partner) |
+| `mate.rest == 2` AND leading pair | `score += 100` |
+| `opp.rest == 1` AND leading single | `score *= -1` (don't feed) |
+| `opp.rest == 2` AND leading pair | `score *= -1` |
+| `opp.rest == 3` AND leading trips | `score *= -1` |
+| greater is partner, partner.rest ≤ 6 | PASS gets max priority |
+| greater is partner | bomb/SF score = `-10000` |
+| greater is opponent, opp2.rest ∈ [1,3] | PASS = `-9999` |
+| Following partner Single | PASS value = 25, gain=2 |
+| Following partner Pair | PASS value = 65, gain=4 |
+
+These are **discrete one-hot indicators** of opponent state. A smooth MLP cannot represent
+them without explicit features.
+
+**What yaoji does NOT do:** card counting, opponent hand inference, tree search,
+probabilistic reasoning (`Possibility=1` always).
+
+### 39.2 Jidan (`_vendor/jidan/message_Reyn_CUR.py`, 2514 lines)
+
+NUAA 2nd place, 2020 ("Reyn_AI 2.0"). 8× more code than yaoji but **paradoxically easier to
+imitate** (89% val_acc vs 62%).
+
+**Per-card value `get_point_val()` — non-linear schedule:**
+```
+point_val = [28, 1, 2, 3, 4, 5, 7, 9, 12, 15, 18, 22, 25, 100]
+                     2  3  4  5  6  7  8   9   T   J   Q   K   A
+```
+Note convex growth — small cards barely worth anything, A worth 25, but the schedule has a
+slot-0 = 28 used for level-rank context.
+
+**Per-card overrides:**
+- Hearts at level rank → 500 (THE single most valuable card)
+- Level rank (non-hearts) → 100
+- Big joker → 150
+- Red joker → 200
+
+**Hand evaluation `get_remain_VAL()`:**
+1. Suit-by-suit SF scan (S/H/C/D each scanned for any 5-consecutive) → `+50 × point_val[start]`
+2. Per-rank decomposition penalties (bigger group = better):
+   - singleton: `-200 + point_val`
+   - pair: `-180 + 2×point_val`
+   - triple: `-300 + 5×point_val`
+   - bomb (n≥4): `+100 × point_val × (n-3)` (bombs are great, escalating)
+3. Joker bonus: `count_big × 150 + count_red × 200`
+4. Level rank: `count_level × 100 + count_heart_level × 500`
+
+**Action scoring `get_VAL()`:** `val = base − sum(card_values) + get_remain_VAL(after_play)`.
+This is **1-step lookahead** — value the resulting hand and pick max. Bomb scoring
+explicitly penalizes bomb-spending (`−100 × point_val(rank)`).
+
+**Decision flow `check_message()`:**
+
+| Phase | Logic |
+|---|---|
+| **Tribute return** | Pick action maximizing remaining hand value |
+| **Leading** (greater is self/none) | Score all actions via `get_VAL`, pick max |
+| **Following partner** (greater is mate) | Hard-coded "don't over-step" rules: |
+| | • partner Bomb → PASS |
+| | • partner Single/Pair/Trips/3W2 with rank ∈ {T,J,Q,K,A,B,R,level} → PASS |
+| | • partner ThreePair/TripsPair with rank ∈ {T,J,Q,K,A} → PASS |
+| | • partner Straight starting at {7,8,9,T,J} → PASS |
+| | • partner StraightFlush/Joker → PASS |
+| | • Else: filter to same-type, point-dist ≤ 2, no Heart-level → max value |
+| **Following opponent** (else) | Score all actions via `get_VAL_OPP`, pick max |
+
+**Why jidan is EASIER for our network despite being more complex:**
+- Most decisions are **monotonic in card rank** (higher = more value).
+- `get_remain_VAL` is **separable** (each card contributes independently).
+- Boundaries are **smooth** — there's no "exactly rest==1" cliff.
+- The partner-suppression rules are coarse (rank thresholds) and the network can approximate
+  them via "high-card detector" features.
+
+### 39.3 Strategic (`strategic_bot.py`, 281 lines)
+
+Our own implementation. Phase-based logic on top of `HeuristicBot.HandPlan`.
+
+**Hand decomposition `HandPlan`:**
+- Splits into wilds + naturals
+- Groups naturals by rank → singles, pairs, triples, quads (sorted by level order)
+- Tracks jokers, quad ranks, bomb count
+
+**Leading (`_strategic_lead`) — phase ladder:**
+1. Can go out in one play → do it
+2. Hand ≤ 5 cards → `_endgame_lead` finds X-then-Y two-play sequence
+3. Partner already out → `_aggressive_lead` (multi-card combos to finish fast)
+4. Partner has 1–5 cards → `_help_partner_lead` (small singles/pairs partner can follow)
+5. Default → `_efficient_lead` (singles, then straights/tubes/plates, then pairs, then FH)
+
+**Following (`_strategic_follow`):**
+1. Partner is winning → PASS *unless* I can go out
+2. Trick is BJ single → play RJ if I have it (free win)
+3. Opp winning, cheapest same-type beat that doesn't break a bomb → play it
+4. Bomb decision — `should_bomb` gate:
+   - `opp_min_cards ≤ 5` (opp about to win)
+   - OR `partner_close` (partner ≤ 5)
+   - OR `my_hand ≤ 4` (I'm about to win)
+   - If true: play weakest bomb
+5. Default → PASS
+
+Strategic has **smoother phase boundaries** than yaoji — `partner_cards ≤ 5` is a 5-step
+ladder, not a 1-step cliff. The network handles strategic at ~69% WR.
+
+### 39.4 Comparison matrix
+
+| Capability | Yaoji | Jidan | Strategic |
+|---|:-:|:-:|:-:|
+| Per-card non-linear valuation | ✓ | ✓ (most sophisticated) | implicit |
+| Suit-by-suit SF detection | ✓ | ✓ | ✗ |
+| Hand decomposition | rank counts | rank+suit | natural groups |
+| 1-step lookahead | ✗ | ✓ (resimulates hand value) | ✗ |
+| Partner-rest cliffs (`==1`, `==2`, `==3`) | ✓ (sharp) | ✗ | partial (`≤5` smooth) |
+| Action-type-based partner suppression | ✗ | ✓ (8 rules) | partial |
+| Bomb conservation | -10000 vs partner | negative score | gated |
+| Card counting | ✗ | ✗ | ✗ |
+| Opponent hand inference | ✗ | ✗ | ✗ |
+| Tree search / MCTS | ✗ | ✗ | ✗ |
+| Lines of code | 312 | 2514 | 281 |
+| Our network's argmax accuracy | **62%** | **89%** | n/a |
+| Our PPO win rate | **~50%** | **~64%** | **~69%** |
+
+### 39.5 Why yaoji is uniquely hard — the cliff hypothesis
+
+The pattern is consistent across both metrics (distillation and PPO):
+
+| Bot | Argmax (distill) | PPO win rate |
+|---|---|---|
+| yaoji (3rd place) | 62% | 50% |
+| strategic (custom) | n/a | 69% |
+| jidan (2nd place, 8× more code) | **89%** | 64% |
+
+**Jidan, the strongest hand-coded opponent, is the easiest to imitate.** This rules out
+"strength" or "complexity" as the cause of our yaoji ceiling. The discriminator is
+**logical structure**:
+
+- Yaoji's score has **division** (`Score = Gain × (1+Poss) / Value`) — nonlinear, hard for
+  ReLU MLPs to approximate.
+- Yaoji's partner rules are **single-step cliffs**: `if rest == 1: ... else 0`. With our
+  current `seat_status (40)` features as smoothed embeddings, the network has to invert the
+  embedding to recover "rest == 1 exactly," then implement an indicator function.
+- Jidan's complexity is **monotonic and separable**: the score function is mostly a sum of
+  per-card terms. ReLU MLPs eat that for breakfast.
+
+### 39.6 Implications for the next architecture move
+
+The §35-38 conclusion was "bump hidden=512." This deep-dive sharpens the recommendation:
+
+**Capacity (hidden=512) won't fix yaoji on its own.** Adding capacity to a smooth MLP makes
+it a smoother, larger smooth MLP — still bad at representing cliffs.
+
+**The real fix is to add explicit one-hot features that match yaoji's exact decision
+boundaries:**
+
+```
+partner_rest_eq_1         (1 dim)  — hits yaoji's "set up partner" cliff
+partner_rest_eq_2         (1 dim)
+partner_rest_eq_3         (1 dim)
+partner_rest_leq_6        (1 dim)  — hits yaoji's "PASS to partner" cliff
+opp1_rest_eq_1            (1 dim)
+opp1_rest_eq_2            (1 dim)
+opp1_rest_eq_3            (1 dim)
+opp2_rest_eq_{1,2,3}      (3 dims)
+greater_is_partner        (1 dim)  — gates yaoji's bomb/SF -10000 rule
+greater_is_opp1/opp2      (2 dims)
+```
+
+12-15 cheap one-hot dims. With these, yaoji's rules become a single ReLU layer:
+`output = w · indicator + bias`. No capacity argument needed.
+
+**Test sequence:**
+1. Add features → re-distill yaoji → measure val_acc (should jump 62% → 80%+)
+2. If yes: full PPO run with augmented features
+3. If no (val_acc stays ≈62%): yaoji has logic we still aren't capturing — investigate
+   division/Possibility approximation or the suit-SF interaction
+
+---
+
+## 40. What this logbook is for
 
 When designing the next training run:
 - Do NOT propose QMIX, GNN, PIMC, or aux-head-without-selection-pressure. They are all on the failure list above.

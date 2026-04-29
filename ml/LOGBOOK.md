@@ -1333,7 +1333,49 @@ blind spots (no card counting, `Possibility=1`).
 
 ---
 
-## 37. What this logbook is for
+## 37. Yaoji distillation — strong evidence for architecture ceiling (2026-04-29)
+
+**Hypothesis:** A yaoji-distilled warmstart (mirror of `pvguan_distilled_jidan.pt`) seeds the
+policy directly into yaoji's coordination basin, then PPO refines past its blind spots
+(no card counting, `Possibility=1`).
+
+**Setup:** Modal A10G, 48 CPU, 32 workers. 500k decisions of yaoji self-play, hard-label
+distillation with `label_smoothing=0.1`, 8 epochs cosine LR=3e-4 → 1.5e-5, batch=512.
+
+**Result — striking degradation:**
+
+| Epoch | tr_acc | val_acc | Note |
+|---|---|---|---|
+| 1 | 0.611 | **0.622** | best, saved |
+| 2 | 0.625 | 0.563 | val regressing |
+| 3 | 0.510 | 0.496 | both crashing |
+| 4 | 0.477 | 0.474 | early stop |
+
+Final: **val_acc=0.622** at epoch 1. Saved as `/runs/warmstart/pvguan_distilled_yaoji.pt`.
+
+**Compare:** `jidan` distillation (logbook §31 smoke) hit **0.894** on **10× fewer samples**
+(50k × 4 epochs). Yaoji on 500k samples can only hit 0.622. Same architecture, same script.
+
+**Yaoji "always pass" baseline:** ~30% (yaoji passes 30% of recorded decisions). So 62% is
+real learning over the trivial baseline, but **38% of yaoji's argmax decisions are still
+mispredicted by an MLP with 256 hidden + 12 opp-style features**. This strongly suggests
+yaoji's branchy partnership rules (`if mate.rest ≤ 1: lead small; elif greater_pos != partner:
+play normally; ...`) don't decompose cleanly into the current feature space.
+
+**Numerical bug noticed:** training loss reported as 78M → 48M → 6M → 4M. This is
+`label_smoothing=0.1` distributing mass across **all** output positions including masked ones
+(set to `-1e9`), creating a huge constant offset. The bug doesn't break gradients (signal
+still flows through unmasked positions), but may contribute to the instability that crashes
+both train and val acc after epoch 1. Fix would be manually-masked label smoothing — not
+worth doing unless we revisit yaoji distillation seriously.
+
+**Action:** Saved 62% checkpoint as warmstart. Launched PPO from this warmstart on
+yaoji-only mixed rollouts to test whether even a weak warmstart bootstraps better than RL
+from scratch (§35 baseline: 50% flat).
+
+---
+
+## 38. What this logbook is for
 
 When designing the next training run:
 - Do NOT propose QMIX, GNN, PIMC, or aux-head-without-selection-pressure. They are all on the failure list above.

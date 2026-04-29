@@ -45,6 +45,7 @@ from ..combos import Combo
 from ..game import GuanDanEnv
 from .actor_critic import ActorCriticNet
 from .buffer import Decision, PlayerTrack, RolloutBuffer
+from .legal_utils import dedup_strategic
 from .encoders import (
     ACTOR_DIM,
     ACTION_DIM,
@@ -198,7 +199,7 @@ def _play_one_hand(
         needs_reflect, canonical_player = _canonical(player)
         enc_env = _reflect_env(env) if needs_reflect else env
 
-        legal = enc_env.legal_moves(canonical_player)
+        legal = dedup_strategic(enc_env.legal_moves(canonical_player))
 
         if len(legal) == 1 and legal[0].type.name == "PASS":
             env.step(legal[0])

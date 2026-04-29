@@ -168,6 +168,7 @@ def _worker(args: tuple) -> list[dict]:
     from guandan.combos import Combo
     from guandan.game import GuanDanEnv
     from guandan.pvguan.encoders import encode_action, encode_actor_pair_features
+    from guandan.pvguan.legal_utils import dedup_strategic, strategic_key
 
     random.seed(seed)
     np.random.seed(seed)
@@ -187,17 +188,17 @@ def _worker(args: tuple) -> list[dict]:
             canonical_player = player ^ 1 if needs_reflect else player
             enc_env = _reflect_env(env) if needs_reflect else env
 
-            legal = enc_env.legal_moves(canonical_player)
+            legal = dedup_strategic(enc_env.legal_moves(canonical_player))
             if len(legal) <= 1:
                 pick = supervisor.act(enc_env, canonical_player)
                 env.step(pick)
                 continue
 
             sup_pick = supervisor.act(enc_env, canonical_player)
-            pick_key = _combo_key(sup_pick)
+            pick_key = strategic_key(sup_pick)
 
             pick_idx_full = next(
-                (i for i, a in enumerate(legal) if _combo_key(a) == pick_key), 0
+                (i for i, a in enumerate(legal) if strategic_key(a) == pick_key), 0
             )
 
             if len(legal) > MAX_LEGAL_PER_SAMPLE:

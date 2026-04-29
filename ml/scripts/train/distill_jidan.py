@@ -41,6 +41,7 @@ from guandan.agents import JidanBot
 from guandan.cards import Rank
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
+from guandan.pvguan.legal_utils import dedup_strategic, strategic_key
 from guandan.azguan import (
     ACTION_DIM,
     QNetwork,
@@ -74,13 +75,13 @@ def _gen_worker(args: tuple) -> list[dict]:
         env.reset()
         while not env.done:
             player = env.current_player
-            legal = env.legal_moves(player)
+            legal = dedup_strategic(env.legal_moves(player))
             pick = jidan.act(env, player)
 
             if player in (0, 2) and len(legal) > 1:
-                pick_key = _combo_key(pick)
+                pick_key = strategic_key(pick)
                 pick_idx_full = next(
-                    i for i, a in enumerate(legal) if _combo_key(a) == pick_key
+                    i for i, a in enumerate(legal) if strategic_key(a) == pick_key
                 )
 
                 # Cap legal to top-K by rank_sum, but always keep Jidan's pick.

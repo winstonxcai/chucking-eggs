@@ -19,6 +19,7 @@ from ..cards import Rank
 from ..game import GuanDanEnv
 from .actor_critic import ActorCriticNet, get_device, load_warmstart
 from .encoders import ACTION_DIM, ACTOR_DIM, encode_action, encode_actor_pair_features
+from .legal_utils import dedup_strategic
 
 
 class PVGuanBot(Agent):
@@ -87,7 +88,7 @@ class PVGuanBot(Agent):
             env = _reflect_env(env)
             canonical_player = player ^ 1  # 1→0, 3→2
 
-        legal = env.legal_moves(canonical_player)
+        legal = dedup_strategic(env.legal_moves(canonical_player))
         if len(legal) == 1:
             return legal[0]  # no choice
 

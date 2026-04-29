@@ -1375,7 +1375,48 @@ from scratch (§35 baseline: 50% flat).
 
 ---
 
-## 38. What this logbook is for
+## 38. PPO from yaoji-distilled warmstart — actively harmful (2026-04-29)
+
+**Hypothesis:** Even a weak (62% val_acc) yaoji imitation might bootstrap PPO into a better
+basin than RL from scratch.
+
+**Setup:** PPO from `pvguan_distilled_yaoji.pt` (62% val_acc), yaoji-only opponents,
+selfplay_frac=0.0, curriculum off, 32 workers, 500 val games, fresh seed=3.
+
+**Result — much worse than from-scratch:**
+
+| iter | dec | wr | Δ |
+|---|---|---|---|
+| 50  | 0.21M | **0.184** | -1.576 |
+| 100 | 0.41M | 0.224 | -1.372 |
+| 150 | 0.63M | **0.100** | -2.012 |
+
+vs **§35 from-scratch baseline: 50% flat**. The warmstart cuts yaoji WR by 30–40%.
+Killed at iter 150 / 0.63M decisions.
+
+**Interpretation:** A 62%-accurate yaoji imitator is *catastrophically* miscalibrated against
+yaoji. The 38% wrong decisions concentrate in high-leverage moments — partial-yaoji
+behavior (e.g., correct passes but wrong leads) is worse than balanced self-play. The
+warmstart pushes the network into a pathological region of policy space that PPO can't
+recover from in 150 iters.
+
+**Three converging pieces of evidence for architecture ceiling:**
+1. §35: yaoji RL fine-tune flat at 47–50%, no learning signal
+2. §36: going-out shaping (credit-assignment fix) didn't help
+3. §37/§38: distillation peaked at 62% (vs jidan 89%), warmstart actively harmful
+
+**Verdict:** The 256-hidden + 12-opp-style architecture genuinely cannot represent yaoji's
+policy distribution. Yaoji's branchy partner-coordination rules don't decompose linearly
+into the current feature space, and any partial approximation is dangerously off-policy.
+
+**Next experiment:** Bump hidden to 512. Re-distill from yaoji to see if val_acc clears
+80%+. If yes, full PPO from the bigger warmstart. If no, we need richer opp-style features
+(`partner_can_win_now`, `opp_can_win_now`, `partner_almost_out`) — yaoji's exact decision
+boundaries — not just more capacity.
+
+---
+
+## 39. What this logbook is for
 
 When designing the next training run:
 - Do NOT propose QMIX, GNN, PIMC, or aux-head-without-selection-pressure. They are all on the failure list above.

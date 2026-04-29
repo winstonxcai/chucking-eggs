@@ -90,7 +90,7 @@ class RolloutConfig:
     target_decisions: int = 4096
     critic_mode: Literal["pv", "ptie"] = "pv"
     temperature: float = 1.0
-    max_legal_per_decision: int = 64   # cap legal moves for memory; bombs always kept
+    max_legal_per_decision: int = 128  # tactical cap; see _cap_legal for must-keep rules
     # Mixed-opponent mode (see module docstring)
     opponent_mix:    tuple[str, ...] = ()
     selfplay_frac:   float = 1.0
@@ -104,38 +104,126 @@ class RolloutConfig:
     going_out_shape: float = 0.0
 
 
+_BOMB_TYPE_NAMES = frozenset({
+    "BOMB_4", "BOMB_5", "BOMB_6", "BOMB_7", "BOMB_8", "BOMB_9", "BOMB_10",
+    "STRAIGHT_FLUSH", "BOMB_JOKER",
+})
+
+
+def _spread_order(items: list) -> list:
+    """Reorder items endpoints-first then bisection (low/high/mid/...).
+
+    Used to pick rank-diverse representatives within a single combo type.
+    """
+    n = len(items)
+    if n <= 2:
+        return list(items)
+    out_idx: list[int] = [0, n - 1]
+    seen: set[int] = {0, n - 1}
+    queue: list[tuple[int, int]] = [(0, n - 1)]
+    while queue and len(out_idx) < n:
+        new_queue: list[tuple[int, int]] = []
+        for lo, hi in queue:
+            mid = (lo + hi) // 2
+            if mid not in seen and mid != lo and mid != hi:
+                out_idx.append(mid)
+                seen.add(mid)
+                if len(out_idx) >= n:
+                    break
+            if hi - lo > 1:
+                new_queue.append((lo, mid))
+                new_queue.append((mid, hi))
+        queue = new_queue
+    return [items[i] for i in out_idx]
+
+
 def _cap_legal(
+    env: GuanDanEnv,
+    canonical_player: int,
     legal: list,
     cap: int,
 ) -> list[int]:
     """Return indices into `legal` to keep, length ≤ cap.
 
-    Always preserves PASS and any BOMB/STRAIGHT_FLUSH (strategic moves).
-    Fills the remainder with the first cheapest-ranked moves (deterministic).
-    """
-    if len(legal) <= cap:
-        return list(range(len(legal)))
+    Tactical must-keep + stratified rank-diverse fill. Replaces the previous
+    cheapest-rank cap, which silently dropped exactly the partner-setup and
+    opponent-rest matching plays we care about.
 
-    bomb_types = {
-        "BOMB_4", "BOMB_5", "BOMB_6", "BOMB_7", "BOMB_8", "BOMB_9", "BOMB_10",
-        "STRAIGHT_FLUSH", "BOMB_JOKER",
-    }
-    must_keep = [
-        i for i, m in enumerate(legal)
-        if m.type.name == "PASS" or m.type.name in bomb_types
-    ]
-    other = [i for i in range(len(legal)) if i not in set(must_keep)]
-    # Deterministic order: keep first (cheapest) — engine returns moves in
-    # ascending rank order within each combo type
-    remaining = cap - len(must_keep)
-    if remaining > 0:
-        other_sorted = sorted(other, key=lambda i: (
-            sum(c.rank for c in legal[i].cards), i
-        ))
-        keep = sorted(must_keep + other_sorted[:remaining])
-    else:
-        keep = sorted(must_keep)[:cap]
-    return keep
+    Must-keep:
+      - PASS, all bombs / STRAIGHT_FLUSH / BOMB_JOKER
+      - actions that empty our hand
+      - actions whose card-count matches partner_rest
+      - actions whose card-count matches either opponent's rest
+      - on lead, all SINGLE/PAIR/TRIPLE if any active opp has rest in {1,2,3}
+
+    Fill: remaining slots round-robin across combo types, with rank-diverse
+    picks within each type (endpoints first, then bisection).
+
+    Long-term: cap can be removed entirely once PPO batching switches to
+    ragged / bucketed candidate sets. See module docstring.
+    """
+    n = len(legal)
+    if n <= cap:
+        return list(range(n))
+
+    partner = canonical_player ^ 2
+    opp_l   = (canonical_player + 1) % 4
+    opp_r   = (canonical_player - 1) % 4
+    our_rest     = len(env.hands[canonical_player])
+    partner_rest = len(env.hands[partner])
+    opp_l_rest   = len(env.hands[opp_l])
+    opp_r_rest   = len(env.hands[opp_r])
+    leading      = env.current_trick is None
+    opp_danger   = (
+        (not env.is_out[opp_l] and 1 <= opp_l_rest <= 3)
+        or (not env.is_out[opp_r] and 1 <= opp_r_rest <= 3)
+    )
+
+    must: set[int] = set()
+    for i, m in enumerate(legal):
+        tname   = m.type.name
+        n_cards = len(m.cards)
+        if tname == "PASS" or tname in _BOMB_TYPE_NAMES:
+            must.add(i); continue
+        if n_cards == our_rest:                  # empties our hand
+            must.add(i); continue
+        if n_cards == partner_rest:              # matches partner_rest
+            must.add(i); continue
+        if n_cards == opp_l_rest or n_cards == opp_r_rest:
+            must.add(i); continue
+        if leading and opp_danger and tname in ("SINGLE", "PAIR", "TRIPLE"):
+            must.add(i); continue
+
+    if len(must) >= cap:
+        return sorted(must)[:cap]
+
+    others = [i for i in range(n) if i not in must]
+    by_type: dict = {}
+    for i in others:
+        by_type.setdefault(legal[i].type, []).append(i)
+
+    type_pickorder: dict = {}
+    for t, idxs in by_type.items():
+        idxs_sorted = sorted(idxs, key=lambda i: (legal[i].key, i))
+        type_pickorder[t] = _spread_order(idxs_sorted)
+
+    remaining = cap - len(must)
+    type_keys = list(type_pickorder.keys())
+    positions = {t: 0 for t in type_keys}
+    picks: list[int] = []
+    while len(picks) < remaining:
+        progress = False
+        for t in type_keys:
+            if positions[t] < len(type_pickorder[t]):
+                picks.append(type_pickorder[t][positions[t]])
+                positions[t] += 1
+                progress = True
+                if len(picks) >= remaining:
+                    break
+        if not progress:
+            break
+
+    return sorted(must | set(picks))
 
 
 def _canonical(player: int) -> tuple[GuanDanEnv | None, int]:
@@ -206,7 +294,9 @@ def _play_one_hand(
             continue
 
         if len(legal) > cfg.max_legal_per_decision:
-            keep_idx = _cap_legal(legal, cfg.max_legal_per_decision)
+            keep_idx = _cap_legal(
+                enc_env, canonical_player, legal, cfg.max_legal_per_decision
+            )
             legal = [legal[i] for i in keep_idx]
 
         buf.stats.K_values.append(len(legal))

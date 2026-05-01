@@ -1,0 +1,33 @@
+# GuanZero M0 — faithful persistent actor-learner DMC
+# Tuned for M1 Pro (6 perf cores). Adjust n_actors for your machine.
+
+n_actors: 6
+sync_interval_episodes: 20
+actor_push_batch_size: 512
+sample_queue_maxsize: 64
+max_drain_batches_per_loop: 32
+publish_interval_updates: 100
+checkpoint_every_updates: 5000
+log_every_updates: 200
+updates_per_learner_step: 1
+
+# Network (paper spec)
+hidden_lstm: 256
+hidden_mlp: 1024
+n_mlp_layers: 6
+dropout: 0.0
+
+# Training
+lr: 1.0e-4
+gamma: 1.0
+batch_size: 512
+buffer_capacity_per_player: 50000
+buffer_min_size: 5000
+epsilon_start: 0.1
+epsilon_final: 0.01
+epsilon_decay_episodes: 15000
+max_legal_actions: 128
+use_oracle_others_hand: true
+
+device: cpu
+# run_dir omitted — auto-generates ml/runs/guanzero_m0_YYYYMMDD_HHMM

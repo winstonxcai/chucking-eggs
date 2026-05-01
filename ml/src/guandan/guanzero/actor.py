@@ -67,7 +67,7 @@ def play_episode(
             # as a response. If we somehow get here, end the episode.
             break
 
-        encoded_list = [encoder.encode(env, a, p, legal) for a in legal]
+        encoded_list = encoder.encode_all(env, p, legal)
 
         if random.random() < epsilon:
             idx = random.randrange(len(legal))

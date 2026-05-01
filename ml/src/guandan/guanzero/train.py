@@ -68,6 +68,7 @@ class TrainConfig:
     max_drain_batches_per_loop: int = 32
     publish_interval_updates: int = 100
     checkpoint_every_updates: int = 5_000
+    total_updates_target: int = 0    # 0 = run until stopped; >0 = stop here
     log_every_updates: int = 200
     updates_per_learner_step: int = 1
 

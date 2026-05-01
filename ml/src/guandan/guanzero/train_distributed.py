@@ -96,7 +96,7 @@ def train_distributed(cfg: TrainConfig) -> None:
     tqdm.write(f"  Log → {log_path}")
     tqdm.write(sep)
 
-    target_updates = cfg.checkpoint_every_updates
+    target_updates = cfg.total_updates_target or cfg.checkpoint_every_updates
     bar = tqdm(total=target_updates, desc="learner updates", unit="upd", dynamic_ncols=True)
     last_count = 0
     try:
@@ -133,7 +133,7 @@ def _parse_args() -> TrainConfig:
     p.add_argument("--config", type=str, default=None,
                    help="Path to YAML config; CLI flags override.")
     p.add_argument("--n-actors", type=int)
-    p.add_argument("--episodes", type=int, help="Maps to checkpoint_every_updates target")
+    p.add_argument("--updates", type=int, help="Target learner updates (checkpoint_every_updates).")
     p.add_argument("--device", type=str)
     p.add_argument("--run-dir", type=str)
     p.add_argument("--quick", action="store_true",
@@ -151,7 +151,8 @@ def _parse_args() -> TrainConfig:
             "hidden_mlp": 128,
             "n_mlp_layers": 3,
             "buffer_min_size": 50,
-            "checkpoint_every_updates": 200,
+            "total_updates_target": 200,
+            "checkpoint_every_updates": 100,
             "log_every_updates": 20,
             "publish_interval_updates": 10,
             "actor_push_batch_size": 64,
@@ -159,6 +160,8 @@ def _parse_args() -> TrainConfig:
     # CLI flags override --quick / --config
     if args.n_actors is not None:
         cfg_dict["n_actors"] = args.n_actors
+    if args.updates is not None:
+        cfg_dict["total_updates_target"] = args.updates
     if args.device is not None:
         cfg_dict["device"] = args.device
     if args.run_dir is not None:

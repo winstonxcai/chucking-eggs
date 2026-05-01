@@ -167,20 +167,16 @@ class StateActionEncoder:
     def static_dim(self) -> int:
         return static_dim(self.use_oracle_others_hand)
 
-    def encode(
+    def _encode_state(
         self,
         env: GuanDanEnv,
-        action: Combo,
         player: int,
-        legal_moves: list[Combo] | None = None,
     ) -> dict[str, np.ndarray]:
-        if legal_moves is None:
-            legal_moves = env.legal_moves(player)
-
+        """Compute the 7 state channels that are shared across all legal actions."""
         own_hand = _multi_hot(env.hands[player])
 
         if self.use_oracle_others_hand:
-            others = set()
+            others: set = set()
             for p in range(4):
                 if p != player:
                     others |= env.hands[p]
@@ -196,9 +192,42 @@ class StateActionEncoder:
             "remaining_counts_others": _remaining_counts_others(env, player),
             "level": _level_one_hot(env.level_rank),
             "history": _history_window(env),
-            "behavior": compute_behavior_flags(env, player, action, legal_moves),
-            "candidate_action": _multi_hot(action.cards),
         }
+
+    def encode_all(
+        self,
+        env: GuanDanEnv,
+        player: int,
+        legal_moves: list[Combo],
+    ) -> list[dict[str, np.ndarray]]:
+        """Encode all legal moves for a step, computing shared state channels once.
+
+        Replaces [encode(env, a, p, legal) for a in legal] — the 7 state
+        channels are computed once and referenced (not copied) by each result
+        dict, since they are read-only numpy arrays during forward pass.
+        """
+        state = self._encode_state(env, player)
+        result = []
+        for action in legal_moves:
+            enc = dict(state)  # shallow copy — shared arrays are read-only
+            enc["behavior"] = compute_behavior_flags(env, player, action, legal_moves)
+            enc["candidate_action"] = _multi_hot(action.cards)
+            result.append(enc)
+        return result
+
+    def encode(
+        self,
+        env: GuanDanEnv,
+        action: Combo,
+        player: int,
+        legal_moves: list[Combo] | None = None,
+    ) -> dict[str, np.ndarray]:
+        if legal_moves is None:
+            legal_moves = env.legal_moves(player)
+        state = self._encode_state(env, player)
+        state["behavior"] = compute_behavior_flags(env, player, action, legal_moves)
+        state["candidate_action"] = _multi_hot(action.cards)
+        return state
 
 
 # Module-level convenience: paper-faithful default.

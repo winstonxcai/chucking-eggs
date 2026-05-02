@@ -130,11 +130,12 @@ def load_latest_weights(weight_dir: Path) -> tuple[int, dict] | tuple[None, None
 
 
 def learner_loop(
-    cfg_dict:     dict,
-    sample_queue,          # multiprocessing.Queue
-    stop_event,            # multiprocessing.Event
-    weight_dir:   Path,
-    run_dir:      Path,
+    cfg_dict:          dict,
+    sample_queue,               # multiprocessing.Queue
+    stop_event,                 # multiprocessing.Event
+    weight_dir:        Path,
+    run_dir:           Path,
+    resume_checkpoint: Path | None = None,
 ) -> None:
     """Central learner process for faithful persistent actor-learner DMC.
 
@@ -179,9 +180,18 @@ def learner_loop(
     last_losses: dict[int, float] = {}
     metrics_path  = run_dir / "metrics_learner.jsonl"
 
+    # Optionally resume from a prior checkpoint
+    if resume_checkpoint is not None:
+        ckpt = torch.load(Path(resume_checkpoint), map_location="cpu")
+        for p in range(4):
+            q_nets[p].load_state_dict(ckpt["q_nets"][p])
+        total_updates = int(ckpt.get("episode", 0))
+        version       = total_updates // cfg.publish_interval_updates
+        logger.info("resumed from %s  (total_updates=%d)", resume_checkpoint, total_updates)
+
     # Publish initial weights so actors can start immediately
     publish_weights(q_nets, weight_dir, version)
-    logger.info("initial weights published (version 0)")
+    logger.info("initial weights published (version %d)", version)
 
     t0 = time.time()
     while not stop_event.is_set():

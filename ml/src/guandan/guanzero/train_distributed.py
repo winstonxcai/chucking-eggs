@@ -50,7 +50,7 @@ def _read_update_count(run_dir: Path) -> int:
         return 0
 
 
-def train_distributed(cfg: TrainConfig) -> None:
+def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     import multiprocessing as mp
 
     run_dir    = Path(cfg.resolved_run_dir)
@@ -60,6 +60,8 @@ def train_distributed(cfg: TrainConfig) -> None:
 
     logger, log_path = _setup_logging(run_dir)
     logger.info("train_distributed: %d actors, target %d updates", cfg.n_actors, cfg.checkpoint_every_updates)
+    if resume_checkpoint:
+        logger.info("resuming from checkpoint: %s", resume_checkpoint)
 
     ctx          = mp.get_context("spawn")
     sample_queue = ctx.Queue(maxsize=cfg.sample_queue_maxsize)
@@ -69,6 +71,7 @@ def train_distributed(cfg: TrainConfig) -> None:
     learner_proc = ctx.Process(
         target=learner_loop,
         args=(cfg_dict, sample_queue, stop_event, weight_dir, run_dir),
+        kwargs={"resume_checkpoint": resume_checkpoint},
         daemon=True,
         name="learner",
     )
@@ -97,8 +100,10 @@ def train_distributed(cfg: TrainConfig) -> None:
     tqdm.write(sep)
 
     target_updates = cfg.total_updates_target or cfg.checkpoint_every_updates
-    bar = tqdm(total=target_updates, desc="learner updates", unit="upd", dynamic_ncols=True)
-    last_count = 0
+    resume_updates = _read_update_count(run_dir)  # 0 if fresh run, >0 if resumed
+    bar = tqdm(total=target_updates, initial=resume_updates,
+               desc="learner updates", unit="upd", dynamic_ncols=True)
+    last_count = resume_updates
     try:
         while True:
             time.sleep(2)
@@ -128,14 +133,16 @@ def train_distributed(cfg: TrainConfig) -> None:
 # ─── CLI ─────────────────────────────────────────────────
 
 
-def _parse_args() -> TrainConfig:
+def _parse_args() -> tuple[TrainConfig, Path | None]:
     p = argparse.ArgumentParser(description="GuanZero faithful persistent actor-learner DMC")
     p.add_argument("--config", type=str, default=None,
                    help="Path to YAML config; CLI flags override.")
     p.add_argument("--n-actors", type=int)
-    p.add_argument("--updates", type=int, help="Target learner updates (checkpoint_every_updates).")
+    p.add_argument("--updates", type=int, help="Target learner updates.")
     p.add_argument("--device", type=str)
     p.add_argument("--run-dir", type=str)
+    p.add_argument("--resume", type=str, default=None,
+                   help="Path to checkpoint .pt to warm-start from.")
     p.add_argument("--quick", action="store_true",
                    help="Smoke: 2 actors, tiny network, 200 updates.")
     args = p.parse_args()
@@ -169,12 +176,13 @@ def _parse_args() -> TrainConfig:
 
     valid = {f.name for f in dataclasses.fields(TrainConfig)}
     cfg_dict = {k: v for k, v in cfg_dict.items() if k in valid}
-    return TrainConfig(**cfg_dict)
+    resume = Path(args.resume) if args.resume else None
+    return TrainConfig(**cfg_dict), resume
 
 
 def main() -> None:
-    cfg = _parse_args()
-    train_distributed(cfg)
+    cfg, resume = _parse_args()
+    train_distributed(cfg, resume_checkpoint=resume)
 
 
 if __name__ == "__main__":

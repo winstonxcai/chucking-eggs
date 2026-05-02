@@ -1774,18 +1774,18 @@ The learner is the bottleneck with tiny nets — actors fill the 200k buffer imm
 
 | Checkpoint | Updates | WR vs random | ±SE |
 |---|---|---|---|
-| update_00005000.pt | 5k | 49.5% | 3.5% |
-| update_00010000.pt | 10k | 55.5% | 3.5% |
-| update_00015000.pt | 15k | 58.0% | 3.5% |
-| update_00020000.pt | 20k | 54.0% | 3.5% |
-| update_00025000.pt | 25k | 63.0% | 3.4% |
-| update_00030000.pt | 30k | 52.5% | 3.5% |
-| update_00035000.pt | 35k | 60.0% | 3.5% |
-| update_00040000.pt | 40k | 57.0% | 3.5% |
-| update_00045000.pt | 45k | 57.0% | 3.5% |
-| update_00050000.pt | 50k | 60.5% | 3.5% |
+| update_00005000.pt | 5k | 52.6% | 1.6% |
+| update_00010000.pt | 10k | 56.7% | 1.6% |
+| update_00015000.pt | 15k | 59.3% | 1.6% |
+| update_00020000.pt | 20k | 59.3% | 1.6% |
+| update_00025000.pt | 25k | 61.6% | 1.5% |
+| update_00030000.pt | 30k | 62.6% | 1.5% |
+| update_00035000.pt | 35k | 57.4% | 1.6% |
+| update_00040000.pt | 40k | 61.6% | 1.5% |
+| update_00045000.pt | 45k | 61.5% | 1.5% |
+| update_00050000.pt | 50k | 63.3% | 1.5% |
 
-Random baseline = 50%. Target: >70% at 50k before running vs greedy.
+1000 games per checkpoint (±1.5–1.6% SE). Random baseline = 50%. 35k dip likely due to the laptop-restart resume from 20k — 3k updates of experience were lost. Overall trend: steady improvement 5k→30k, plateau/noise 30k→50k around 61–63%. Did not reach >70% vs random in this run.
 
 ### Paper-spec run (2026-05-02, in progress)
 

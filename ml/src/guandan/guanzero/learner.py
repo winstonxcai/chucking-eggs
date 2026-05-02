@@ -98,6 +98,13 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int) -> None:
     ver_tmp.write_text(str(version))
     os.replace(ver_tmp, weight_dir / "latest.txt")  # atomic
 
+    # Clean up all prior weight files — only the current version is needed.
+    for stale in weight_dir.glob("weights_*.pt"):
+        if stale != final:
+            stale.unlink(missing_ok=True)
+    for stale in weight_dir.glob("weights_*.tmp"):
+        stale.unlink(missing_ok=True)
+
 
 def load_latest_weights(weight_dir: Path) -> tuple[int, dict] | tuple[None, None]:
     """Read the latest published version + state_dicts.

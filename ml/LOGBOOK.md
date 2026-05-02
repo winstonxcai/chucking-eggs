@@ -1621,7 +1621,170 @@ greater_is_opp1/opp2      (2 dims)
 
 ---
 
-## 40. What this logbook is for
+## 40. Tactical legal-move cap + cap impact on prior runs (2026-04-29)
+
+### The bug
+
+`_cap_legal` (rollout.py) used to:
+1. Hard-cap legal moves at 64
+2. Always keep `PASS` and bombs/SF/BJ
+3. **Fill remaining slots with cheapest-rank moves** (sorted by `sum(c.rank for c in cards)`)
+
+Combined with the suit-variant inflation in §39's investigation (one 27-card hand had K=143 with only 40 strategically distinct plays — 3.6× duplicate inflation), this cheapest-rank fill silently dropped exactly the high-rank tactical plays yaoji's cliff rules trigger on:
+- `len(cards) == opp_rest` matches (must-play to deny opp from going out)
+- `len(cards) == partner_rest` matches (must-play to set partner up)
+- Hand-emptying plays in late game
+
+Cap fired on ~10% of pre-dedup decisions, ~4% post-dedup.
+
+### The fix
+
+Replaced cheapest-rank fill with a tactical must-keep + stratified rank-diverse round-robin:
+
+Must-keep:
+- PASS, all bombs / SF / BJ
+- actions emptying our hand
+- actions with `len(cards) ∈ {partner_rest, opp_l_rest, opp_r_rest}`
+- on lead, all SINGLE/PAIR/TRIPLE if any active opp has rest ∈ {1,2,3}
+
+Fill: round-robin across combo types, with `_spread_order` (endpoints-first bisection) for rank diversity within each type.
+
+Default cap raised 64 → 128. At cap=128, cap fires on **0.4%** of decisions (155/39k random rollouts) — true safety valve. K p99 post-dedup = 59, well under 128. All 192 tests pass.
+
+### Impact on prior runs
+
+The cap distortion biased every PPO and distillation run on yaoji systematically low. Estimated effect:
+
+| Run | Yaoji metric | Likely cap impact |
+|-----|--------------|-------------------|
+| Run 4 (warmstart, §32) | 56% WR | ~1-3pp |
+| Run 6 (from-scratch, §32) | 52% WR | ~1-3pp |
+| Run 7 r2 (opp-style + curriculum, §33) | 56% WR | ~1-3pp |
+| §35 finetune_yaoji | 50.4% WR | ~1-3pp |
+| §37 distill_yaoji | 62% val_acc | already retested → 64.4% post-dedup (cap=64 still in play) |
+
+The cap fix won't close the 50% → 80% WR gap. The architecture/encoder is the dominant bottleneck. Prior verdicts (yaoji ceiling is structural; dilution isn't the cause; warmstart from 62% val_acc is harmful) all hold qualitatively. The pessimism in §32–§38 numbers is bounded at a few percentage points.
+
+### Important: val_acc and WR are NOT the same metric
+
+In §37 we noted yaoji distillation peaks at 62-64% val_acc. In §32-§35 we noted PPO yaoji WR plateaus at 50-56%. These look numerically similar but measure orthogonal things, and **must not be conflated**:
+
+| Metric | Definition | What "stuck" means |
+|---|---|---|
+| **val_acc** (distillation) | On held-out `(state, legal, supervisor_pick)` tuples: fraction where `argmax_a Q(state,a) == supervisor_pick`. Pure imitation top-1 agreement. | Network can't represent the supervisor's decision function under available capacity/encoder. The 36% mismatches may be strategically equivalent or genuinely wrong — distillation alone can't tell. |
+| **WR** (eval) | Out of N games (typically 300 or 500): fraction where seats {0,2} = our policy beat seats {1,3} = opponent bot. Game-outcome metric. | Our policy + partner can't outscore opp + partner in actual games over many hands. |
+
+**They have no monotonic relationship to each other:**
+- A model with val_acc = 100% (perfect yaoji imitation) would WR ≈ 50% vs yaoji — a mirror match against the bot it's imitating.
+- A model with val_acc = 0% (deliberately anti-yaoji) could WR > 50% if anti-yaoji happens to be stronger.
+
+**Why the two ceilings (62-64% val_acc, 50-56% WR) are still weak independent evidence for an architecture ceiling:**
+- Both fail to track yaoji-specific patterns (cliff rules, partner-rest matching) regardless of training signal type
+- Distillation provides dense per-decision supervision and the model still misses 36% — purely a representational limit
+- PPO provides sparse per-hand rewards and the model still plateaus at 50-56% — could be representational, exploration, or credit assignment
+
+The convergent ceiling across two independent training paradigms suggests the bottleneck isn't training-signal noise but the (encoder × architecture) combination. **But the magnitudes are not directly comparable.** Future logbook entries should never put val_acc and WR side-by-side without disambiguating units.
+
+---
+
+## 42. GuanZero M0 — paper-faithful DMC implementation from scratch (2026-05-02)
+
+### Motivation
+
+Every prior GuanZero attempt (§18) reused the existing `training/` stack (480-dim team state, AZ search pipeline). The DanZero/GuanZero paper uses a different approach: 4 position-specific Q-nets trained end-to-end on Deep Monte Carlo returns with **own-hand + oracle-partner-hand** encoding and no search. §18 never isolated whether the architecture or the training signal was the bottleneck. This fresh implementation follows the paper exactly, using a fully independent `guanzero/` module.
+
+### Architecture
+
+**Encoder (`guanzero/encoder.py`)** — paper-faithful state-action dict:
+
+| Channel | Shape | Notes |
+|---|---|---|
+| `own_hand` | (108,) | multi-hot, card_id = rank_idx×8 + suit×2 + deck |
+| `others_hand` | (108,) | oracle channel; zeroed for M4 belief ablation |
+| `recent_action_each_player` | (4, 108) | last non-pass per seat from history |
+| `played_cards_others` | (3, 108) | cumulative played, relative seat order |
+| `remaining_counts_others` | (3, 27) | one-hot bucket per non-self seat |
+| `level` | (13,) | one-hot over ranks 2..A |
+| `history` | (20, 108) | last 20 moves, pad-left, PASS=zero |
+| `behavior` | (9,) | cooperation/dwarfing/assisting × {N/A, doing, refusing} — reused from `azguan/behavior_flags.py` |
+| `candidate_action` | (108,) | action being scored |
+
+Dict output (not flat concat) so future ablation variants can swap channels without rewriting the network.
+
+**Q-network (`guanzero/q_network.py`)** — LSTM over history + flat MLP:
+- LSTM(input=108, hidden=hidden_lstm) processes `history` sequence (20 steps, 1 card per step)
+- Static channels (everything except history) concatenated with LSTM final hidden state
+- N-layer MLP(hidden_mlp) → scalar Q
+- Paper spec: hidden_lstm=256, hidden_mlp=1024, n_mlp_layers=6 → ~5M params/seat, 20M total
+
+4 independent networks (one per seat 0–3), 4 independent Adam optimizers. Q-nets never share weights.
+
+**Returns (`guanzero/returns.py`)** — `compute_mc_returns`: sparse terminal reward from `env.get_rewards()` normalised by 3, propagated back to every step in each player's trajectory. γ=1.0 → every step on player's trajectory gets the identical terminal Q-target.
+
+### Single-process baseline (`guanzero/train.py`)
+
+`TrainConfig` dataclass; `train()` alternates: play_episode → buffer.push → learner.update every `learn_every_episodes`. Epsilon-greedy actors with linear decay over `epsilon_decay_episodes`. Checkpoints to `ml/runs/guanzero_m0_{YYYYMMDD_HHMM}/`.
+
+**Smoke run (`--quick`, tiny net 64/128/3, 100 ep):** 5.0 ep/s, loss 0.59→0.41 over 100 eps. Engine integration confirmed clean.
+
+**Tests (`ml/tests/guanzero/`):** 22 tests — encoder shapes, returns correctness, buffer sampling, q-net forward/backward, agent adapter, distributed smoke. All pass.
+
+---
+
+## 43. GuanZero M0 — faithful persistent actor-learner DMC (2026-05-02)
+
+### Approach
+
+The DanZero/GuanZero paper uses N persistent CPU actors generating trajectories continuously into a central replay buffer, with a central learner updating global Q-nets asynchronously. The key invariant: **actors never stall waiting for each other, and the learner updates between every queue drain — not once per rollout batch.** This is structurally different from Pool.starmap (synchronous barriers between batches).
+
+Implementation in `guanzero/train_distributed.py` + `actor.py` + `learner.py`:
+
+```
+N CPU actors (persistent, local Q-net copies, torch.set_num_threads(1))
+        ↓  mp.Queue(maxsize=64, timeout=5s)  — bounded, drop on overflow
+Central learner (global Q-nets, replay buffer, MPS device)
+        ↓  os.replace() atomic writes  — no partial-read window
+Actors sync every sync_interval_episodes
+```
+
+**Atomic weight publishing contract:**
+1. `torch.save` → `weights_{v}.tmp`
+2. `os.replace(tmp, weights_{v}.pt)` — POSIX atomic rename
+3. `latest.tmp` ← version number
+4. `os.replace(latest.tmp, latest.txt)` — atomic
+
+Actors poll `latest.txt`; race window is zero.
+
+**Config (`guanzero/config/m0_faithful_distributed.yaml`):** n_actors=6, batch_size=512, buffer_capacity_per_player=50k, sync_interval=20 episodes, publish_interval=100 updates, paper-spec network.
+
+Run dir auto-generates `guanzero_m0_{YYYYMMDD_HHMM}` timestamp (matching pvguan convention).
+
+### Benchmark (tiny network, 1000 learner updates each)
+
+The learner is the bottleneck with tiny nets — actors fill the 200k buffer immediately regardless of actor count. With the paper-spec network, the bottleneck shifts to actors (MPS learner outpaces 6 CPU actors).
+
+| n_actors | wall time | notes |
+|---|---|---|
+| 1 | 3m 23s | learner-bottlenecked |
+| 2 | *(OS stall — invalid)* | macOS process suspension mid-run |
+| 4 | 3m 47s | learner-bottlenecked |
+| 6 | 4m 25s | learner-bottlenecked |
+
+### Paper-spec run (2026-05-02, in progress)
+
+**CPU baseline:** 0.45 updates/sec → 31h estimated for 50k updates. Not viable locally.
+
+**MPS (`--device mps`):** learner backward pass moves to Metal. Warmup 4 min → steady-state 3.45 updates/sec (7.6× over CPU). Run started 01:20:28, currently at 12,400/50,000 updates (loss ≈ 0.025). ETA ~07:45 — note: approximately 25 min over the 6h local cap; acceptable given partial run cannot be cheaply restarted.
+
+### Encoder optimization (`encode_all`)
+
+With MPS, the bottleneck shifted to actors (buf=37k, not capped — learner consuming faster than 6 actors produce). Profiling showed `encoder.encode()` called N times per step, recomputing 7 shared state channels for every legal action. Fix: `encode_all(env, player, legal_moves)` computes `own_hand`, `others_hand`, `history`, `last_action`, `played_cards`, `remaining_counts`, `level` once; only `behavior` + `candidate_action` iterate per action. Shallow-copies state dict into each result — shared read-only numpy arrays, no extra allocation.
+
+Speedup estimate: ~3–5× actor throughput for typical ~20-legal-action steps. Will apply to the next run.
+
+---
+
+## 41. What this logbook is for
 
 When designing the next training run:
 - Do NOT propose QMIX, GNN, PIMC, or aux-head-without-selection-pressure. They are all on the failure list above.

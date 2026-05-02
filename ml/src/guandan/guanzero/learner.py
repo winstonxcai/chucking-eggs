@@ -179,6 +179,7 @@ def learner_loop(
     total_updates = 0
     last_losses: dict[int, float] = {}
     metrics_path  = run_dir / "metrics_learner.jsonl"
+    last_ticked   = -1   # tracks the last total_updates value that triggered periodic actions
 
     # Optionally resume from a prior checkpoint
     if resume_checkpoint is not None:
@@ -206,8 +207,8 @@ def learner_loop(
             except Exception:
                 break
 
-        # 2. Gradient update when replay is warm
-        if buffer.total_size() >= cfg.buffer_min_size:
+        # 2. Gradient update when every position's buffer is warm
+        if all(buffer.size(p) >= cfg.buffer_min_size for p in range(4)):
             for net in q_nets.values():
                 net.train()
             new_losses = learner.update(
@@ -219,20 +220,25 @@ def learner_loop(
                 last_losses = new_losses
                 total_updates += 1
 
+        # 3–5 only fire when total_updates actually advanced to a new tick
+        if total_updates == last_ticked or total_updates == 0:
+            continue
+        last_ticked = total_updates
+
         # 3. Publish updated weights periodically
-        if total_updates > 0 and total_updates % cfg.publish_interval_updates == 0:
+        if total_updates % cfg.publish_interval_updates == 0:
             version += 1
             publish_weights(q_nets, weight_dir, version)
             logger.debug("weights published version=%d", version)
 
         # 4. Checkpoint
-        if total_updates > 0 and total_updates % cfg.checkpoint_every_updates == 0:
+        if total_updates % cfg.checkpoint_every_updates == 0:
             ckpt = run_dir / "checkpoints" / f"update_{total_updates:08d}.pt"
             _save_checkpoint(ckpt, q_nets, cfg, total_updates)
             logger.info("checkpoint → %s", ckpt)
 
         # 5. Metrics log
-        if total_updates > 0 and total_updates % cfg.log_every_updates == 0:
+        if total_updates % cfg.log_every_updates == 0:
             elapsed = time.time() - t0
             upd_per_sec = total_updates / elapsed if elapsed > 0 else 0.0
             target = cfg.total_updates_target or cfg.checkpoint_every_updates

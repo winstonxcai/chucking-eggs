@@ -82,11 +82,15 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int) -> None:
     tmp   = weight_dir / f"weights_{version}.tmp"
     final = weight_dir / f"weights_{version}.pt"
 
+    def _unwrap(net):
+        # torch.compile wraps in _orig_mod; actors load into plain nets
+        return getattr(net, "_orig_mod", net)
+
     torch.save(
         {
             "version": version,
             "state_dicts": {
-                p: {k: v.detach().cpu() for k, v in q_nets[p].state_dict().items()}
+                p: {k: v.detach().cpu() for k, v in _unwrap(q_nets[p]).state_dict().items()}
                 for p in range(4)
             },
         },

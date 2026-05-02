@@ -173,11 +173,12 @@ def _save_checkpoint(
     episode: int,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    _unwrap = lambda net: getattr(net, "_orig_mod", net)
     torch.save(
         {
             "episode": episode,
             "config": dataclasses.asdict(cfg),
-            "q_nets": {p: q_nets[p].state_dict() for p in range(4)},
+            "q_nets": {p: _unwrap(q_nets[p]).state_dict() for p in range(4)},
         },
         path,
     )

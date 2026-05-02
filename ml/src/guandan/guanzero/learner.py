@@ -195,6 +195,7 @@ def learner_loop(
     logger.info("initial weights published (version %d)", version)
 
     t0 = time.time()
+    session_start_updates = total_updates  # for accurate upd/s on resumed runs
     while not stop_event.is_set():
         # 1. Drain sample queue into replay buffer
         drained = 0
@@ -240,7 +241,8 @@ def learner_loop(
         # 5. Metrics log
         if total_updates % cfg.log_every_updates == 0:
             elapsed = time.time() - t0
-            upd_per_sec = total_updates / elapsed if elapsed > 0 else 0.0
+            session_updates = total_updates - session_start_updates
+            upd_per_sec = session_updates / elapsed if elapsed > 0 else 0.0
             target = cfg.total_updates_target or cfg.checkpoint_every_updates
             remaining = max(0, target - total_updates)
             eta_s = remaining / upd_per_sec if upd_per_sec > 0 else 0.0

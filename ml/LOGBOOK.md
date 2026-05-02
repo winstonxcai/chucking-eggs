@@ -1770,6 +1770,23 @@ The learner is the bottleneck with tiny nets — actors fill the 200k buffer imm
 | 4 | 3m 47s | learner-bottlenecked |
 | 6 | 4m 25s | learner-bottlenecked |
 
+### Win-rate vs random (200 games, team 0/2 = GuanZero, team 1/3 = random)
+
+| Checkpoint | Updates | WR vs random | ±SE |
+|---|---|---|---|
+| update_00005000.pt | 5k | 49.5% | 3.5% |
+| update_00010000.pt | 10k | 55.5% | 3.5% |
+| update_00015000.pt | 15k | 58.0% | 3.5% |
+| update_00020000.pt | 20k | 54.0% | 3.5% |
+| update_00025000.pt | 25k | 63.0% | 3.4% |
+| update_00030000.pt | 30k | 52.5% | 3.5% |
+| update_00035000.pt | 35k | 60.0% | 3.5% |
+| update_00040000.pt | 40k | 57.0% | 3.5% |
+| update_00045000.pt | 45k | 57.0% | 3.5% |
+| update_00050000.pt | 50k | 60.5% | 3.5% |
+
+Random baseline = 50%. Target: >70% at 50k before running vs greedy.
+
 ### Paper-spec run (2026-05-02, in progress)
 
 **CPU baseline:** 0.45 updates/sec → 31h estimated for 50k updates. Not viable locally.

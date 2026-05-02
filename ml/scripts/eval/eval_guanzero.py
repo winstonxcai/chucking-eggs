@@ -60,7 +60,7 @@ def main() -> None:
 
     result = run_eval(args.checkpoint, args.opponent, args.games, args.device)
     wr, se = result["win_rate"], result["se"]
-    print(f"\nGuanZero vs {args.opponent}: {wr:.1%} ± {se:.1%}  ({result['wins']}/{result['games']})")
+    print(f"\n{args.checkpoint.name}  vs {args.opponent}: {wr:.1%} ± {se:.1%}  ({result['wins']}/{result['games']})")
 
 
 if __name__ == "__main__":

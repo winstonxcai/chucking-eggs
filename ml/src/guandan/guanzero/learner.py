@@ -223,20 +223,28 @@ def learner_loop(
 
         # 5. Metrics log
         if total_updates > 0 and total_updates % cfg.log_every_updates == 0:
+            elapsed = time.time() - t0
+            upd_per_sec = total_updates / elapsed if elapsed > 0 else 0.0
+            target = cfg.total_updates_target or cfg.checkpoint_every_updates
+            remaining = max(0, target - total_updates)
+            eta_s = remaining / upd_per_sec if upd_per_sec > 0 else 0.0
+            eta_h, eta_m = divmod(int(eta_s), 3600)[0], divmod(int(eta_s), 60)[0] % 60
             row = {
                 "updates": total_updates,
                 "version": version,
                 "buffer_total": buffer.total_size(),
                 "buffer_per_player": {p: buffer.size(p) for p in range(4)},
                 "loss": {str(p): round(v, 6) for p, v in last_losses.items()},
-                "elapsed_s": round(time.time() - t0, 1),
+                "elapsed_s": round(elapsed, 1),
+                "upd_per_sec": round(upd_per_sec, 3),
             }
             with metrics_path.open("a") as f:
                 f.write(json.dumps(row) + "\n")
             logger.info(
-                "updates=%d ver=%d buf=%d loss=%s",
+                "updates=%d ver=%d buf=%d loss=%s  %.2f upd/s  ETA %dh%02dm",
                 total_updates, version, buffer.total_size(),
                 " ".join(f"p{p}={v:.4f}" for p, v in sorted(last_losses.items())),
+                upd_per_sec, eta_h, eta_m,
             )
 
     # Final checkpoint on clean shutdown

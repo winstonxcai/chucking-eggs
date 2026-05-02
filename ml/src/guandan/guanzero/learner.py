@@ -172,6 +172,8 @@ def learner_loop(
         dropout=cfg.dropout,
         use_oracle_others_hand=cfg.use_oracle_others_hand,
     )
+    for p, net in q_nets.items():
+        q_nets[p] = torch.compile(net)
     learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device)
     buffer  = ReplayBuffer(capacity_per_player=cfg.buffer_capacity_per_player)
 

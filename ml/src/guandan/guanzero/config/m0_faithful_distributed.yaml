@@ -29,5 +29,5 @@ epsilon_decay_episodes: 15000
 max_legal_actions: 128
 use_oracle_others_hand: true
 
-device: cpu
+device: mps
 # run_dir omitted — auto-generates ml/runs/guanzero_m0_YYYYMMDD_HHMM

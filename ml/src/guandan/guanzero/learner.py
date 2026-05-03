@@ -23,7 +23,6 @@ import torch.nn.functional as F
 
 from .buffer import ReplayBuffer, collate
 from .q_network import GuanZeroQNet, init_position_nets
-from .returns import TrainSample
 
 
 # ─── Learner class (single-process) ──────────────────────
@@ -39,7 +38,7 @@ class Learner:
         self.device = torch.device(device)
         self.q_nets = {p: q_nets[p].to(self.device) for p in range(4)}
         self.optims = {
-            p: torch.optim.Adam(self.q_nets[p].parameters(), lr=lr)
+            p: torch.optim.Adam(self.q_nets[p].parameters(), lr=lr, foreach=True)
             for p in range(4)
         }
 
@@ -203,13 +202,12 @@ def learner_loop(
     t0 = time.time()
     session_start_updates = total_updates  # for accurate upd/s on resumed runs
     while not stop_event.is_set():
-        # 1. Drain sample queue into replay buffer
+        # 1. Drain sample queue into replay buffer (pre-stacked actor messages)
         drained = 0
         while drained < cfg.max_drain_batches_per_loop:
             try:
                 msg = sample_queue.get_nowait()
-                samples = [TrainSample(**s) for s in msg["samples"]]
-                buffer.push_many(samples)
+                buffer.push_stacked(msg["stacked"], msg["players"], msg["returns"])
                 drained += 1
             except Exception:
                 break

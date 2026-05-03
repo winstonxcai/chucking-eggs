@@ -32,6 +32,26 @@ class ReplayBuffer:
         """Alias for push; used by the learner to ingest actor batches."""
         self.push(samples)
 
+    def push_stacked(
+        self,
+        stacked: dict[str, np.ndarray],
+        players: np.ndarray,
+        returns: np.ndarray,
+    ) -> None:
+        """Ingest a pre-stacked actor batch by splitting per player.
+
+        ``stacked[k]`` is shape ``(N, ...)`` with N = len(players) = len(returns).
+        Each row is sliced into a per-sample dict (views into the stacked arrays —
+        cheap, and pickle has already detached the buffers from the actor process).
+        """
+        for p in range(4):
+            mask = players == p
+            if not mask.any():
+                continue
+            for i in np.flatnonzero(mask):
+                enc = {k: stacked[k][i] for k in stacked}
+                self.buffers[p].append(TrainSample(p, enc, float(returns[i])))
+
     def total_size(self) -> int:
         return sum(len(b) for b in self.buffers.values())
 

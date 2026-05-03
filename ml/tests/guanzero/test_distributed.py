@@ -142,10 +142,13 @@ def test_actor_loop_single_episode():
         proc.join(timeout=10)
 
         assert msg is not None, "Actor produced no samples within 30s"
-        assert "samples" in msg
-        assert len(msg["samples"]) >= 1
-        s = msg["samples"][0]
-        assert "player" in s and "mc_return" in s and "encoded" in s
+        assert {"actor_id", "version", "stacked", "players", "returns"} <= msg.keys()
+        n = len(msg["players"])
+        assert n >= 1
+        assert len(msg["returns"]) == n
+        # All channels stacked along axis 0 with the same N
+        for k, arr in msg["stacked"].items():
+            assert arr.shape[0] == n, f"stacked[{k!r}] has shape[0]={arr.shape[0]}, expected {n}"
 
 
 # ─── learner_loop: drains queue + updates ────────────────
@@ -181,12 +184,18 @@ def test_learner_drains_queue_and_updates():
     legal = env.legal_moves(env.current_player)
     dummy_encoded = encoder.encode(env, legal[0], env.current_player, legal)
 
-    fake_sample = {
-        "player": 0,
-        "encoded": dummy_encoded,
-        "mc_return": 1.0,
+    # Build a pre-stacked batch message — one sample for each of the 4 players
+    # so the learner's per-position warmup gate (all buffers ≥ buffer_min_size) opens.
+    # buffer_min_size=2 → push 2 samples per player, twice.
+    N = 8
+    stacked = {k: np.stack([dummy_encoded[k]] * N, axis=0) for k in dummy_encoded}
+    batch_msg = {
+        "actor_id": 0,
+        "version":  0,
+        "stacked":  stacked,
+        "players":  np.array([0, 1, 2, 3] * 2, dtype=np.int8),
+        "returns":  np.full(N, 1.0, dtype=np.float32),
     }
-    batch_msg = {"actor_id": 0, "version": 0, "samples": [fake_sample] * 4}
 
     ctx = mp.get_context("spawn")
 

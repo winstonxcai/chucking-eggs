@@ -1793,6 +1793,18 @@ The learner is the bottleneck with tiny nets — actors fill the 200k buffer imm
 
 **MPS (`--device mps`):** learner backward pass moves to Metal. Warmup 4 min → steady-state 3.45 updates/sec (7.6× over CPU). Run started 01:20:28, currently at 12,400/50,000 updates (loss ≈ 0.025). ETA ~07:45 — note: approximately 25 min over the 6h local cap; acceptable given partial run cannot be cheaply restarted.
 
+### Batch size sweep (MPS, paper-spec network, 6 actors, encode_all active)
+
+Tested on 2026-05-02/03 with batch_size=256/512/1024, measured at steady state (buf=200k):
+
+| batch_size | upd/s | notes |
+|---|---|---|
+| 256 | 1.46 | too small — kernel launch overhead dominates |
+| **512** | **2.8** | **optimal — best MPS utilization** |
+| 1024 | 1.81 | diminishing returns — forward/backward cost outweighs batch efficiency |
+
+512 is the MPS sweet spot for this network size (LSTM 256 + MLP 1024×6). The bottleneck is 4 serial optimizer steps per update, not memory bandwidth. `encode_all` (not present in 50k run) adds ~0.8 upd/s vs the earlier 2.0 upd/s baseline.
+
 ### Encoder optimization (`encode_all`)
 
 With MPS, the bottleneck shifted to actors (buf=37k, not capped — learner consuming faster than 6 actors produce). Profiling showed `encoder.encode()` called N times per step, recomputing 7 shared state channels for every legal action. Fix: `encode_all(env, player, legal_moves)` computes `own_hand`, `others_hand`, `history`, `last_action`, `played_cards`, `remaining_counts`, `level` once; only `behavior` + `candidate_action` iterate per action. Shallow-copies state dict into each result — shared read-only numpy arrays, no extra allocation.

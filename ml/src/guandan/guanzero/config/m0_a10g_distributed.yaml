@@ -32,4 +32,4 @@ use_oracle_others_hand: true
 # A10G throughput
 device: cuda
 use_bf16_learner: true
-compile_mode: reduce-overhead
+compile_mode: default

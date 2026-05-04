@@ -44,6 +44,13 @@ class Learner:
             for p in range(4)
         }
         self.use_bf16 = use_bf16 and self.device.type == "cuda"
+        # One dedicated CUDA stream per position — lets the 4 independent
+        # forward+backward passes overlap on the GPU rather than running sequentially.
+        # Only created on CUDA; CPU/MPS fall back to sequential.
+        self.streams: list[torch.cuda.Stream] | None = (
+            [torch.cuda.Stream() for _ in range(4)]
+            if self.device.type == "cuda" else None
+        )
 
     def update(
         self,
@@ -51,27 +58,65 @@ class Learner:
         batch_size: int,
         min_buffer_size: int,
     ) -> dict[int, float]:
-        """One gradient step per position. Skips a position whose buffer is
-        below ``min_buffer_size``. Returns per-position loss."""
-        losses: dict[int, float] = {}
+        """One gradient step per position, run in parallel on CUDA.
+
+        On CUDA: all 4 forward+backward passes launch concurrently on separate
+        streams, then a single synchronize() gates the optimizer steps. On CPU/MPS
+        the positions are updated sequentially as before.
+        """
+        # Sample all ready positions up front (cheap CPU work before any GPU dispatch).
+        ready: dict[int, tuple[dict, torch.Tensor]] = {}
         for p in range(4):
             if buffer.size(p) < min_buffer_size:
                 continue
             samples = buffer.sample_for_player(p, batch_size)
-            if not samples:
-                continue
-            batch, targets = collate(samples, device=self.device)
-            if self.use_bf16:
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            if samples:
+                ready[p] = collate(samples, device=self.device)
+
+        if not ready:
+            return {}
+
+        losses: dict[int, float] = {}
+
+        if self.streams is not None:
+            # ── Parallel CUDA streams ────────────────────────────────────────
+            # The 4 Q-nets are fully independent (separate params, separate grads)
+            # so concurrent backward passes are safe.
+            pending: dict[int, torch.Tensor] = {}
+            for p, (batch, targets) in ready.items():
+                with torch.cuda.stream(self.streams[p]):
+                    self.optims[p].zero_grad(set_to_none=True)
+                    if self.use_bf16:
+                        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                            q_pred = self.q_nets[p](batch)
+                            loss = F.mse_loss(q_pred, targets)
+                    else:
+                        q_pred = self.q_nets[p](batch)
+                        loss = F.mse_loss(q_pred, targets)
+                    loss.backward()
+                    pending[p] = loss
+
+            # All fwd+bwd done; sync before optimizer dispatches.
+            torch.cuda.synchronize()
+            for p, loss in pending.items():
+                self.optims[p].step()
+                losses[p] = float(loss.item())
+
+        else:
+            # ── Sequential fallback (CPU / MPS) ─────────────────────────────
+            for p, (batch, targets) in ready.items():
+                if self.use_bf16:
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        q_pred = self.q_nets[p](batch)
+                        loss = F.mse_loss(q_pred, targets)
+                else:
                     q_pred = self.q_nets[p](batch)
                     loss = F.mse_loss(q_pred, targets)
-            else:
-                q_pred = self.q_nets[p](batch)
-                loss = F.mse_loss(q_pred, targets)
-            self.optims[p].zero_grad(set_to_none=True)
-            loss.backward()
-            self.optims[p].step()
-            losses[p] = float(loss.item())
+                self.optims[p].zero_grad(set_to_none=True)
+                loss.backward()
+                self.optims[p].step()
+                losses[p] = float(loss.item())
+
         return losses
 
 

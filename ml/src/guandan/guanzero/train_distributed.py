@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -54,8 +55,13 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
     import multiprocessing as mp
 
     run_dir    = Path(cfg.resolved_run_dir)
-    weight_dir = run_dir / "weights"
+    # Weight dir defaults to run_dir/weights but can be redirected to a
+    # container-local path (e.g. /tmp on Modal) to avoid network-volume IO
+    # during steady-state weight publishing/syncing. Checkpoints stay in run_dir.
+    weight_dir_env = os.environ.get("GUANZERO_WEIGHT_DIR")
+    weight_dir = Path(weight_dir_env) if weight_dir_env else run_dir / "weights"
     run_dir.mkdir(parents=True, exist_ok=True)
+    weight_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
 
     logger, log_path = _setup_logging(run_dir)

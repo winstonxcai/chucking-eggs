@@ -14,6 +14,7 @@ import dataclasses
 import json
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Mapping
@@ -34,6 +35,7 @@ class Learner:
         q_nets: Mapping[int, GuanZeroQNet],
         lr: float = 1e-4,
         device: torch.device | str = "cpu",
+        use_bf16: bool = False,
     ) -> None:
         self.device = torch.device(device)
         self.q_nets = {p: q_nets[p].to(self.device) for p in range(4)}
@@ -41,6 +43,7 @@ class Learner:
             p: torch.optim.Adam(self.q_nets[p].parameters(), lr=lr, foreach=True)
             for p in range(4)
         }
+        self.use_bf16 = use_bf16 and self.device.type == "cuda"
 
     def update(
         self,
@@ -58,8 +61,13 @@ class Learner:
             if not samples:
                 continue
             batch, targets = collate(samples, device=self.device)
-            q_pred = self.q_nets[p](batch)
-            loss = F.mse_loss(q_pred, targets)
+            if self.use_bf16:
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    q_pred = self.q_nets[p](batch)
+                    loss = F.mse_loss(q_pred, targets)
+            else:
+                q_pred = self.q_nets[p](batch)
+                loss = F.mse_loss(q_pred, targets)
             self.optims[p].zero_grad(set_to_none=True)
             loss.backward()
             self.optims[p].step()
@@ -163,10 +171,26 @@ def learner_loop(
     logger = logging.getLogger("guanzero.learner")
     logger.handlers.clear()
     logger.setLevel(logging.DEBUG)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)-5s] %(message)s",
+                            datefmt="%Y-%m-%d %H:%M:%S")
     fh = logging.FileHandler(log_path, mode="w")
-    fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)-5s] %(message)s",
-                                      datefmt="%Y-%m-%d %H:%M:%S"))
+    fh.setFormatter(fmt)
     logger.addHandler(fh)
+    if os.environ.get("GUANZERO_STREAM_LOGS") == "1":
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setFormatter(fmt)
+        sh.setLevel(logging.INFO)
+        logger.addHandler(sh)
+
+    # Free TF32 + cuDNN tuning on CUDA paths (Adam math, anything outside BF16 autocast).
+    if cfg.device == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+        try:
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
 
     q_nets  = init_position_nets(
         hidden_lstm=cfg.hidden_lstm,
@@ -175,9 +199,11 @@ def learner_loop(
         dropout=cfg.dropout,
         use_oracle_others_hand=cfg.use_oracle_others_hand,
     )
+    compile_mode = getattr(cfg, "compile_mode", "default") or "default"
     for p, net in q_nets.items():
-        q_nets[p] = torch.compile(net)
-    learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device)
+        q_nets[p] = torch.compile(net, mode=compile_mode)
+    learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device,
+                      use_bf16=getattr(cfg, "use_bf16_learner", False))
     buffer  = ReplayBuffer(capacity_per_player=cfg.buffer_capacity_per_player)
 
     version       = 0
@@ -201,6 +227,7 @@ def learner_loop(
 
     t0 = time.time()
     session_start_updates = total_updates  # for accurate upd/s on resumed runs
+    drained_since_log = 0
     while not stop_event.is_set():
         # 1. Drain sample queue into replay buffer (pre-stacked actor messages)
         drained = 0
@@ -211,6 +238,7 @@ def learner_loop(
                 drained += 1
             except Exception:
                 break
+        drained_since_log += drained
 
         # 2. Gradient update when every position's buffer is warm
         if all(buffer.size(p) >= cfg.buffer_min_size for p in range(4)):
@@ -251,6 +279,14 @@ def learner_loop(
             remaining = max(0, target - total_updates)
             eta_s = remaining / upd_per_sec if upd_per_sec > 0 else 0.0
             eta_h, eta_m = divmod(int(eta_s), 3600)[0], divmod(int(eta_s), 60)[0] % 60
+            try:
+                queue_depth = sample_queue.qsize()
+            except (NotImplementedError, OSError):
+                queue_depth = -1
+            gpu_mem_gb = (
+                round(torch.cuda.memory_allocated() / 1e9, 3)
+                if cfg.device == "cuda" and torch.cuda.is_available() else None
+            )
             row = {
                 "updates": total_updates,
                 "version": version,
@@ -259,15 +295,22 @@ def learner_loop(
                 "loss": {str(p): round(v, 6) for p, v in last_losses.items()},
                 "elapsed_s": round(elapsed, 1),
                 "upd_per_sec": round(upd_per_sec, 3),
+                "queue_depth": queue_depth,
+                "gpu_mem_gb": gpu_mem_gb,
+                "drained_since_last_log": drained_since_log,
             }
             with metrics_path.open("a") as f:
                 f.write(json.dumps(row) + "\n")
             logger.info(
-                "updates=%d ver=%d buf=%d loss=%s  %.2f upd/s  ETA %dh%02dm",
+                "updates=%d ver=%d buf=%d loss=%s  %.2f upd/s  q=%d gpu=%sGB drained=%d  ETA %dh%02dm",
                 total_updates, version, buffer.total_size(),
                 " ".join(f"p{p}={v:.4f}" for p, v in sorted(last_losses.items())),
-                upd_per_sec, eta_h, eta_m,
+                upd_per_sec, queue_depth,
+                f"{gpu_mem_gb:.2f}" if gpu_mem_gb is not None else "n/a",
+                drained_since_log,
+                eta_h, eta_m,
             )
+            drained_since_log = 0
 
     # Final checkpoint on clean shutdown
     if total_updates > 0:

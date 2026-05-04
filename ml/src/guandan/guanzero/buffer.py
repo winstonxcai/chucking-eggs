@@ -69,15 +69,29 @@ class ReplayBuffer:
 def collate(samples: list[TrainSample], device: str | torch.device = "cpu") -> tuple[
     dict[str, torch.Tensor], torch.Tensor
 ]:
-    """Stack a list of TrainSample dicts into batched torch tensors."""
+    """Stack a list of TrainSample dicts into batched torch tensors.
+
+    On CUDA, uses pinned host memory + non_blocking transfer so the host→device
+    copy can overlap with the previous step's compute.
+    """
+    dev = torch.device(device) if not isinstance(device, torch.device) else device
+    is_cuda = dev.type == "cuda"
     keys = samples[0].encoded.keys()
     batch: dict[str, torch.Tensor] = {}
     for k in keys:
         arr = np.stack([s.encoded[k] for s in samples], axis=0)
-        batch[k] = torch.from_numpy(arr).to(device)
-    targets = torch.tensor(
-        [s.mc_return for s in samples], dtype=torch.float32, device=device
-    )
+        t = torch.from_numpy(arr)
+        if is_cuda:
+            t = t.pin_memory().to(dev, non_blocking=True)
+        else:
+            t = t.to(dev)
+        batch[k] = t
+    targets_arr = np.asarray([s.mc_return for s in samples], dtype=np.float32)
+    targets = torch.from_numpy(targets_arr)
+    if is_cuda:
+        targets = targets.pin_memory().to(dev, non_blocking=True)
+    else:
+        targets = targets.to(dev)
     return batch, targets
 
 
@@ -87,11 +101,18 @@ def collate_encoded(
 ) -> dict[str, torch.Tensor]:
     """Same as ``collate`` but for raw encoded dicts (no MC return). Used
     by actor / eval to score legal actions in a single forward pass."""
+    dev = torch.device(device) if not isinstance(device, torch.device) else device
+    is_cuda = dev.type == "cuda"
     keys = encoded_list[0].keys()
     batch: dict[str, torch.Tensor] = {}
     for k in keys:
         arr = np.stack([e[k] for e in encoded_list], axis=0)
-        batch[k] = torch.from_numpy(arr).to(device)
+        t = torch.from_numpy(arr)
+        if is_cuda:
+            t = t.pin_memory().to(dev, non_blocking=True)
+        else:
+            t = t.to(dev)
+        batch[k] = t
     return batch
 
 

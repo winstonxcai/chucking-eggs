@@ -11,7 +11,9 @@ import argparse
 import dataclasses
 import json
 import logging
+import os
 import random
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -72,6 +74,10 @@ class TrainConfig:
     log_every_updates: int = 200
     updates_per_learner_step: int = 1
 
+    # ── A10G / CUDA throughput knobs ──────────────────────
+    use_bf16_learner: bool = False     # BF16 autocast in Learner.update (cuda only)
+    compile_mode: str = "default"      # passes to torch.compile(mode=...)
+
     @property
     def resolved_run_dir(self) -> str:
         if self.run_dir:
@@ -102,11 +108,17 @@ def _setup_logging(run_dir: Path) -> tuple[logging.Logger, Path]:
     logger.handlers.clear()
     logger.setLevel(logging.DEBUG)
 
+    fmt = logging.Formatter("%(asctime)s [%(levelname)-5s] %(message)s",
+                            datefmt="%Y-%m-%d %H:%M:%S")
     fh = logging.FileHandler(log_path, mode="w")
     fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)-5s] %(message)s",
-                                      datefmt="%Y-%m-%d %H:%M:%S"))
+    fh.setFormatter(fmt)
     logger.addHandler(fh)
+    if os.environ.get("GUANZERO_STREAM_LOGS") == "1":
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setLevel(logging.INFO)
+        sh.setFormatter(fmt)
+        logger.addHandler(sh)
     return logger, log_path
 
 
@@ -202,7 +214,8 @@ def train(cfg: TrainConfig) -> None:
         dropout=cfg.dropout,
         use_oracle_others_hand=cfg.use_oracle_others_hand,
     )
-    learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device)
+    learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device,
+                      use_bf16=cfg.use_bf16_learner)
     buffer = ReplayBuffer(capacity_per_player=cfg.buffer_capacity_per_player)
 
     _log_header(logger, cfg, q_nets, log_path)

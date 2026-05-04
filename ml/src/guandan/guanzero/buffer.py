@@ -10,7 +10,6 @@ each seat.
 from __future__ import annotations
 
 import random
-from collections import deque
 
 import numpy as np
 import torch
@@ -19,14 +18,32 @@ from .returns import TrainSample
 
 
 class ReplayBuffer:
+    """Per-player circular FIFO buffer with O(1) random access for sampling.
+
+    Backed by a fixed-size Python list per player + write pointer, so
+    ``random.sample`` reads are O(k) instead of O(k*n) (deque indexing is
+    O(n) per access — was the dominant cost on the learner hot path).
+    """
+
     def __init__(self, capacity_per_player: int = 50_000) -> None:
-        self.buffers: dict[int, deque[TrainSample]] = {
-            p: deque(maxlen=capacity_per_player) for p in range(4)
+        self.capacity = capacity_per_player
+        self.buffers: dict[int, list[TrainSample | None]] = {
+            p: [None] * capacity_per_player for p in range(4)
         }
+        self.write_idx: dict[int, int] = {p: 0 for p in range(4)}
+        self.sizes: dict[int, int] = {p: 0 for p in range(4)}
+
+    def _append(self, s: TrainSample) -> None:
+        p = s.player
+        idx = self.write_idx[p]
+        self.buffers[p][idx] = s
+        self.write_idx[p] = (idx + 1) % self.capacity
+        if self.sizes[p] < self.capacity:
+            self.sizes[p] += 1
 
     def push(self, samples: list[TrainSample]) -> None:
         for s in samples:
-            self.buffers[s.player].append(s)
+            self._append(s)
 
     def push_many(self, samples: list[TrainSample]) -> None:
         """Alias for push; used by the learner to ingest actor batches."""
@@ -38,32 +55,30 @@ class ReplayBuffer:
         players: np.ndarray,
         returns: np.ndarray,
     ) -> None:
-        """Ingest a pre-stacked actor batch by splitting per player.
-
-        ``stacked[k]`` is shape ``(N, ...)`` with N = len(players) = len(returns).
-        Each row is sliced into a per-sample dict (views into the stacked arrays —
-        cheap, and pickle has already detached the buffers from the actor process).
-        """
+        """Ingest a pre-stacked actor batch by splitting per player."""
         for p in range(4):
             mask = players == p
             if not mask.any():
                 continue
             for i in np.flatnonzero(mask):
                 enc = {k: stacked[k][i] for k in stacked}
-                self.buffers[p].append(TrainSample(p, enc, float(returns[i])))
+                self._append(TrainSample(p, enc, float(returns[i])))
 
     def total_size(self) -> int:
-        return sum(len(b) for b in self.buffers.values())
+        return sum(self.sizes.values())
 
     def size(self, player: int) -> int:
-        return len(self.buffers[player])
+        return self.sizes[player]
 
     def sample_for_player(self, player: int, batch_size: int) -> list[TrainSample]:
-        buf = self.buffers[player]
-        if not buf:
+        n = self.sizes[player]
+        if n == 0:
             return []
-        n = min(batch_size, len(buf))
-        return random.sample(buf, n)
+        k = min(batch_size, n)
+        # random.sample on a range is O(k); list indexing is O(1).
+        indices = random.sample(range(n), k)
+        buf = self.buffers[player]
+        return [buf[i] for i in indices]
 
 
 def collate(samples: list[TrainSample], device: str | torch.device = "cpu") -> tuple[
@@ -71,27 +86,18 @@ def collate(samples: list[TrainSample], device: str | torch.device = "cpu") -> t
 ]:
     """Stack a list of TrainSample dicts into batched torch tensors.
 
-    On CUDA, uses pinned host memory + non_blocking transfer so the host→device
-    copy can overlap with the previous step's compute.
+    Note on pin_memory: when the learner runs the model under
+    ``with torch.cuda.stream(s)`` the H2D copy and the compute serialize on
+    the same stream, so non_blocking has no overlap to exploit. Pinning
+    pages is pure overhead in that pattern, so we skip it.
     """
-    dev = torch.device(device) if not isinstance(device, torch.device) else device
-    is_cuda = dev.type == "cuda"
     keys = samples[0].encoded.keys()
     batch: dict[str, torch.Tensor] = {}
     for k in keys:
         arr = np.stack([s.encoded[k] for s in samples], axis=0)
-        t = torch.from_numpy(arr)
-        if is_cuda:
-            t = t.pin_memory().to(dev, non_blocking=True)
-        else:
-            t = t.to(dev)
-        batch[k] = t
+        batch[k] = torch.from_numpy(arr).to(device)
     targets_arr = np.asarray([s.mc_return for s in samples], dtype=np.float32)
-    targets = torch.from_numpy(targets_arr)
-    if is_cuda:
-        targets = targets.pin_memory().to(dev, non_blocking=True)
-    else:
-        targets = targets.to(dev)
+    targets = torch.from_numpy(targets_arr).to(device)
     return batch, targets
 
 
@@ -101,18 +107,11 @@ def collate_encoded(
 ) -> dict[str, torch.Tensor]:
     """Same as ``collate`` but for raw encoded dicts (no MC return). Used
     by actor / eval to score legal actions in a single forward pass."""
-    dev = torch.device(device) if not isinstance(device, torch.device) else device
-    is_cuda = dev.type == "cuda"
     keys = encoded_list[0].keys()
     batch: dict[str, torch.Tensor] = {}
     for k in keys:
         arr = np.stack([e[k] for e in encoded_list], axis=0)
-        t = torch.from_numpy(arr)
-        if is_cuda:
-            t = t.pin_memory().to(dev, non_blocking=True)
-        else:
-            t = t.to(dev)
-        batch[k] = t
+        batch[k] = torch.from_numpy(arr).to(device)
     return batch
 
 

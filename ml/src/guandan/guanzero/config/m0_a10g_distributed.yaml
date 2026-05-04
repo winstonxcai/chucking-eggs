@@ -22,7 +22,7 @@ gamma: 1.0
 batch_size: 1024
 buffer_capacity_per_player: 50000
 buffer_min_size: 5000
-updates_per_learner_step: 4
+updates_per_learner_step: 1
 epsilon_start: 0.1
 epsilon_final: 0.01
 epsilon_decay_episodes: 15000

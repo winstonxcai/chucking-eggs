@@ -285,18 +285,25 @@ def learner_loop(
                 break
         drained_since_log += drained
 
-        # 2. Gradient update when every position's buffer is warm
+        # 2. Gradient update when every position's buffer is warm.
+        #    cfg.updates_per_learner_step controls how many gradient steps fire
+        #    per Python loop iteration — amortizes drain/loop overhead across
+        #    multiple GPU-side updates.
         if all(buffer.size(p) >= cfg.buffer_min_size for p in range(4)):
             for net in q_nets.values():
                 net.train()
-            new_losses = learner.update(
-                buffer=buffer,
-                batch_size=cfg.batch_size,
-                min_buffer_size=cfg.buffer_min_size,
-            )
-            if new_losses:
-                last_losses = new_losses
-                total_updates += 1
+            n_steps = max(1, getattr(cfg, "updates_per_learner_step", 1))
+            for _ in range(n_steps):
+                new_losses = learner.update(
+                    buffer=buffer,
+                    batch_size=cfg.batch_size,
+                    min_buffer_size=cfg.buffer_min_size,
+                )
+                if new_losses:
+                    last_losses = new_losses
+                    total_updates += 1
+                else:
+                    break
 
         # 3–5 only fire when total_updates actually advanced to a new tick
         if total_updates == last_ticked or total_updates == 0:

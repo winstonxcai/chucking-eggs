@@ -57,14 +57,17 @@ class Learner:
         buffer: ReplayBuffer,
         batch_size: int,
         min_buffer_size: int,
-    ) -> dict[int, float]:
-        """One gradient step per position, run in parallel on CUDA.
+    ) -> dict[int, "float | torch.Tensor"]:
+        """One gradient step per position.
 
-        On CUDA: all 4 forward+backward passes launch concurrently on separate
-        streams, then a single synchronize() gates the optimizer steps. On CPU/MPS
-        the positions are updated sequentially as before.
+        On CUDA: pipelined per-stream — each of the 4 streams runs its own
+        ``zero_grad → fwd → bwd → optim.step`` sequence with no cross-stream
+        barrier. Returns loss *tensors* on the GPU; the caller must
+        ``torch.cuda.synchronize()`` and ``.item()`` later (e.g. at log time)
+        to avoid forcing a per-update sync on the hot path.
+
+        On CPU/MPS: sequential fallback, returns Python floats as before.
         """
-        # Sample all ready positions up front (cheap CPU work before any GPU dispatch).
         ready: dict[int, tuple[dict, torch.Tensor]] = {}
         for p in range(4):
             if buffer.size(p) < min_buffer_size:
@@ -76,13 +79,12 @@ class Learner:
         if not ready:
             return {}
 
-        losses: dict[int, float] = {}
-
         if self.streams is not None:
-            # ── Parallel CUDA streams ────────────────────────────────────────
-            # The 4 Q-nets are fully independent (separate params, separate grads)
-            # so concurrent backward passes are safe.
-            pending: dict[int, torch.Tensor] = {}
+            # ── Pipelined per-stream (no global sync) ───────────────────────
+            # Each net's params live entirely on its own stream, so zero_grad,
+            # fwd, bwd, and optim.step all serialize naturally on that stream
+            # — no inter-stream dependency, no barrier needed.
+            loss_tensors: dict[int, torch.Tensor] = {}
             for p, (batch, targets) in ready.items():
                 with torch.cuda.stream(self.streams[p]):
                     self.optims[p].zero_grad(set_to_none=True)
@@ -94,29 +96,24 @@ class Learner:
                         q_pred = self.q_nets[p](batch)
                         loss = F.mse_loss(q_pred, targets)
                     loss.backward()
-                    pending[p] = loss
+                    self.optims[p].step()
+                    loss_tensors[p] = loss.detach()
+            return loss_tensors
 
-            # All fwd+bwd done; sync before optimizer dispatches.
-            torch.cuda.synchronize()
-            for p, loss in pending.items():
-                self.optims[p].step()
-                losses[p] = float(loss.item())
-
-        else:
-            # ── Sequential fallback (CPU / MPS) ─────────────────────────────
-            for p, (batch, targets) in ready.items():
-                if self.use_bf16:
-                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        q_pred = self.q_nets[p](batch)
-                        loss = F.mse_loss(q_pred, targets)
-                else:
+        # ── Sequential fallback (CPU / MPS) ─────────────────────────────────
+        losses: dict[int, float] = {}
+        for p, (batch, targets) in ready.items():
+            if self.use_bf16:
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     q_pred = self.q_nets[p](batch)
                     loss = F.mse_loss(q_pred, targets)
-                self.optims[p].zero_grad(set_to_none=True)
-                loss.backward()
-                self.optims[p].step()
-                losses[p] = float(loss.item())
-
+            else:
+                q_pred = self.q_nets[p](batch)
+                loss = F.mse_loss(q_pred, targets)
+            self.optims[p].zero_grad(set_to_none=True)
+            loss.backward()
+            self.optims[p].step()
+            losses[p] = float(loss.item())
         return losses
 
 
@@ -310,20 +307,33 @@ def learner_loop(
             continue
         last_ticked = total_updates
 
+        # Periodic sync: the pipelined per-stream Learner.update returns loss
+        # tensors without synchronizing — which keeps the hot path async, but
+        # means any GPU→CPU read (loss values for log, params for publish/ckpt)
+        # must be gated by an explicit torch.cuda.synchronize() here. This
+        # fires at most ~1× per `min(publish, checkpoint, log)_interval` updates,
+        # which is rare relative to the per-update GPU work.
+        publish_due = total_updates % cfg.publish_interval_updates == 0
+        ckpt_due    = total_updates % cfg.checkpoint_every_updates == 0
+        log_due     = total_updates % cfg.log_every_updates == 0
+        if (publish_due or ckpt_due or log_due) \
+                and cfg.device == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize()
+
         # 3. Publish updated weights periodically
-        if total_updates % cfg.publish_interval_updates == 0:
+        if publish_due:
             version += 1
             publish_weights(q_nets, weight_dir, version)
             logger.debug("weights published version=%d", version)
 
         # 4. Checkpoint
-        if total_updates % cfg.checkpoint_every_updates == 0:
+        if ckpt_due:
             ckpt = run_dir / "checkpoints" / f"update_{total_updates:08d}.pt"
             _save_checkpoint(ckpt, q_nets, cfg, total_updates)
             logger.info("checkpoint → %s", ckpt)
 
         # 5. Metrics log
-        if total_updates % cfg.log_every_updates == 0:
+        if log_due:
             elapsed = time.time() - t0
             session_updates = total_updates - session_start_updates
             upd_per_sec = session_updates / elapsed if elapsed > 0 else 0.0
@@ -339,12 +349,18 @@ def learner_loop(
                 round(torch.cuda.memory_allocated() / 1e9, 3)
                 if cfg.device == "cuda" and torch.cuda.is_available() else None
             )
+            # Convert any GPU loss tensors (pipelined-stream path) to floats now
+            # that we've synchronized above.
+            last_losses_f = {
+                p: (float(v) if isinstance(v, torch.Tensor) else v)
+                for p, v in last_losses.items()
+            }
             row = {
                 "updates": total_updates,
                 "version": version,
                 "buffer_total": buffer.total_size(),
                 "buffer_per_player": {p: buffer.size(p) for p in range(4)},
-                "loss": {str(p): round(v, 6) for p, v in last_losses.items()},
+                "loss": {str(p): round(v, 6) for p, v in last_losses_f.items()},
                 "elapsed_s": round(elapsed, 1),
                 "upd_per_sec": round(upd_per_sec, 3),
                 "queue_depth": queue_depth,
@@ -356,7 +372,7 @@ def learner_loop(
             logger.info(
                 "updates=%d ver=%d buf=%d loss=%s  %.2f upd/s  q=%d gpu=%sGB drained=%d  ETA %dh%02dm",
                 total_updates, version, buffer.total_size(),
-                " ".join(f"p{p}={v:.4f}" for p, v in sorted(last_losses.items())),
+                " ".join(f"p{p}={v:.4f}" for p, v in sorted(last_losses_f.items())),
                 upd_per_sec, queue_depth,
                 f"{gpu_mem_gb:.2f}" if gpu_mem_gb is not None else "n/a",
                 drained_since_log,
@@ -364,8 +380,11 @@ def learner_loop(
             )
             drained_since_log = 0
 
-    # Final checkpoint on clean shutdown
+    # Final checkpoint on clean shutdown — sync first so any in-flight
+    # pipelined optim.step()s have written back to params before we read them.
     if total_updates > 0:
+        if cfg.device == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize()
         _save_checkpoint(
             run_dir / "checkpoints" / "final.pt",
             q_nets, cfg, total_updates,

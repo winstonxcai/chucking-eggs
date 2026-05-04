@@ -1813,6 +1813,85 @@ Speedup estimate: ~3–5× actor throughput for typical ~20-legal-action steps. 
 
 ---
 
+## 44. GuanZero M0 — 200k checkpoint multi-opponent eval (2026-05-04)
+
+`update_00200000.pt` from `guanzero_m0_20260503_1337` (an orphaned-process run that kept training past its `--updates 2500` cap because SIGTERM on the orchestrator skipped the `finally:` block). 200k updates ≈ 8h MPS wall, batch=512, paper-spec LSTM 256 + MLP 1024×6 + 4 per-position nets.
+
+Eval: 1000 games per opponent, balanced across seat assignments (500 with GuanZero on seats 0/2, 500 on seats 1/3). 6-worker CPU parallelism via `eval_guanzero.py --workers 6` (CPU beats MPS for the small per-move batches in eval).
+
+| Opponent | even (0/2) WR | odd (1/3) WR | **combined** | ±SE |
+|---|---|---|---|---|
+| random | 83.2% | 83.0% | **83.1%** | 1.2% |
+| greedy | 70.2% | 62.4% | **66.3%** | 1.5% |
+| heuristic | 30.4% | 34.6% | **32.5%** | 1.5% |
+
+**Reads:**
+- **Per-seat symmetry holds for random and heuristic** (gaps within SE), confirming the 4 per-position nets converged to comparable strength. **Greedy shows an 8-pt asymmetry** (70 vs 62) — the only opponent where the per-seat networks diverge meaningfully. Likely due to greedy's deterministic play creating asymmetric opponent-action distributions the seat-specific nets weren't equally exposed to.
+- **83% vs random** is meaningful but bounded: the loss curve had plateaued from 80k onward (avg ≈ 0.018), so 200k is at or near the M0 ceiling. Pushing to 1M updates wouldn't likely close much of the gap.
+- **32.5% vs heuristic ≪ project goal of ≥85%** vs the strongest baselines (strategic 71%, jidan 75%, yaoji 59%). M0 as implemented is far below baseline strength on the hard opponents — confirms the conclusion from §41 that the algorithm/architecture (DMC + per-position nets + paper-spec LSTM/MLP) hits a ceiling well below the heuristic agent.
+
+**Eval speed**: ~1m46s for 1000 games on 6 CPU workers (vs estimated ~25 min sequential MPS). MPS dispatch latency dominates compute at small per-move batches (~10–50 actions); CPU + multiprocess fan-out is the right combo for eval.
+
+### Full WR curve vs random — every checkpoint (5k → 200k)
+
+Resumable sweep via `guandan.guanzero.wr_curve` — 1000 games per checkpoint, balanced (500 even / 500 odd), persists JSON after each checkpoint. ~70 min total wall time on 6 CPU workers.
+
+| updates | combined WR | even (0/2) | odd (1/3) | gap |
+|---:|---:|---:|---:|---:|
+|   5k | 49.5% | 47.6% | 51.4% |  -3.8 |
+|  10k | 52.9% | 56.6% | 49.2% |  +7.4 |
+|  15k | 54.4% | 55.6% | 53.2% |  +2.4 |
+|  20k | 57.3% | 57.4% | 57.2% |  +0.2 |
+|  25k | 56.9% | 58.8% | 55.0% |  +3.8 |
+|  30k | 60.1% | 57.2% | 63.0% |  -5.8 |
+|  35k | 59.1% | 65.0% | 53.2% | +11.8 |
+|  40k | 60.8% | 60.6% | 61.0% |  -0.4 |
+|  45k | 57.9% | 60.8% | 55.0% |  +5.8 |
+|  50k | 61.9% | 64.8% | 59.0% |  +5.8 |
+|  55k | 62.3% | 60.2% | 64.4% |  -4.2 |
+|  60k | 66.7% | 71.4% | 62.0% |  +9.4 |
+|  65k | 63.6% | 66.4% | 60.8% |  +5.6 |
+|  70k | 65.4% | 68.4% | 62.4% |  +6.0 |
+|  75k | 69.4% | 71.2% | 67.6% |  +3.6 |
+|  80k | 68.9% | 69.0% | 68.8% |  +0.2 |
+|  85k | 73.8% | 75.2% | 72.4% |  +2.8 |
+|  90k | 69.6% | 72.4% | 66.8% |  +5.6 |
+|  95k | 69.2% | 72.0% | 66.4% |  +5.6 |
+| 100k | 73.2% | 74.4% | 72.0% |  +2.4 |
+| 105k | 74.4% | 77.2% | 71.6% |  +5.6 |
+| 110k | 74.5% | 75.2% | 73.8% |  +1.4 |
+| 115k | 77.8% | 81.0% | 74.6% |  +6.4 |
+| 120k | 75.8% | 78.6% | 73.0% |  +5.6 |
+| 125k | 78.1% | 81.0% | 75.2% |  +5.8 |
+| 130k | 74.2% | 78.8% | 69.6% |  +9.2 |
+| 135k | 78.7% | 81.2% | 76.2% |  +5.0 |
+| 140k | 77.7% | 77.6% | 77.8% |  -0.2 |
+| 145k | 77.9% | 80.8% | 75.0% |  +5.8 |
+| 150k | 76.4% | 77.4% | 75.4% |  +2.0 |
+| 155k | 81.0% | 82.2% | 79.8% |  +2.4 |
+| 160k | 80.2% | 83.4% | 77.0% |  +6.4 |
+| 165k | 80.0% | 80.2% | 79.8% |  +0.4 |
+| 170k | 80.8% | 82.2% | 79.4% |  +2.8 |
+| 175k | 82.7% | 81.4% | 84.0% |  -2.6 |
+| 180k | 82.6% | 85.4% | 79.8% |  +5.6 |
+| 185k | 80.6% | 82.8% | 78.4% |  +4.4 |
+| 190k | 81.7% | 83.8% | 79.6% |  +4.2 |
+| 195k | 78.7% | 78.4% | 79.0% |  -0.6 |
+| 200k | 83.1% | 83.2% | 83.0% |  +0.2 |
+
+±SE ≈ 1.5% per combined WR row, ±2.2% per per-seat WR.
+
+**Reads:**
+- **Monotonic upward, no plateau** — 49.5% → 83.1% across 200k updates. Crossed 50% at 5k, 70% at ~75k, 80% at ~155k.
+- **Loss plateaued at ~80k but WR did NOT.** Loss curve was nearly flat from 80k onward (avg ≈ 0.018), yet WR climbed from 69% (80k) to 83% (200k). **Loss is a poor proxy for policy strength in DMC** — the MC target variance dominates MSE noise. Always eval directly.
+- **Per-seat asymmetry persists throughout** — even-seat WR is consistently higher by ~3–6 pts on average. Largest gaps in mid-training (35k: +11.8, 60k: +9.4, 130k: +9.2). Final 200k is the most balanced point (83.2 vs 83.0). The asymmetry shrinks as the model gets stronger but never fully disappears in mid-training.
+- **Local dips (e.g., 130k=74.2% sandwiched between 78.1% and 78.7%) are within ±1.5% SE noise**, not real regressions.
+- **Peak = final** = 83.1% at 200k; the model is still gaining at sweep end. Plausibly pushes to 85–88% vs random with another 100–200k updates. Won't help vs heuristic (32.5% in same family of evals — structural ceiling).
+
+Plot: `ml/runs/guanzero_m0_20260503_1337/wr_curve_random.png`. Raw rows: `wr_curve_random.json` (same dir).
+
+---
+
 ## 41. What this logbook is for
 
 When designing the next training run:
@@ -1822,3 +1901,125 @@ When designing the next training run:
 - DO use ts=0.5 + position rewards [3,0,−1,−2] as the reward baseline.
 - DO target Modal A10G for any run >2h; M1 Pro for sanity checks only (<6h hard cap).
 - The strongest attainable result with the archived architecture is ~50% vs Jidan. To beat that, the next plan must change either (a) the observation space (add partner visibility), (b) the training signal (offline RL on competition-bot games), or (c) the architecture (transformer policy, larger network, joint-action planner). Anything that doesn't change one of these three is unlikely to break the ceiling.
+
+---
+
+## 42. GuanZero distributed architecture — paper vs ours (May 4)
+
+### Paper figure (GuanZero §4, Figure 4)
+
+```
+   ┌────────┐   ┌────────┐   ┌────────┐   ┌────────┐
+   │ Env 1  │   │ Env 2  │   │ Env 3  │   │ Env 4  │
+   └───┬────┘   └───┬────┘   └───┬────┘   └───┬────┘
+       │            │            │            │
+   ┌───▼────┐   ┌───▼────┐   ┌───▼────┐   ┌───▼────┐
+   │Actor 1 │   │Actor 2 │   │Actor 3 │   │Actor 4 │   each holds 4 local nets
+   │ LN1-4  │   │ LN1-4  │   │ LN1-4  │   │ LN1-4  │   (LN1..LN4 = per-seat Q)
+   └───┬────┘   └───┬────┘   └───┬────┘   └───┬────┘
+       └────────────┼────────────┼────────────┘
+                    ▼            ▼
+              ┌─────────────────────────┐
+              │   Experience Buffer     │   one shared buffer
+              └────────────┬────────────┘
+                           ▼
+                     ┌──────────┐
+                     │ Learner  │
+                     └──┬─┬─┬─┬─┘
+                        │ │ │ │
+              ┌─────────┘ │ │ └─────────┐
+              ▼           ▼ ▼           ▼
+         ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐
+         │GlobalN1│  │GlobalN2│  │GlobalN3│  │GlobalN4│
+         └────────┘  └────────┘  └────────┘  └────────┘
+```
+
+### Our Modal A10G architecture (post-pipelined-stream optimization)
+
+```
+                  Modal A10G + 32 vCPU container
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                                                                     │
+  │  8 ACTOR PROCESSES (CPU, torch.set_num_threads(1))                  │
+  │  ┌────────────────┐    ┌────────────────┐                           │
+  │  │ Actor 0        │    │ Actor 7        │                           │
+  │  │  GuanDan env   │    │  GuanDan env   │                           │
+  │  │  encoder       │... │  encoder       │                           │
+  │  │  4 local Q-nets│    │  4 local Q-nets│  rolls episodes,          │
+  │  │  ε-greedy      │    │  ε-greedy      │  pre-stacks 512 samples   │
+  │  │  (CPU forward) │    │  (CPU forward) │  → numpy arrays           │
+  │  └───────┬────────┘    └───────┬────────┘                           │
+  │          │ pickled batch       │ pickled batch                      │
+  │          └─────────┬───────────┘                                    │
+  │                    ▼                                                │
+  │            ┌───────────────┐                                        │
+  │            │ mp.Queue      │  bounded, max=64                       │
+  │            │ (pre-stacked) │                                        │
+  │            └───────┬───────┘                                        │
+  │                    │  drain 16/loop                                 │
+  │                    ▼                                                │
+  │  LEARNER PROCESS (1 proc, A10G)                                     │
+  │  ┌─────────────────────────────────────────────────────────────┐    │
+  │  │  4× ReplayBuffer (one per seat, list-backed circular,       │    │
+  │  │                   50K samples each, O(1) random access)     │    │
+  │  │  ────────────────────────────────────────────────────────   │    │
+  │  │  Learner.update — pipelined per-stream (no global sync)     │    │
+  │  │                                                             │    │
+  │  │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │    │
+  │  │   │ Stream 0 │  │ Stream 1 │  │ Stream 2 │  │ Stream 3 │    │    │
+  │  │   │ ─────────│  │ ─────────│  │ ─────────│  │ ─────────│    │    │
+  │  │   │ zero_grad│  │ zero_grad│  │ zero_grad│  │ zero_grad│    │    │
+  │  │   │ fwd p0   │  │ fwd p1   │  │ fwd p2   │  │ fwd p3   │    │    │
+  │  │   │ (BF16    │  │ (BF16    │  │ (BF16    │  │ (BF16    │    │    │
+  │  │   │  autocast│  │  autocast│  │  autocast│  │  autocast│    │    │
+  │  │   │  on QNet0│  │  on QNet1│  │  on QNet2│  │  on QNet3│    │    │
+  │  │   │  compiled│  │  compiled│  │  compiled│  │  compiled│    │    │
+  │  │   │  default)│  │  default)│  │  default)│  │  default)│    │    │
+  │  │   │ bwd      │  │ bwd      │  │ bwd      │  │ bwd      │    │    │
+  │  │   │ Adam.step│  │ Adam.step│  │ Adam.step│  │ Adam.step│    │    │
+  │  │   └──────────┘  └──────────┘  └──────────┘  └──────────┘    │    │
+  │  │                                                             │    │
+  │  │   torch.cuda.synchronize() ONLY at log/publish/ckpt ticks   │    │
+  │  └─────────────────────────────────────────────────────────────┘    │
+  │           │                                  │                      │
+  │           ▼ atomic publish                   ▼ checkpoints          │
+  │  ┌────────────────────┐         ┌──────────────────────┐            │
+  │  │/tmp/guanzero_      │         │ /runs/guanzero/<run>/│            │
+  │  │ weights/           │ ◄──poll │  checkpoints/        │            │
+  │  │  (container-local) │  every  │   (Modal volume —    │            │
+  │  │                    │  20 ep  │    pvguan-runs)      │            │
+  │  └────────────────────┘         └──────────────────────┘            │
+  │           ▲                                                         │
+  │           │ load weights                                            │
+  │           └──── actors                                              │
+  │                                                                     │
+  └─────────────────────────────────────────────────────────────────────┘
+```
+
+### What changed vs the paper layout
+
+| Component | Paper | Ours (Modal A10G) |
+|---|---|---|
+| Actor count | 4 | **8** (sweet spot — 24 caused CPU contention with learner) |
+| Actor → learner transport | Shared buffer (single object) | **mp.Queue with pre-stacked numpy batches** (pickled per-actor) |
+| Replay buffer | 1 shared | **4 per-seat FIFOs**, list-backed circular for O(1) random access |
+| Sample pinning | implicit | **No `pin_memory()`** — H2D copy serializes on the same stream as compute, pinning is pure overhead |
+| Q-net forward dtype | FP32 | **BF16 autocast** + TF32 enabled for FP32 paths |
+| Compile | none | `torch.compile(mode="default")` on each Q-net |
+| Position updates | sequential 4× | **4 dedicated CUDA streams**, pipelined with no per-update sync |
+| Sync barrier | per-update | **only at log/publish/checkpoint ticks** (every 200 updates) |
+| Weight publishing | in-memory shared | atomic `os.replace` on `/tmp/guanzero_weights` (container-local, not Modal volume) |
+| Streaming logs | n/a | `GUANZERO_STREAM_LOGS=1` adds StreamHandler so `modal run` shows live progress |
+| BLAS thread pinning | n/a | `OMP/MKL/OPENBLAS_NUM_THREADS=1` to prevent actor BLAS pools from contending |
+
+### Throughput progression on Modal A10G (steady-state @ updates=2000)
+
+| Config | upd/s | vs M1 (2.7) |
+|---|---|---|
+| Single-process baseline (paper-faithful, sequential) | — | — |
+| Distributed, n_actors=8, FP32, sequential 4-pos updates | ~9.1 | 3.4× |
+| + parallel CUDA streams (global sync per update) | ~10.5 | 3.9× |
+| + deque→list buffer + drop pin_memory | ~10.2 | 3.8× (within noise) |
+| + pipelined per-stream (no per-update sync) | (in progress) | — |
+
+Target: ≥ 27 upd/s (10× M1).

@@ -90,7 +90,7 @@ def train_remote(
 
 @app.local_entrypoint()
 def main(
-    updates: int = 2000,
+    updates: int = 1000,
     run_name: str = "guanzero_a10g_bench",
     seed: int = 0,
     config_path: str = "/root/ml/src/guandan/guanzero/config/m0_a10g_distributed.yaml",

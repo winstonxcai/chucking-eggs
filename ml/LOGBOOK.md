@@ -2275,6 +2275,68 @@ unchanged (`.to("cpu")` ignores `non_blocking`).
 | encode_state/actions     |   3.4  | defer |
 | env_step                 |   0.2  | ignore |
 
+### Sixth pass — cross-actor inference batching (`bench_inference_server.py`)
+
+Hypothesis (from microbench): batching candidate sets across N parallel actors
+into one forward should give 6–25× sample throughput vs per-actor batches.
+Built a server-architecture benchmark:
+
+```
+  baseline:  N rollout procs, each owns 4 q_nets on MPS, forwards locally
+  server:    N rollout procs (no q_nets), 1 server proc owns the q_nets and
+             batches across actors per position via mp.Queue + reply queues
+```
+
+**Paper-spec net (LSTM 256 + MLP 1024×6), 30 ep/worker, MPS:**
+
+| mode     |  N | wall (s) | total ep/s | per-worker | mean B | reqs/fwd |
+|----------|---:|---------:|-----------:|-----------:|-------:|---------:|
+| baseline |  1 |    12.05 |       2.49 |       2.71 |    —   |    —     |
+| server   |  1 |    12.22 |       2.45 |       2.67 |   4.9  |   1.00   |
+| baseline |  2 |    14.15 |   **4.24** |       2.30 |    —   |    —     |
+| server   |  2 |    19.50 |       3.08 |       1.62 |   5.0  |   1.00   |
+| baseline |  4 |    20.46 |   **5.86** |       1.56 |    —   |    —     |
+| server   |  4 |    28.61 |       4.20 |       1.09 |   7.7  |   1.52   |
+| baseline |  8 |    44.46 |       5.40 |       0.70 |    —   |    —     |
+| server   |  8 |    45.27 |       5.30 |       0.69 |  13.5  |   2.66   |
+
+For the paper-spec net the server **does not win on M1**. Multi-process MPS
+already scales near-linearly to N=2, sub-linearly to N=4 (5.86 ep/s with 4
+actors = 2.4× single-actor). At N=4 the IPC round-trip per decision (~1 ms
+to pickle ~37 KB encoded list + ~50 µs to pickle the reply) eats the
+batching savings, since the actual forward at batch=5 is only ~1.9 ms.
+
+**Bigger net (LSTM 256 + MLP 2048×8) — same harness:**
+
+| mode     |  N | wall (s) | total ep/s | mean B |
+|----------|---:|---------:|-----------:|-------:|
+| baseline |  4 |    23.60 |       3.39 |   —    |
+| baseline |  8 |   101.46 |       1.58 |   —    |
+| server   |  4 |    30.28 |       2.64 |   7.6  |
+| server   |  8 |    40.46 |   **3.95** |  14.2  |
+
+When the model is large enough that forward dominates IPC, the picture
+flips: at N=8 the server beats the baseline **2.5×** because per-process
+MPS contention collapses the baseline (1.58 ep/s — workers fighting for
+the GPU) while the server's single MPS process keeps the device pinned.
+
+### Practical takeaway
+
+For the *paper-spec network on M1*, the right configuration is the boring
+one: spawn N=4 actor processes each holding their own q_nets on MPS, with
+the `non_blocking=True` H2D fix in `collate_encoded`. Ceiling ~5.8 ep/s.
+
+The server architecture only earns its keep when:
+- model size is large enough that per-decision forward is ≫ IPC
+  (~10 ms+/forward), or
+- N is high enough that per-process MPS contention crashes baseline
+  (N≥8 in our measurements), or
+- platform is CUDA (A10G) where multi-process device sharing has more
+  overhead than M1 MPS
+
+Worth re-testing on Modal A10G if/when we want to push past the current
+~10 upd/s ceiling on the learner side, but **not implementing for M1 now**.
+
 ### Files added
 
 - [profile_guanzero_rollout.py](ml/scripts/util/profile_guanzero_rollout.py) —
@@ -2282,5 +2344,6 @@ unchanged (`.to("cpu")` ignores `non_blocking`).
 - [bench_qforward.py](ml/scripts/util/bench_qforward.py) — batch-size sweep with CUDA/MPS sync
 - [bench_actor_scaling.py](ml/scripts/util/bench_actor_scaling.py) — N-actor wall-clock sweep
 - [bench_collate.py](ml/scripts/util/bench_collate.py) — collate variant microbench
+- [bench_inference_server.py](ml/scripts/util/bench_inference_server.py) — cross-actor batching server vs baseline
 - `ml/runs/profile/rollout_cpu_eps0.prof` — cProfile dump (gitignored under runs/)
 

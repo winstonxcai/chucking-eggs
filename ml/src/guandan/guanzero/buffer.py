@@ -106,12 +106,18 @@ def collate_encoded(
     device: str | torch.device = "cpu",
 ) -> dict[str, torch.Tensor]:
     """Same as ``collate`` but for raw encoded dicts (no MC return). Used
-    by actor / eval to score legal actions in a single forward pass."""
+    by actor / eval to score legal actions in a single forward pass.
+
+    ``non_blocking=True`` matters on MPS: the default ``.to(device)`` issues a
+    per-call stream sync, which dominates actor wall time on the hot path
+    (~1.7 ms/decision for 9 small H2D copies vs ~0.2 ms when async). The
+    consuming forward pass is on the same stream, so ordering is preserved.
+    """
     keys = encoded_list[0].keys()
     batch: dict[str, torch.Tensor] = {}
     for k in keys:
         arr = np.stack([e[k] for e in encoded_list], axis=0)
-        batch[k] = torch.from_numpy(arr).to(device)
+        batch[k] = torch.from_numpy(arr).to(device, non_blocking=True)
     return batch
 
 

@@ -2023,3 +2023,264 @@ When designing the next training run:
 | + pipelined per-stream (no per-update sync) | (in progress) | — |
 
 Target: ≥ 27 upd/s (10× M1).
+
+## 43. GuanZero actor-rollout profile — where actor wall time goes (2026-05-05)
+
+After reverting streams/pipelining (found to give 0% gain on A10G), turn focus to the
+actor side: distributed throughput is bounded by how fast the queue refills, which
+is ultimately bounded by per-actor episodes/sec. Profile single-actor on M1 first to
+see the real cost breakdown before deciding whether to optimize legal-action gen,
+encoding, or Q-forward.
+
+Tool: `ml/scripts/util/profile_guanzero_rollout.py` — re-implements `play_episode`
+with `perf_counter` timers around each phase. Runs single-process, no learner, no queue.
+
+### First pass — paper-spec network (LSTM 256 + MLP 1024×6), CPU, M1 Pro
+
+200 episodes, `epsilon=0.0` (every decision goes through Q-forward), `max_legal=128`,
+`torch.set_num_threads(1)` (mirrors actor process), random init weights.
+
+| section          |  sec    |   %  |   ms/call |
+|------------------|---------|------|-----------|
+| **q_forward**    | 117.67  | 92.2 | **4.524** |
+| legal_actions    |   4.55  |  3.6 |     0.175 |
+| collate          |   2.56  |  2.0 |     0.098 |
+| encode_state     |   1.80  |  1.4 |     0.069 |
+| encode_actions   |   0.78  |  0.6 |     0.030 |
+| env_step         |   0.23  |  0.2 |     0.009 |
+| mc_returns       |   0.02  |  0.0 |   0.097 / episode |
+
+Derived:
+- episodes/sec: **1.56**
+- decisions/sec: 203
+- decisions/episode: 130 (avg)
+- avg legal/decision (post-dedup, post-cap): **5.3**
+
+### Sanity check — `epsilon=1.0` (random play, skip Q-forward)
+
+Same config, all 26k decisions take random path → no model inference at all.
+
+| section          |  sec  |   %   |   ms/call |
+|------------------|-------|-------|-----------|
+| legal_actions    | 3.43  | 65.5  |     0.132 |
+| encode_state     | 1.15  | 21.9  |     0.044 |
+| encode_actions   | 0.60  | 11.5  |     0.023 |
+| env_step         | 0.04  |  0.8  |     0.002 |
+
+Throughput jumps from 1.56 → **36.94 ep/s** — a 24× speedup confirms Q-forward
+fully dominates actor wall time. Encoding+legal+step floor is ~5s for 200 ep
+(≈27 ms total per episode).
+
+### Headline takeaway
+
+Q-forward is **92%** of actor time, ~4.5 ms per decision over an average 5.3-action
+batch. The model is small (LSTM 256 → MLP 1024×6) but each decision requires a
+forward pass with batch size ≈ 5, so torch dispatch overhead dominates the dense
+matmul. Optimizing legal-action gen or encoding (Rust port, bitsets, etc.) is
+chasing the 8% tail.
+
+**Optimization candidates, in priority order:**
+1. **Batch Q-forward across actors / episodes** — if 2 actors share a Q-net process
+   and submit their candidate sets together, batch grows ~2× and Python/dispatch
+   overhead amortizes. Most leverage.
+2. **Reduce per-decision Q-forward calls** — e.g. cache Q-values for unchanged
+   `(hand, history-tail)` signatures (likely low hit rate but worth a sample).
+3. **Smaller `max_legal` cap** — currently 128, but actual avg is 5.3 → cap is
+   never binding here. Skip.
+4. Anything in legal/encode → only 8% of total. Skip until Q-forward is solved.
+
+### Second pass — cProfile drill-down inside Q-forward
+
+100 episodes, same config. cumtime breakdown of Q-forward’s 56s (84% of 67s wall):
+
+| op                       | cumtime | % wall | calls   | comment |
+|--------------------------|---------|--------|---------|---------|
+| `torch._C._nn.linear`    | 33.60   | 48.7   | 89,313  | MLP matmuls (6 layers × 12,759 fwd) |
+| `torch.lstm`             | 19.09   | 27.7   | 12,759  | history encoder (20×108 → 256) |
+| `Sequential.forward`     | 35.22   | 51.0   | 12,759  | wraps the linear stack |
+| Q-net `forward()` total  | 55.72   | 80.7   | 12,759  | linear + lstm + concat |
+| `_py_generate_all_leads` |  5.49   |  7.9   | 12,759  | engine lead generation |
+| `_py_generate_responses` |  4.72   |  6.8   | 10,294  | engine response gen |
+| `_multi_hot`             |  1.11   |  1.6   | 275,288 | encoder card → 108-vec |
+
+Linear dominates: 89,313 calls / 33.6 s = **376 µs per linear call** at batch ≈ 5.
+A 1024×1024 fp32 matmul with batch=5 should take <50 µs on an M1 P-core — so
+~85% of that 376 µs is torch dispatch overhead, not arithmetic.
+
+### Q-forward microbench — batch-size sweep (`bench_qforward.py`)
+
+Synthetic constant-shape batches, paper-spec net, M1 CPU, threads=1:
+
+| batch | ms/call | µs/sample | samples/sec |
+|------:|--------:|----------:|------------:|
+|   1   |   1.51  |    1514   |        661  |
+|   4   |   4.85  |    1213   |        824  |
+|   8   |   5.23  |     653   |       1531  |
+|  16   |   5.98  |     374   |       2675  |
+|  32   |   6.41  |     200   |       4989  |
+|  64   |  11.28  |     176   |       5676  |
+| 128   |  17.64  |     138   |       7258  |
+| 256   |  33.54  |     131   |       7634  |
+
+Going from batch=4 (≈ our actor reality) to batch=32 costs only **+32% per call**
+but gives **6× more samples per second**. Threads=4 doesn’t help below batch=64
+(BLAS spin-up cost > matmul cost). This is the canonical dispatch-bound profile.
+
+### Third pass — multi-actor scaling on M1 (`bench_actor_scaling.py`)
+
+N independent CPU actor processes, 30 ep/actor, threads=1 each, no learner / no queue:
+
+|  N | wall (s) | total ep/s | speedup | efficiency |
+|---:|---------:|-----------:|--------:|-----------:|
+|  1 |    18.5  |     1.62   |  1.00×  |    100 %   |
+|  2 |    19.7  |     3.05   |  1.88×  |     94 %   |
+|  4 |    35.6  |     3.37   |  2.08×  |     52 %   |
+|  6 |    54.2  |     3.32   |  2.05×  |     34 %   |
+|  8 |    61.7  |     3.89   |  2.40×  |     30 %   |
+
+M1 saturates between N=2 and N=4 — total throughput plateaus at ~3.4–3.9 ep/s no
+matter how many actors are spawned. Per-actor rate collapses from 1.71 → 0.50 ep/s
+at N=8. Spawn cost amortizes worse with the small slice (30 ep), but the trend is
+clear: M1 will not scale beyond ~3-4 effective actors. (Modal A10G has 32 vCPUs
+and shows the same shape later; its plateau just sits at higher N.)
+
+### Where the 92.2% goes — final breakdown
+
+| layer                    | % wall | bottleneck type        |
+|--------------------------|-------:|------------------------|
+| MLP linear (matmuls)     |  48.7  | torch dispatch overhead at batch≈5 |
+| LSTM history encoder     |  27.7  | per-call setup + 20-step recurrence |
+| Other Q-net wrapper code |   4.3  | python                 |
+| Legal action enumeration |   8.7  | pure Python combos     |
+| Encoding (`_multi_hot` × 275k) |  ~3 | python loops + np.zeros |
+| Collate / env_step       |   ~2  | mostly torch.from_numpy |
+| All else (mc_returns, etc.) | <1 | negligible             |
+
+### Recommended optimization order
+
+1. **Cross-actor inference batching** (largest leverage) — e.g. an inference-server
+   actor pattern: M rollout workers send candidate-action sets to a single GPU/CPU
+   inference process, which batches across workers, runs one forward, returns Q
+   per (worker, candidate). At batch ≈ 32 this is ≈ 6× the per-sample throughput
+   of the current per-decision forward.
+2. **Reduce LSTM cost** — switch to a small set/transformer head over the same
+   20-move history. Cheaper per call than rolling a 20-step LSTM. Algorithm change,
+   not just engineering.
+3. **Skip optimizing legal-action gen + encoding for now**. Even a 10× speedup of
+   that 8% saves <1% of wall time. Defer until Q-forward is solved.
+
+### Fourth pass — same profile, but on MPS (device our actor would actually use)
+
+200 episodes, paper-spec net, `epsilon=0.0`, `--device mps`:
+
+| section          |  sec    |   %  |   ms/call | vs CPU |
+|------------------|---------|------|-----------|--------|
+| q_forward        |  62.59  | 55.3 |     2.406 | 0.53× (1.9× faster) |
+| **collate**      |  44.31  | 39.2 | **1.703** | **17.4× slower** |
+| legal_actions    |   3.94  |  3.5 |     0.152 | 0.87× |
+| encode_state     |   1.44  |  1.3 |     0.055 | 0.80× |
+| encode_actions   |   0.69  |  0.6 |     0.026 | 0.87× |
+| env_step         |   0.13  |  0.1 |     0.005 | 0.56× |
+
+End-to-end episodes/sec: CPU 1.56 → MPS 1.76 — only **+13%** despite Q-forward
+being nearly 2× faster, because **per-decision H2D dispatch becomes the new bottleneck**.
+
+Each decision builds 9 small numpy arrays and pushes each to MPS via
+`torch.from_numpy(arr).to("mps")`. With ~5 candidate actions per decision and 9
+keys per candidate that's ~45 tiny `.to(device)` calls per decision. The Python
+dispatch + small-tensor H2D launch cost on M1 MPS adds up to ~1.7 ms/decision.
+On CPU `.to("cpu")` is a no-op so collate is essentially free (0.10 ms).
+
+### Q-forward microbench — MPS sweep
+
+Same harness as before, with `torch.mps.synchronize()` around the timed region:
+
+| batch | CPU ms/call | MPS ms/call | MPS samples/sec |
+|------:|------------:|------------:|----------------:|
+|   1   |    1.33     |    0.67     |      1,485      |
+|   4   |    4.56     |    1.08     |      3,710      |
+|   8   |    4.90     |    1.26     |      6,370      |
+|  16   |    5.98     |    1.13     |     14,151      |
+|  32   |    6.61     |    1.30     |     24,622      |
+|  64   |   11.28     |    1.76     |     36,439      |
+| 128   |   17.08     |    2.67     |     47,871      |
+| 256   |   33.54     |    5.48     |     46,748      |
+
+MPS scales superbly with batch — at batch=128 it’s 6.4× faster per sample than
+CPU, and ms/call only doubles from batch=4 to batch=128. The actor batches at
+~5, leaving most of MPS’s headroom on the table.
+
+### Updated takeaway
+
+The CPU profile’s message ("Q-forward is 92% of wall, batch up to 32 to amortize
+dispatch") still holds — but on MPS the same insight is even stronger:
+
+- per-call MPS Q-forward at batch=32 = 1.30 ms; at our actor’s batch=5 ≈ 1.08 ms
+  → **~25× more samples/sec** if we cross-batch ≈ 32 candidates per call
+- the collate H2D cost is currently 39% of MPS wall — fixable by stacking all 9
+  channels into one contiguous numpy buffer per decision and one `.to(mps)` call
+  (single transfer of ~3 KB instead of 9 transfers of ~0.3 KB each)
+- only after both are done would legal-action gen / encoding become worth touching
+
+**Recommended order on M1 / MPS actor:**
+1. Single-tensor stacked H2D in `collate_encoded` — should claw back most of the
+   1.6 ms collate cost. Pure engineering, no algorithm change.
+2. Cross-actor inference batching (the bigger structural win, same as on Modal).
+3. Then legal/encode/etc.
+
+### Fifth pass — `collate_encoded` H2D batching (`non_blocking=True`)
+
+Microbench `bench_collate.py` (5 variants, MPS, repeats=2000) showed the
+production `collate_encoded` was paying a **per-call MPS sync** on every
+`.to(device)` call — 9 calls per decision = ~1.7 ms regardless of batch size.
+
+| variant            | ms/call (B=5) | µs/sample |
+|--------------------|--------------:|----------:|
+| **v0_current**     |     1.683     |    337    |
+| v1_nonblock        |     0.213     |     43    | **8× faster, 1-line change** |
+| v2_flatone         |     0.278     |     56    |
+| v3_flatone_contig  |     0.418     |     84    |
+| v4_persample_pack  |     0.240     |     48    |
+
+The flat-buffer variants concat all 9 channels into one (B, 1859) tensor
+before a single H2D, but the on-device split + reshape introduces non-contig
+views that don't actually beat the simpler `non_blocking=True`. The 1-line
+change wins both on ergonomics and speed.
+
+**Patch:** [buffer.py:115](ml/src/guandan/guanzero/buffer.py#L115) — add
+`non_blocking=True` to `.to(device)` in `collate_encoded`.
+
+### Re-run rollout profile after the fix (MPS, 200 ep, eps=0.0)
+
+| section          | before  | after  | Δ          |
+|------------------|--------:|-------:|-----------:|
+| **ep/s (end-to-end)** | **1.76** | **3.08** | **+75 %** |
+| q_forward ms/call |  2.406 | 1.870  | −22 %      |
+| collate ms/call   |  1.703 | 0.251  | **−85 %**  |
+| collate share of wall | 39.2 % | 10.6 % | dropped from #2 |
+| q_forward share   | 55.3 %  | 79.4 % | back to dominant |
+| total wall (s)    | 113.5   | 64.86  | −43 %      |
+
+Q-forward also got faster because H2D now overlaps with the prior
+forward’s tail instead of blocking the dispatch thread. CPU path is
+unchanged (`.to("cpu")` ignores `non_blocking`).
+
+### Updated bottleneck stack (MPS, post-fix)
+
+| layer                    | % wall | next move |
+|--------------------------|-------:|-----------|
+| q_forward (LSTM + MLP)   |  79.4  | cross-actor inference batching, or smaller history encoder |
+| collate (H2D + stack)    |  10.6  | only worth chasing after Q-forward is solved |
+| legal_actions            |   6.4  | Rust port — defer (small share now, smaller still post-batching) |
+| encode_state/actions     |   3.4  | defer |
+| env_step                 |   0.2  | ignore |
+
+### Files added
+
+- [profile_guanzero_rollout.py](ml/scripts/util/profile_guanzero_rollout.py) —
+  inline-instrumented `play_episode` with phase timers (CPU + MPS)
+- [bench_qforward.py](ml/scripts/util/bench_qforward.py) — batch-size sweep with CUDA/MPS sync
+- [bench_actor_scaling.py](ml/scripts/util/bench_actor_scaling.py) — N-actor wall-clock sweep
+- [bench_collate.py](ml/scripts/util/bench_collate.py) — collate variant microbench
+- `ml/runs/profile/rollout_cpu_eps0.prof` — cProfile dump (gitignored under runs/)
+

@@ -2337,6 +2337,61 @@ The server architecture only earns its keep when:
 Worth re-testing on Modal A10G if/when we want to push past the current
 ~10 upd/s ceiling on the learner side, but **not implementing for M1 now**.
 
+### Seventh pass — end-to-end distributed n_actors sweep on M1 (paper-spec, MPS learner)
+
+Up to here we've benchmarked actor and inference in isolation. This pass runs the
+real `train_distributed` orchestrator (CPU actors + MPS learner + mp.Queue +
+weight publish/sync) at varying `n_actors` and reads steady-state upd/s from
+each run's `metrics_learner.jsonl`.
+
+Sweep config (`ml/scripts/util/sweep_distributed_n_actors.py`):
+- paper-spec net (LSTM 256 + MLP 1024×6), batch_size=512, MPS learner
+- `buffer_min_size=500` (lower than prod 5000 so warmup is short and fair across N)
+- `log_every_updates=50` so we get ≥4 metric rows per run for steady-state diff
+- `total_updates_target=300`
+
+| N | wall (s) | warmup (s) | steady upd/s | last upd/s | drained / log |
+|--:|---------:|-----------:|-------------:|-----------:|--------------:|
+| **1** |   62.2 |       19.4 |     **6.70** |       5.29 |             3 |
+| 2 |     60.4 |       14.5 |         6.17 |       5.46 |             4 |
+| 4 |     85.3 |       15.2 |         5.39 |       4.87 |             8 |
+| 6 |    103.8 |       21.4 |         3.29 |       3.08 |            16 |
+| 8 |    171.2 |       26.0 |         2.07 |       2.05 |            21 |
+
+**N=1 is the optimum on M1 paper-spec + MPS** — and N=8 is **3× slower** than N=1.
+This is the opposite of the actor-only scaling result and looks counterintuitive
+until you consider the orchestration:
+
+- **Per-update walltime ceiling on M1 MPS** is ~150 ms for paper-spec (4 positions ×
+  forward+backward+optimizer step at batch=512). That puts the learner ceiling
+  around 6–7 upd/s regardless of buffer state.
+- The learner is **CPU-dispatch bound, not GPU-bound**: each MPS op needs a CPU
+  thread to dispatch and (currently) a per-`.to(device)` sync per H2D copy in
+  `collate` (the *training* collate function — we only patched `collate_encoded`).
+- M1 has 8 P-cores. Each actor pins `torch.set_num_threads(1)` but its forward
+  still saturates a P-core. With N≥4 the learner process is starved of CPU
+  cycles to *issue* MPS work, so wall-time per update grows.
+- Confirmed by the per-row upd/s in `n1/learner.log`: 2.57 → 5.29 upd/s as the
+  run progressed (still ramping at update=300), vs N=8: 1.83 → 2.05 (stable).
+  N=1 has more headroom than the 6.70 we measured.
+
+The buffer side tells the same story: `drained` per 50 updates grows from 3
+(N=1) to 21 (N=8) — actors push more samples to the queue, but the learner
+chews through them slower.
+
+### What this means for the deployment
+
+| Platform | n_actors recommendation | Why |
+|---|---|---|
+| **M1 (paper-spec, MPS learner)** | **1 (or 2)** | CPU-dispatch contention dominates above N=2; learner ceiling ≈ 7 upd/s |
+| **Modal A10G (paper-spec, CUDA learner)** | **8** (current) | 32 vCPUs available, no CPU-dispatch contention until much higher N. Confirmed earlier in §43 (24 actors regressed to 6.4 upd/s, 8 actors hit 9.1) |
+
+The two answers diverge because Modal has 4× the CPU and a separate CUDA
+backend that doesn't share CPU dispatch with actors. The non_blocking H2D
+fix in `collate_encoded` doesn't help the learner side (different function:
+`collate`); fixing that on the *training* collate is the next free win on
+either platform.
+
 ### Files added
 
 - [profile_guanzero_rollout.py](ml/scripts/util/profile_guanzero_rollout.py) —
@@ -2345,5 +2400,6 @@ Worth re-testing on Modal A10G if/when we want to push past the current
 - [bench_actor_scaling.py](ml/scripts/util/bench_actor_scaling.py) — N-actor wall-clock sweep
 - [bench_collate.py](ml/scripts/util/bench_collate.py) — collate variant microbench
 - [bench_inference_server.py](ml/scripts/util/bench_inference_server.py) — cross-actor batching server vs baseline
+- [sweep_distributed_n_actors.py](ml/scripts/util/sweep_distributed_n_actors.py) — end-to-end orchestrator sweep
 - `ml/runs/profile/rollout_cpu_eps0.prof` — cProfile dump (gitignored under runs/)
 

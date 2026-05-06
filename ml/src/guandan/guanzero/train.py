@@ -78,6 +78,25 @@ class TrainConfig:
     use_bf16_learner: bool = False     # BF16 autocast in Learner.update (cuda only)
     compile_mode: str = "default"      # passes to torch.compile(mode=...)
 
+    # ── Shared GPU inference server (Phase 4+) ────────────
+    # When true, actors send inference requests to a shared GPU server instead
+    # of running local CPU q-nets. Server lives in its own subprocess on the
+    # same GPU as the learner.
+    use_inference_server:               bool  = False
+    inference_device:                   str   = "cuda"   # "cpu" for M1 dev/test
+    inference_batch_max_requests:       int   = 32
+    inference_batch_max_action_rows:    int   = 4096
+    inference_batch_timeout_ms:         float = 5.0      # bench §45 sweet spot
+    inference_n_slots:                  int   = 512
+    inference_max_actions:              int   = 320      # match max_legal_actions
+    inference_timeout_s:                float = 10.0     # actor-side wait timeout
+    inference_weight_refresh_s:         float = 5.0      # disk-based refresh interval
+
+    # ── Replay-ratio controller (Phase 5) ─────────────────
+    target_replay_ratio:                float = 0.0      # 0 = disabled
+    max_replay_ratio:                   float = 4.0
+    max_throttle_sleep_s:               float = 0.05
+
     @property
     def resolved_run_dir(self) -> str:
         if self.run_dir:

@@ -93,7 +93,7 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
     (run_dir / "config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
 
     logger, log_path = _setup_logging(run_dir)
-    logger.info("train_distributed: %d actors, target %d updates", cfg.n_actors, cfg.checkpoint_every_updates)
+    logger.info("train_distributed: %d actors, target %d updates", cfg.n_actors, cfg.total_updates_target)
     if resume_checkpoint:
         logger.info("resuming from checkpoint: %s", resume_checkpoint)
 
@@ -116,11 +116,54 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
     _wait_for_weights(weight_dir, timeout=60)
     tqdm.write("  Initial weights ready — starting actors")
 
+    # ── Optional inference server ─────────────────────────
+    inf_bufs = inf_meta = inf_server_proc = None
+    inference_args = None
+    if cfg.use_inference_server:
+        from . import inference_server as _isrv
+
+        inf_bufs, inf_meta = _isrv.allocate_shared_buffers(
+            num_slots   = cfg.inference_n_slots,
+            max_actions = cfg.inference_max_actions,
+            n_actors    = cfg.n_actors,
+            ctx         = ctx,
+        )
+        q_net_kwargs = {
+            "hidden_lstm":            cfg.hidden_lstm,
+            "hidden_mlp":             cfg.hidden_mlp,
+            "n_mlp_layers":           cfg.n_mlp_layers,
+            "dropout":                cfg.dropout,
+            "use_oracle_others_hand": cfg.use_oracle_others_hand,
+        }
+        inf_server_proc = ctx.Process(
+            target=_isrv.shared_server_loop_entry,
+            args=(
+                cfg_dict, q_net_kwargs, inf_meta,
+                inf_bufs.free_slots, inf_bufs.request_queue, inf_bufs.events,
+                stop_event,
+            ),
+            kwargs={"weight_dir": weight_dir},
+            daemon=True,
+            name="inference_server",
+        )
+        inf_server_proc.start()
+        tqdm.write(f"  Inference server started (pid={inf_server_proc.pid}) "
+                   f"on device={cfg.inference_device}")
+
+        inference_args = {
+            "meta":            inf_meta,
+            "free_slots":      inf_bufs.free_slots,
+            "request_queue":   inf_bufs.request_queue,
+            "events":          inf_bufs.events,
+            "weights_version": None,    # Phase 5 will wire the shared-mem version
+        }
+
     actor_procs = []
     for actor_id in range(cfg.n_actors):
         p = ctx.Process(
             target=actor_loop,
             args=(actor_id, cfg_dict, sample_queue, stop_event, weight_dir),
+            kwargs={"inference_args": inference_args},
             daemon=True,
             name=f"actor-{actor_id}",
         )
@@ -129,7 +172,10 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
 
     sep = "=" * 68
     tqdm.write(sep)
-    tqdm.write(f"  GuanZero distributed  |  {cfg.n_actors} actors + 1 learner")
+    if cfg.use_inference_server:
+        tqdm.write(f"  GuanZero distributed  |  {cfg.n_actors} actors + 1 learner + 1 inference server")
+    else:
+        tqdm.write(f"  GuanZero distributed  |  {cfg.n_actors} actors + 1 learner")
     tqdm.write(f"  Log → {log_path}")
     tqdm.write(sep)
 
@@ -159,6 +205,11 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
         for p in actor_procs:
             p.join(timeout=10)
         learner_proc.join(timeout=15)
+        if inf_server_proc is not None:
+            inf_server_proc.join(timeout=15)
+        if inf_bufs is not None:
+            from . import inference_server as _isrv
+            _isrv.release_shared_buffers(inf_bufs, unlink=True)
         bar.close()
 
     tqdm.write(sep)
@@ -194,7 +245,7 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
             "hidden_mlp": 128,
             "n_mlp_layers": 3,
             "buffer_min_size": 50,
-            "total_updates_target": 200,
+            "total_updates_target": 500,
             "checkpoint_every_updates": 100,
             "log_every_updates": 20,
             "publish_interval_updates": 10,

@@ -38,6 +38,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import queue
+import threading
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -901,6 +902,7 @@ def shared_server_loop_entry(
     weights_buf=None,
     weights_version=None,
     weight_specs=None,
+    weight_dir=None,                   # Phase 4: disk-based weight refresh
 ) -> None:
     """Top-level shared-mem server entry point. Picklable for spawn."""
     import torch
@@ -908,11 +910,12 @@ def shared_server_loop_entry(
 
     torch.set_num_threads(1)
 
-    cfg_device       = cfg_dict.get("inference_device", "cpu")
-    max_requests     = cfg_dict.get("inference_batch_max_requests", 32)
-    max_action_rows  = cfg_dict.get("inference_batch_max_action_rows", 4096)
-    timeout_ms       = cfg_dict.get("inference_batch_timeout_ms", 1.0)
-    use_bf16         = cfg_dict.get("use_bf16_learner", False) and cfg_device == "cuda"
+    cfg_device              = cfg_dict.get("inference_device", "cpu")
+    max_requests            = cfg_dict.get("inference_batch_max_requests", 32)
+    max_action_rows         = cfg_dict.get("inference_batch_max_action_rows", 4096)
+    timeout_ms              = cfg_dict.get("inference_batch_timeout_ms", 5.0)
+    weight_refresh_s        = cfg_dict.get("inference_weight_refresh_s", 5.0)
+    use_bf16                = cfg_dict.get("use_bf16_learner", False) and cfg_device == "cuda"
 
     bufs = attach_shared_buffers(
         meta=meta,
@@ -941,9 +944,52 @@ def shared_server_loop_entry(
         weights_version=weights_version,
         weight_specs=weight_specs,
     )
+
+    # ── Phase 4 disk-based weight refresh thread ──
+    # Polls weight_dir/latest.txt on a background thread; reloads q-nets when
+    # the on-disk version is newer than what the server holds. Keeps the
+    # shared-mem path open for Phase 5 (which will short-circuit this).
+    refresh_stop = threading.Event()
+
+    def _disk_refresh_loop():
+        from pathlib import Path
+        from .learner import load_latest_weights
+        wd = Path(weight_dir) if weight_dir else None
+        last_version = -1
+        while not stop_event.is_set() and not refresh_stop.is_set():
+            try:
+                if wd is not None:
+                    ver, state_dicts = load_latest_weights(wd)
+                    if ver is not None and ver > last_version:
+                        for p in range(4):
+                            sd = state_dicts[p]
+                            q_nets[p].load_state_dict(sd)
+                            q_nets[p].to(cfg_device).eval()
+                        # Bump server's local_version so future responses tag samples.
+                        server._local_version = ver
+                        last_version = ver
+                        logger.info("server reloaded weights from disk: version=%d", ver)
+            except Exception as e:
+                logger.warning("disk weight refresh failed: %s", e)
+            # Sleep with stop check
+            for _ in range(int(weight_refresh_s * 10)):
+                if stop_event.is_set() or refresh_stop.is_set():
+                    break
+                time.sleep(0.1)
+
+    if weight_dir is not None:
+        refresher = threading.Thread(target=_disk_refresh_loop, daemon=True,
+                                     name="server_disk_refresh")
+        refresher.start()
+    else:
+        refresher = None
+
     try:
         server.server_loop()
     finally:
+        refresh_stop.set()
+        if refresher is not None:
+            refresher.join(timeout=2.0)
         # Detach shared-mem in this child; parent unlinks at shutdown.
         release_shared_buffers(bufs, unlink=False)
 

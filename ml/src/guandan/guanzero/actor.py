@@ -14,6 +14,7 @@ from typing import Mapping
 import numpy as np
 import torch
 
+from ..cards import ComboType
 from ..combos import Combo
 from ..game import GuanDanEnv
 from ..pvguan.legal_utils import dedup_strategic
@@ -31,12 +32,19 @@ _KEYS = (
 )
 
 
+_PASS = Combo(ComboType.PASS, 0, [])
+
+
 def _select_legal(env: GuanDanEnv, player: int, max_legal: int) -> list[Combo]:
     legal = env.legal_moves(player)
     legal = dedup_strategic(legal)
     if max_legal and len(legal) > max_legal:
         keep = _cap_legal(env, player, legal, max_legal)
         legal = [legal[i] for i in keep]
+    # _cap_legal preserves PASS, but guarantee it here so callers never see
+    # an empty list when responding (leading with empty hand is impossible).
+    if not env.is_leading() and not any(m.type == ComboType.PASS for m in legal):
+        legal.append(_PASS)
     return legal
 
 
@@ -52,15 +60,21 @@ def _argmax_q(
 
 
 def play_episode(
-    q_nets: Mapping[int, GuanZeroQNet],
+    q_nets: Mapping[int, GuanZeroQNet] | None,
     encoder: StateActionEncoder,
     epsilon: float,
     max_legal_actions: int = 128,
     seed: int | None = None,
     device: torch.device | str = "cpu",
     gamma: float = 1.0,
+    inference_client=None,
 ) -> list[TrainSample]:
-    """Roll one self-play episode, return per-step MC training samples."""
+    """Roll one self-play episode, return per-step MC training samples.
+
+    If ``inference_client`` is provided, action selection routes through the
+    shared GPU inference server and ``q_nets`` may be None. Otherwise the
+    legacy local-CPU path runs (q_nets must be provided).
+    """
     device = torch.device(device)
     env = GuanDanEnv()
     env.reset(seed=seed)
@@ -70,15 +84,12 @@ def play_episode(
     while not env.done:
         p = env.current_player
         legal = _select_legal(env, p, max_legal_actions)
-        if not legal:
-            # Defensive: an active player should always have at least PASS
-            # as a response. If we somehow get here, end the episode.
-            break
-
         encoded_list = encoder.encode_all(env, p, legal)
 
         if random.random() < epsilon:
             idx = random.randrange(len(legal))
+        elif inference_client is not None:
+            idx, _server_version = inference_client.submit(p, encoded_list)
         else:
             net = q_nets[p]
             idx = _argmax_q(net, encoded_list, device)
@@ -86,7 +97,7 @@ def play_episode(
         trajectory.append({"player": p, "encoded": encoded_list[idx]})
         env.step(legal[idx])
 
-    rewards = env.get_rewards() if env.done else {p: 0.0 for p in range(4)}
+    rewards = env.get_rewards()
     return compute_mc_returns(trajectory, rewards, gamma=gamma)
 
 
@@ -116,12 +127,17 @@ def actor_loop(
     sample_queue,          # multiprocessing.Queue
     stop_event,            # multiprocessing.Event
     weight_dir:   Path,
+    inference_args=None,   # Optional[dict] — see _build_inference_client below
 ) -> None:
     """Persistent actor process for faithful actor-learner DMC.
 
     Runs self-play continuously, serializes samples to the shared queue, and
     periodically syncs local Q-net copies from the learner's published weights.
     Top-level module function — must be picklable for 'spawn' start method.
+
+    If ``inference_args`` is provided (Phase 4+), action selection routes
+    through a shared GPU inference server. The actor skips local q-net
+    initialization and weight syncing entirely.
     """
     # Lazy import — runs in a spawned child; full package re-imported from scratch
     from .train import TrainConfig, _epsilon
@@ -133,15 +149,21 @@ def actor_loop(
                          if k in {f.name for f in dataclasses.fields(TrainConfig)}})
 
     encoder  = StateActionEncoder(use_oracle_others_hand=cfg.use_oracle_others_hand)
-    q_nets   = init_position_nets(
-        hidden_lstm=cfg.hidden_lstm,
-        hidden_mlp=cfg.hidden_mlp,
-        n_mlp_layers=cfg.n_mlp_layers,
-        dropout=cfg.dropout,
-        use_oracle_others_hand=cfg.use_oracle_others_hand,
-    )
-    for net in q_nets.values():
-        net.eval()
+
+    # Inference path: server-backed (Phase 4+) vs local CPU q-nets (legacy)
+    inference_client = _build_inference_client(actor_id, inference_args, cfg) if inference_args else None
+    if inference_client is None:
+        q_nets = init_position_nets(
+            hidden_lstm=cfg.hidden_lstm,
+            hidden_mlp=cfg.hidden_mlp,
+            n_mlp_layers=cfg.n_mlp_layers,
+            dropout=cfg.dropout,
+            use_oracle_others_hand=cfg.use_oracle_others_hand,
+        )
+        for net in q_nets.values():
+            net.eval()
+    else:
+        q_nets = None
 
     weight_dir    = Path(weight_dir)
     local_version = -1
@@ -155,8 +177,9 @@ def actor_loop(
     rng = random.Random(cfg.seed + actor_id * 10_000)
 
     while not stop_event.is_set():
-        # Periodic weight sync — before every new episode batch
-        if episode_count % cfg.sync_interval_episodes == 0:
+        # Periodic weight sync — only on the local-CPU path; the inference
+        # server handles its own weight refresh.
+        if q_nets is not None and episode_count % cfg.sync_interval_episodes == 0:
             local_version = maybe_sync_weights(q_nets, weight_dir, local_version)
 
         eps  = _epsilon(episode_count + actor_id, cfg)
@@ -170,6 +193,7 @@ def actor_loop(
             seed=seed,
             device="cpu",
             gamma=cfg.gamma,
+            inference_client=inference_client,
         )
         episode_count += 1
 
@@ -194,6 +218,32 @@ def actor_loop(
             buf_dicts.clear()
             buf_players.clear()
             buf_returns.clear()
+
+
+def _build_inference_client(actor_id: int, inference_args: dict, cfg) -> "object":
+    """Construct a SharedInferenceClient inside the actor subprocess.
+
+    `inference_args` must include the SharedBufferMeta + the queue/event
+    handles passed by the parent. The actor reattaches to the shared-memory
+    blocks here (since spawn-context children don't inherit mappings).
+    """
+    from .inference_server import (
+        SharedInferenceClient,
+        attach_shared_buffers,
+    )
+    bufs = attach_shared_buffers(
+        meta           = inference_args["meta"],
+        free_slots     = inference_args["free_slots"],
+        request_queue  = inference_args["request_queue"],
+        events         = inference_args["events"],
+        weights_version= inference_args.get("weights_version"),
+    )
+    return SharedInferenceClient(
+        actor_id    = actor_id,
+        bufs        = bufs,
+        timeout_s   = cfg.inference_timeout_s,
+        max_actions = cfg.inference_max_actions,
+    )
 
 
 __all__ = ["play_episode", "maybe_sync_weights", "actor_loop"]

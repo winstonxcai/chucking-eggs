@@ -23,7 +23,7 @@ from typing import Mapping
 import torch
 import torch.nn.functional as F
 
-from .buffer import ReplayBuffer, collate
+from .buffer import ReplayBuffer
 from .q_network import GuanZeroQNet, init_position_nets
 
 
@@ -89,31 +89,22 @@ class Learner:
         single synchronize() to avoid per-position CPU stalls.
         """
         prof = self.profile
-        # --- sample (CPU): random.sample + list lookups ---
+        # --- sample + H2D in one shot (contiguous fancy-indexing + async H2D) ---
         if prof:
             t0 = time.perf_counter()
-        sample_lists: dict[int, list] = {}
+        batches: dict[int, tuple] = {}
         for p in range(4):
             if buffer.size(p) < min_buffer_size:
                 continue
-            samples = buffer.sample_for_player(p, batch_size)
-            if samples:
-                sample_lists[p] = samples
-        if prof:
-            self._phase_record("sample", time.perf_counter() - t0)
-
-        if not sample_lists:
-            return {}
-
-        # --- collate (CPU stack + H2D copy, async) ---
-        if prof:
-            t0 = time.perf_counter()
-        batches: dict[int, tuple] = {
-            p: collate(sl, device=self.device) for p, sl in sample_lists.items()
-        }
+            res = buffer.sample_batch_for_player(p, batch_size, device=self.device)
+            if res is not None:
+                batches[p] = res
         if prof:
             self._phase_sync()
-            self._phase_record("collate+h2d", time.perf_counter() - t0)
+            self._phase_record("sample+h2d", time.perf_counter() - t0)
+
+        if not batches:
+            return {}
 
         # --- forward (GPU compute) ---
         if prof:

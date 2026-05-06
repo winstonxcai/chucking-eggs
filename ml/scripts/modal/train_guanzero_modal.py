@@ -53,6 +53,7 @@ def train_remote(
     config_path: str,
     n_actors:    int | None,
     device:      str,
+    profile:     bool = False,
 ) -> str:
     import os
     import subprocess
@@ -63,8 +64,7 @@ def train_remote(
     env["GUANZERO_STREAM_LOGS"] = "1"
     # Keep weight publish/sync IO off the network-attached Modal volume.
     env["GUANZERO_WEIGHT_DIR"] = "/tmp/guanzero_weights"
-    # Forward profiling flag if set locally
-    if os.environ.get("GUANZERO_PROFILE_PHASES") == "1":
+    if profile:
         env["GUANZERO_PROFILE_PHASES"] = "1"
     # Pin BLAS thread pools to 1 — actor processes already set torch.set_num_threads(1)
     # but numpy/MKL/OpenBLAS are separate and would otherwise contend across vCPUs.
@@ -100,6 +100,7 @@ def main(
     n_actors: int | None = None,
     device: str = "cuda",
     smoke: bool = False,
+    profile: bool = False,
 ) -> None:
     if smoke:
         updates = 2000
@@ -111,5 +112,6 @@ def main(
         config_path=config_path,
         n_actors=n_actors,
         device=device,
+        profile=profile,
     )
     print(f"Final checkpoint: {out}")

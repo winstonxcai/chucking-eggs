@@ -142,7 +142,10 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
                 inf_bufs.free_slots, inf_bufs.request_queue, inf_bufs.events,
                 stop_event,
             ),
-            kwargs={"weight_dir": weight_dir},
+            kwargs={
+                "weight_dir":      weight_dir,
+                "server_log_path": str(run_dir / "inference_server.log"),
+            },
             daemon=True,
             name="inference_server",
         )

@@ -933,29 +933,50 @@ def shared_server_loop_entry(
     weights_version=None,
     weight_specs=None,
     weight_dir=None,                   # Phase 4: disk-based weight refresh
+    server_log_path=None,              # Optional[Path] — server writes its own log here
 ) -> None:
     """Top-level shared-mem server entry point. Picklable for spawn."""
     import os
     import sys
     import logging as _logging
     import traceback
+    from pathlib import Path
     import torch
     from .q_network import init_position_nets
 
-    # Raw print so we can see server startup even if logger setup fails
-    print("[server-entry] starting; cfg_device=" + str(cfg_dict.get("inference_device")),
-          flush=True)
+    # Server-side log file on the run volume (so we can pull it after a run).
+    # Spawn-context children's stdout/stderr don't reliably propagate to
+    # Modal's log capture, so we write our own file.
+    log_fp = None
+    if server_log_path is not None:
+        Path(server_log_path).parent.mkdir(parents=True, exist_ok=True)
+        log_fp = open(server_log_path, "w", buffering=1)  # line-buffered
 
-    # Wire server logger to stdout so its messages reach `modal run` output
-    # alongside the learner's. Mirrors the GUANZERO_STREAM_LOGS hook used by
-    # the learner subprocess (see learner.py).
+    def _log(msg: str) -> None:
+        line = f"[server] {time.strftime('%H:%M:%S')} {msg}"
+        try:
+            print(line, flush=True)
+        except Exception:
+            pass
+        if log_fp is not None:
+            try:
+                log_fp.write(line + "\n")
+            except Exception:
+                pass
+
+    _log("entry reached; cfg_device=" + str(cfg_dict.get("inference_device")))
+
+    # Route the module logger through our _log() so existing logger.info calls
+    # also land in the server log file.
     _logging.getLogger("guanzero.inference_server").handlers.clear()
-    # Always route to stdout in this subprocess so failures are visible.
-    _h = _logging.StreamHandler(sys.stdout)
-    _h.setFormatter(_logging.Formatter(
-        "%(asctime)s [%(levelname)-5s] [server] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    ))
+    class _LogToFile(_logging.Handler):
+        def emit(self, record):
+            try:
+                _log(self.format(record))
+            except Exception:
+                pass
+    _h = _LogToFile()
+    _h.setFormatter(_logging.Formatter("%(message)s"))
     _h.setLevel(_logging.INFO)
     _slog = _logging.getLogger("guanzero.inference_server")
     _slog.addHandler(_h)
@@ -971,7 +992,7 @@ def shared_server_loop_entry(
         weight_refresh_s        = cfg_dict.get("inference_weight_refresh_s", 5.0)
         use_bf16                = cfg_dict.get("use_bf16_learner", False) and cfg_device == "cuda"
 
-        print(f"[server-entry] attaching shared buffers...", flush=True)
+        _log("attaching shared buffers...")
         bufs = attach_shared_buffers(
             meta=meta,
             free_slots=free_slots,
@@ -980,17 +1001,18 @@ def shared_server_loop_entry(
             weights_version=weights_version,
         )
 
-        print(f"[server-entry] building q_nets and moving to {cfg_device}...", flush=True)
+        _log(f"building q_nets and moving to {cfg_device}...")
         q_nets = init_position_nets(**q_net_kwargs)
         if initial_state_dicts is not None:
             for p in range(4):
                 q_nets[p].load_state_dict(initial_state_dicts[p])
         for p in range(4):
             q_nets[p] = q_nets[p].to(cfg_device).eval()
-        print(f"[server-entry] q_nets ready on {cfg_device}", flush=True)
+        _log(f"q_nets ready on {cfg_device}")
     except Exception as e:
-        print(f"[server-entry] SETUP FAILED: {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc()
+        _log(f"SETUP FAILED: {type(e).__name__}: {e}")
+        for line in traceback.format_exc().splitlines():
+            _log(f"  {line}")
         raise
 
     server = SharedInferenceServer(
@@ -1047,20 +1069,24 @@ def shared_server_loop_entry(
     else:
         refresher = None
 
-    print("[server-entry] entering server_loop", flush=True)
+    _log("entering server_loop")
     try:
         server.server_loop()
     except Exception as e:
-        print(f"[server-entry] server_loop crashed: {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc()
+        _log(f"server_loop crashed: {type(e).__name__}: {e}")
+        for line in traceback.format_exc().splitlines():
+            _log(f"  {line}")
         raise
     finally:
-        print("[server-entry] server_loop exited; cleaning up", flush=True)
+        _log("server_loop exited; cleaning up")
         refresh_stop.set()
         if refresher is not None:
             refresher.join(timeout=2.0)
         # Detach shared-mem in this child; parent unlinks at shutdown.
         release_shared_buffers(bufs, unlink=False)
+        if log_fp is not None:
+            try: log_fp.close()
+            except Exception: pass
 
 
 __all__ = [

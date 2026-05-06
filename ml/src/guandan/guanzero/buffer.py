@@ -86,6 +86,11 @@ def collate(samples: list[TrainSample], device: str | torch.device = "cpu") -> t
 ]:
     """Stack a list of TrainSample dicts into batched torch tensors.
 
+    ``non_blocking=True`` matters for the learner side too — without it MPS
+    syncs after every `.to(device)` call (10 H2D copies per update × 4
+    positions = 40 forced syncs/update). The downstream forward+backward
+    runs on the same stream, so ordering is preserved.
+
     Note on pin_memory: when the learner runs the model under
     ``with torch.cuda.stream(s)`` the H2D copy and the compute serialize on
     the same stream, so non_blocking has no overlap to exploit. Pinning
@@ -95,9 +100,9 @@ def collate(samples: list[TrainSample], device: str | torch.device = "cpu") -> t
     batch: dict[str, torch.Tensor] = {}
     for k in keys:
         arr = np.stack([s.encoded[k] for s in samples], axis=0)
-        batch[k] = torch.from_numpy(arr).to(device)
+        batch[k] = torch.from_numpy(arr).to(device, non_blocking=True)
     targets_arr = np.asarray([s.mc_return for s in samples], dtype=np.float32)
-    targets = torch.from_numpy(targets_arr).to(device)
+    targets = torch.from_numpy(targets_arr).to(device, non_blocking=True)
     return batch, targets
 
 

@@ -1,7 +1,11 @@
 # GuanZero M0 — faithful persistent actor-learner DMC
-# Tuned for M1 Pro (6 perf cores). Adjust n_actors for your machine.
+# Tuned for M1 Pro (8 P-cores, paper-spec net, MPS learner). n_actors=1 is the
+# optimum (LOGBOOK §43, end-to-end sweeps): N≥4 starves the MPS-dispatching
+# learner of CPU. With n_actors=1, BLAS thread limit is also a no-op — let torch
+# pick the default; explicit OMP/MKL/VECLIB_MAX overrides do not help.
+# Steady-state ~8 upd/s after the non_blocking H2D fix in collate{,_encoded}.
 
-n_actors: 6
+n_actors: 1
 sync_interval_episodes: 20
 actor_push_batch_size: 512
 sample_queue_maxsize: 64
@@ -23,9 +27,9 @@ gamma: 1.0
 batch_size: 512
 buffer_capacity_per_player: 50000
 buffer_min_size: 5000
-epsilon_start: 0.1
+epsilon_start: 0.01
 epsilon_final: 0.01
-epsilon_decay_episodes: 15000
+epsilon_decay_episodes: 0
 max_legal_actions: 128
 use_oracle_others_hand: true
 

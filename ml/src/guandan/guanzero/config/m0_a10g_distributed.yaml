@@ -22,7 +22,7 @@ dropout: 0.0
 # Training
 lr: 1.0e-4
 gamma: 1.0
-batch_size: 4096
+batch_size: 2048
 buffer_capacity_per_player: 100000
 buffer_min_size: 5000
 epsilon_start: 0.1

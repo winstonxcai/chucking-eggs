@@ -227,12 +227,12 @@ def learner_loop(
         use_oracle_others_hand=cfg.use_oracle_others_hand,
     )
     compile_mode = getattr(cfg, "compile_mode", "default") or "default"
-    # Per-stream CUDA graph capture: with mode="reduce-overhead", PyTorch's
-    # cudagraph_trees backend captures one graph per (compiled_fn, input_shape).
-    # Capture happens on the active stream during the first warmup calls. Since
-    # update() wraps each net's call in torch.cuda.stream(streams[p]), each
-    # net's graph gets captured on its own stream — letting all 4 replay in
-    # parallel. Requires PyTorch 2.2+ for stable cudagraph_trees behavior.
+    if compile_mode == "reduce-overhead" and cfg.device == "cuda":
+        # Empirically (LOGBOOK §44): per-stream cudagraph_trees did NOT compose
+        # with multi-stream parallelism — graphs share a CUDA memory pool that
+        # serializes them. "default" + streams gave the best throughput.
+        compile_mode = "default"
+        logger.info("compile_mode downgraded reduce-overhead→default for multi-stream positions")
     for p, net in q_nets.items():
         q_nets[p] = torch.compile(net, mode=compile_mode)
     learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device,

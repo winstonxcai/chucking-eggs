@@ -1,9 +1,37 @@
 """Faithful persistent actor-learner DMC orchestrator.
 
-Spawns N CPU actor processes and 1 learner process communicating via a
-bounded multiprocessing.Queue. Actors run episodes continuously; the
-learner drains samples, updates global Q-nets, and publishes weights
-atomically to disk. Actors sync periodically from disk.
+Architecture
+────────────
+
+  ┌────────────────────────────────────────────────────────────────┐
+  │  Main process  (train_distributed)                             │
+  │  Spawns learner + N actors; polls metrics_learner.jsonl (tqdm) │
+  │  Sets stop_event → joins all procs on done / KeyboardInterrupt │
+  └──────────┬─────────────────────────────────────┬──────────────┘
+             │ spawn                               │ spawn ×N
+             ▼                                     ▼
+  ┌─────────────────────────┐     ┌──────────────────────────────┐
+  │  Learner  (GPU/CPU)      │     │  Actor-i  (CPU, no grad)      │
+  │                          │     │                               │
+  │  Q-nets[0..3] compiled   │     │  Q-nets[0..3]  local copy     │
+  │  ReplayBuffer  per-pos   │     │  loop:                        │
+  │  loop:                   │     │    play_episode() → samples   │
+  │    drain queue → buffer  │◄────│    accumulate actor_push_batch│
+  │    MSE update ×4 pos     │     │    queue.put(stacked_msg)     │
+  │    every P updates:      │     │    every K episodes:          │
+  │      publish weights─────┼────►│      read latest.txt          │
+  │      (atomic os.replace) │     │      load weights_{ver}.pt    │
+  │    every C updates:      │     └──────────────────────────────┘
+  │      save checkpoint     │
+  │    every L updates:      │     weight_dir/  (disk or /tmp on Modal)
+  │      append metrics.jsonl│      ├── latest.txt       ← atomic rename
+  └─────────────────────────┘      └── weights_{ver}.pt  ← atomic rename
+
+  Communication:
+    Actors → Learner : mp.Queue (bounded, pre-stacked numpy arrays)
+    Learner → Actors : filesystem poll  (latest.txt + weights_{ver}.pt)
+    Main    → all    : mp.Event  (stop_event)
+    Learner → Main   : metrics_learner.jsonl  (progress polling)
 """
 
 from __future__ import annotations
@@ -107,14 +135,16 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
 
     target_updates = cfg.total_updates_target or cfg.checkpoint_every_updates
     resume_updates = _read_update_count(run_dir)  # 0 if fresh run, >0 if resumed
-    bar = tqdm(total=target_updates, initial=resume_updates,
-               desc="learner updates", unit="upd", dynamic_ncols=True)
+    bs = cfg.batch_size
+    bar = tqdm(total=target_updates * bs, initial=resume_updates * bs,
+               desc="learner", unit="samp", unit_scale=True, dynamic_ncols=True)
     last_count = resume_updates
     try:
         while True:
             time.sleep(2)
             count = _read_update_count(run_dir)
-            bar.update(min(count - last_count, target_updates - last_count))
+            delta = min(count - last_count, target_updates - last_count)
+            bar.update(delta * bs)
             last_count = count
             if not learner_proc.is_alive():
                 tqdm.write("  Learner exited — stopping")

@@ -89,7 +89,7 @@ class TrainConfig:
     inference_batch_timeout_ms:         float = 5.0      # bench §45 sweet spot
     inference_n_slots:                  int   = 512
     inference_max_actions:              int   = 320      # match max_legal_actions
-    inference_timeout_s:                float = 10.0     # actor-side wait timeout
+    inference_timeout_s:                float = 60.0     # actor-side wait timeout
     inference_weight_refresh_s:         float = 5.0      # disk-based refresh interval
 
     # ── Replay-ratio controller (Phase 5) ─────────────────

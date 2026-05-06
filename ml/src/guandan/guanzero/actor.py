@@ -176,6 +176,7 @@ def actor_loop(
     buf_returns: list[float] = []
     rng = random.Random(cfg.seed + actor_id * 10_000)
 
+    n_inference_timeouts = 0
     while not stop_event.is_set():
         # Periodic weight sync — only on the local-CPU path; the inference
         # server handles its own weight refresh.
@@ -185,16 +186,35 @@ def actor_loop(
         eps  = _epsilon(episode_count + actor_id, cfg)
         seed = rng.randint(0, 10_000_000)
 
-        samples = play_episode(
-            q_nets=q_nets,
-            encoder=encoder,
-            epsilon=eps,
-            max_legal_actions=cfg.max_legal_actions,
-            seed=seed,
-            device="cpu",
-            gamma=cfg.gamma,
-            inference_client=inference_client,
-        )
+        try:
+            samples = play_episode(
+                q_nets=q_nets,
+                encoder=encoder,
+                epsilon=eps,
+                max_legal_actions=cfg.max_legal_actions,
+                seed=seed,
+                device="cpu",
+                gamma=cfg.gamma,
+                inference_client=inference_client,
+            )
+        except Exception as e:
+            # InferenceTimeoutError or any other transient failure: skip this
+            # episode and try again. Actor processes that crash here are gone
+            # for the rest of the run — surviving the timeout keeps the buffer
+            # producer pipeline alive.
+            from .inference_server import InferenceTimeoutError
+            if isinstance(e, InferenceTimeoutError):
+                n_inference_timeouts += 1
+                if n_inference_timeouts <= 3 or n_inference_timeouts % 10 == 0:
+                    print(f"[actor-{actor_id}] inference timeout #{n_inference_timeouts}: {e}",
+                          flush=True)
+                # Brief sleep before retrying so we don't busy-loop if the server
+                # is wedged. stop_event check below caps it.
+                if stop_event.wait(timeout=0.5):
+                    break
+                continue
+            # Anything else: re-raise (don't hide real bugs)
+            raise
         episode_count += 1
 
         for s in samples:

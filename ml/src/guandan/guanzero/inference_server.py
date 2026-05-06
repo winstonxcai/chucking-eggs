@@ -752,6 +752,9 @@ class SharedInferenceServer:
 
     def server_loop(self) -> None:
         logger.info("SharedInferenceServer started on device=%s", self.device)
+        first_batch_seen = False
+        last_metric_log = time.perf_counter()
+        last_metric_snapshot = dict(self.metrics)
         try:
             while not self.stop_event.is_set():
                 self._maybe_reload_weights()
@@ -759,9 +762,36 @@ class SharedInferenceServer:
                 if not batch:
                     continue
                 self._process_batch(batch)
+                if not first_batch_seen:
+                    logger.info(
+                        "first batch processed: requests=%d rows=%d forward_ms=%.2f",
+                        len(batch),
+                        sum(d.n_actions for d in batch),
+                        self.metrics["forward_ms_sum"],
+                    )
+                    first_batch_seen = True
+                # Periodic metric summary every ~5s so we can see contention live
+                now = time.perf_counter()
+                if now - last_metric_log >= 5.0:
+                    dt = now - last_metric_log
+                    d_b = self.metrics["n_batches"]      - last_metric_snapshot["n_batches"]
+                    d_r = self.metrics["n_requests"]     - last_metric_snapshot["n_requests"]
+                    d_a = self.metrics["n_action_rows"]  - last_metric_snapshot["n_action_rows"]
+                    d_f = self.metrics["forward_ms_sum"] - last_metric_snapshot["forward_ms_sum"]
+                    rps  = d_r / dt if dt > 0 else 0
+                    rows = d_a / dt if dt > 0 else 0
+                    avg_b = d_r / d_b if d_b else 0
+                    avg_f = d_f / d_b if d_b else 0
+                    logger.info(
+                        "interval: %.0f reqs/s  %.0f rows/s  avg_batch=%.1f reqs (%.0f rows)  forward=%.1fms",
+                        rps, rows, avg_b, (d_a / d_b if d_b else 0), avg_f,
+                    )
+                    last_metric_log = now
+                    last_metric_snapshot = dict(self.metrics)
         finally:
-            logger.info("SharedInferenceServer exiting; %d batches, %d requests",
-                        int(self.metrics["n_batches"]), int(self.metrics["n_requests"]))
+            logger.info("SharedInferenceServer exiting; %d batches, %d requests, %d rows",
+                        int(self.metrics["n_batches"]), int(self.metrics["n_requests"]),
+                        int(self.metrics["n_action_rows"]))
 
     def _drain_batch(self) -> list[RequestDesc]:
         try:
@@ -905,8 +935,26 @@ def shared_server_loop_entry(
     weight_dir=None,                   # Phase 4: disk-based weight refresh
 ) -> None:
     """Top-level shared-mem server entry point. Picklable for spawn."""
+    import os
+    import sys
+    import logging as _logging
     import torch
     from .q_network import init_position_nets
+
+    # Wire server logger to stdout so its messages reach `modal run` output
+    # alongside the learner's. Mirrors the GUANZERO_STREAM_LOGS hook used by
+    # the learner subprocess (see learner.py).
+    _logging.getLogger("guanzero.inference_server").handlers.clear()
+    if os.environ.get("GUANZERO_STREAM_LOGS") == "1":
+        _h = _logging.StreamHandler(sys.stdout)
+        _h.setFormatter(_logging.Formatter(
+            "%(asctime)s [%(levelname)-5s] [server] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        _h.setLevel(_logging.INFO)
+        _slog = _logging.getLogger("guanzero.inference_server")
+        _slog.addHandler(_h)
+        _slog.setLevel(_logging.INFO)
 
     torch.set_num_threads(1)
 

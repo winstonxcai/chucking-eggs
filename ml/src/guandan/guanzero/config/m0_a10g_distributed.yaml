@@ -22,13 +22,13 @@ dropout: 0.0
 # Training
 lr: 1.0e-4
 gamma: 1.0
-batch_size: 4096
+batch_size: 32768
 buffer_capacity_per_player: 100000
-buffer_min_size: 5000
+buffer_min_size: 32768
 epsilon_start: 0.1
 epsilon_final: 0.01
 epsilon_decay_episodes: 15000
-max_legal_actions: 256
+max_legal_actions: 320
 use_oracle_others_hand: true
 
 # A10G throughput

@@ -261,6 +261,8 @@ def learner_loop(
     t0 = time.time()
     session_start_updates = total_updates  # for accurate upd/s on resumed runs
     drained_since_log = 0
+    last_log_t = t0
+    last_log_updates = total_updates
     while not stop_event.is_set():
         # 1. Drain sample queue into replay buffer (pre-stacked actor messages)
         drained = 0
@@ -305,12 +307,20 @@ def learner_loop(
 
         # 5. Metrics log
         if total_updates % cfg.log_every_updates == 0:
-            elapsed = time.time() - t0
+            now = time.time()
+            elapsed = now - t0
+            # Interval rate (since last log) — converges to true steady-state quickly,
+            # unlike cumulative rate which is dragged down by warmup.
+            interval_dt = max(1e-6, now - last_log_t)
+            interval_upd = total_updates - last_log_updates
+            interval_upd_per_sec = interval_upd / interval_dt
+            interval_samp_per_sec = interval_upd_per_sec * cfg.batch_size
+            # Cumulative for ETA only (steady ETA estimate)
             session_updates = total_updates - session_start_updates
-            upd_per_sec = session_updates / elapsed if elapsed > 0 else 0.0
+            cum_upd_per_sec = session_updates / elapsed if elapsed > 0 else 0.0
             target = cfg.total_updates_target or cfg.checkpoint_every_updates
             remaining = max(0, target - total_updates)
-            eta_s = remaining / upd_per_sec if upd_per_sec > 0 else 0.0
+            eta_s = remaining / interval_upd_per_sec if interval_upd_per_sec > 0 else 0.0
             eta_h, eta_m = divmod(int(eta_s), 3600)[0], divmod(int(eta_s), 60)[0] % 60
             try:
                 queue_depth = sample_queue.qsize()
@@ -320,7 +330,6 @@ def learner_loop(
                 round(torch.cuda.memory_allocated() / 1e9, 3)
                 if cfg.device == "cuda" and torch.cuda.is_available() else None
             )
-            samples_per_sec = upd_per_sec * cfg.batch_size
             row = {
                 "updates": total_updates,
                 "version": version,
@@ -328,8 +337,9 @@ def learner_loop(
                 "buffer_per_player": {p: buffer.size(p) for p in range(4)},
                 "loss": {str(p): round(v, 6) for p, v in last_losses.items()},
                 "elapsed_s": round(elapsed, 1),
-                "upd_per_sec": round(upd_per_sec, 3),
-                "samples_per_sec": round(samples_per_sec, 1),
+                "upd_per_sec": round(interval_upd_per_sec, 3),
+                "samples_per_sec": round(interval_samp_per_sec, 1),
+                "cum_upd_per_sec": round(cum_upd_per_sec, 3),
                 "queue_depth": queue_depth,
                 "gpu_mem_gb": gpu_mem_gb,
                 "drained_since_last_log": drained_since_log,
@@ -340,12 +350,14 @@ def learner_loop(
                 "updates=%d ver=%d buf=%d loss=%s  %.0f samp/s (%.2f upd/s)  q=%d gpu=%sGB drained=%d  ETA %dh%02dm",
                 total_updates, version, buffer.total_size(),
                 " ".join(f"p{p}={v:.4f}" for p, v in sorted(last_losses.items())),
-                samples_per_sec, upd_per_sec, queue_depth,
+                interval_samp_per_sec, interval_upd_per_sec, queue_depth,
                 f"{gpu_mem_gb:.2f}" if gpu_mem_gb is not None else "n/a",
                 drained_since_log,
                 eta_h, eta_m,
             )
             drained_since_log = 0
+            last_log_t = now
+            last_log_updates = total_updates
 
     # Final checkpoint on clean shutdown
     if total_updates > 0:

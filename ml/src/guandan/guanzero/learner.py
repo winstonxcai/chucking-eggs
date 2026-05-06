@@ -51,6 +51,30 @@ class Learner:
             {p: torch.cuda.Stream(device=self.device) for p in range(4)}
             if self.device.type == "cuda" else None
         )
+        # Per-phase profiling. Enabled with GUANZERO_PROFILE_PHASES=1.
+        # Inserts torch.cuda.synchronize() between phases to attribute wall
+        # time accurately — destroys async overlap, so only use for diagnosis.
+        self.profile = os.environ.get("GUANZERO_PROFILE_PHASES") == "1"
+        self.phase_times: dict[str, float] = {}
+        self.phase_counts: dict[str, int] = {}
+
+    def _phase_sync(self) -> None:
+        if self.profile and self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+
+    def _phase_record(self, name: str, dt: float) -> None:
+        self.phase_times[name] = self.phase_times.get(name, 0.0) + dt
+        self.phase_counts[name] = self.phase_counts.get(name, 0) + 1
+
+    def pop_phase_summary(self) -> dict[str, float] | None:
+        if not self.profile or not self.phase_times:
+            return None
+        n = max(self.phase_counts.values())
+        # Per-update average wall ms per phase
+        summary = {k: (v / n) * 1000.0 for k, v in self.phase_times.items()}
+        self.phase_times.clear()
+        self.phase_counts.clear()
+        return summary
 
     def update(
         self,
@@ -64,20 +88,38 @@ class Learner:
         forward+backward on separate streams. Loss tensors are read after a
         single synchronize() to avoid per-position CPU stalls.
         """
-        # --- collate all positions (CPU work + async H2D) ---
-        batches: dict[int, tuple] = {}
+        prof = self.profile
+        # --- sample (CPU): random.sample + list lookups ---
+        if prof:
+            t0 = time.perf_counter()
+        sample_lists: dict[int, list] = {}
         for p in range(4):
             if buffer.size(p) < min_buffer_size:
                 continue
             samples = buffer.sample_for_player(p, batch_size)
             if samples:
-                batches[p] = collate(samples, device=self.device)
+                sample_lists[p] = samples
+        if prof:
+            self._phase_record("sample", time.perf_counter() - t0)
 
-        if not batches:
+        if not sample_lists:
             return {}
 
-        # --- parallel forward + backward ---
-        loss_tensors: dict[int, torch.Tensor] = {}
+        # --- collate (CPU stack + H2D copy, async) ---
+        if prof:
+            t0 = time.perf_counter()
+        batches: dict[int, tuple] = {
+            p: collate(sl, device=self.device) for p, sl in sample_lists.items()
+        }
+        if prof:
+            self._phase_sync()
+            self._phase_record("collate+h2d", time.perf_counter() - t0)
+
+        # --- forward (GPU compute) ---
+        if prof:
+            t0 = time.perf_counter()
+        q_preds: dict[int, torch.Tensor] = {}
+        targets_d: dict[int, torch.Tensor] = {}
         for p, (batch, targets) in batches.items():
             ctx = (torch.cuda.stream(self.streams[p])
                    if self.streams else contextlib.nullcontext())
@@ -85,21 +127,50 @@ class Learner:
                 self.q_nets[p].train()
                 if self.use_bf16:
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        q_pred = self.q_nets[p](batch)
-                        loss = F.mse_loss(q_pred, targets)
+                        q_preds[p] = self.q_nets[p](batch)
                 else:
-                    q_pred = self.q_nets[p](batch)
-                    loss = F.mse_loss(q_pred, targets)
+                    q_preds[p] = self.q_nets[p](batch)
+            targets_d[p] = targets
+        if prof:
+            self._phase_sync()
+            self._phase_record("forward", time.perf_counter() - t0)
+
+        # --- loss + backward + step (GPU compute + autograd) ---
+        if prof:
+            t0 = time.perf_counter()
+        loss_tensors: dict[int, torch.Tensor] = {}
+        for p, q_pred in q_preds.items():
+            ctx = (torch.cuda.stream(self.streams[p])
+                   if self.streams else contextlib.nullcontext())
+            with ctx:
+                if self.use_bf16:
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        loss = F.mse_loss(q_pred, targets_d[p])
+                else:
+                    loss = F.mse_loss(q_pred, targets_d[p])
                 self.optims[p].zero_grad(set_to_none=True)
                 loss.backward()
                 self.optims[p].step()
-                loss_tensors[p] = loss  # defer .item() to avoid per-stream sync
+                loss_tensors[p] = loss
+        if prof:
+            self._phase_sync()
+            self._phase_record("backward+step", time.perf_counter() - t0)
 
-        # Single sync point — all streams complete before we read loss values
+        # --- final sync ---
+        if prof:
+            t0 = time.perf_counter()
         if self.streams:
             torch.cuda.synchronize(self.device)
+        if prof:
+            self._phase_record("final_sync", time.perf_counter() - t0)
 
-        return {p: float(lt.item()) for p, lt in loss_tensors.items()}
+        # --- read losses (forces CPU<-GPU copy) ---
+        if prof:
+            t0 = time.perf_counter()
+        out = {p: float(lt.item()) for p, lt in loss_tensors.items()}
+        if prof:
+            self._phase_record("loss_item", time.perf_counter() - t0)
+        return out
 
 
 # ─── Atomic weight publishing ─────────────────────────────
@@ -355,6 +426,14 @@ def learner_loop(
                 drained_since_log,
                 eta_h, eta_m,
             )
+            phase_summary = learner.pop_phase_summary()
+            if phase_summary:
+                total_ms = sum(phase_summary.values())
+                breakdown = "  ".join(
+                    f"{k}={v:.1f}ms({100*v/total_ms:.0f}%)"
+                    for k, v in sorted(phase_summary.items(), key=lambda x: -x[1])
+                )
+                logger.info("  PHASE  total=%.1fms  %s", total_ms, breakdown)
             drained_since_log = 0
             last_log_t = now
             last_log_updates = total_updates

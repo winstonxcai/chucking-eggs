@@ -63,6 +63,9 @@ def train_remote(
     env["GUANZERO_STREAM_LOGS"] = "1"
     # Keep weight publish/sync IO off the network-attached Modal volume.
     env["GUANZERO_WEIGHT_DIR"] = "/tmp/guanzero_weights"
+    # Forward profiling flag if set locally
+    if os.environ.get("GUANZERO_PROFILE_PHASES") == "1":
+        env["GUANZERO_PROFILE_PHASES"] = "1"
     # Pin BLAS thread pools to 1 — actor processes already set torch.set_num_threads(1)
     # but numpy/MKL/OpenBLAS are separate and would otherwise contend across vCPUs.
     env["OMP_NUM_THREADS"] = "1"

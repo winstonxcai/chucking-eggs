@@ -323,6 +323,7 @@ def learner_loop(
     t0 = time.time()
     session_start_updates = total_updates  # for accurate upd/s on resumed runs
     drained_since_log = 0
+    cumulative_drained = 0
     last_log_t = t0
     last_log_updates = total_updates
     while not stop_event.is_set():
@@ -336,6 +337,7 @@ def learner_loop(
             except Exception:
                 break
         drained_since_log += drained
+        cumulative_drained += drained
 
         # 2. Gradient update when every position's buffer is warm
         if all(buffer.size(p) >= cfg.buffer_min_size for p in range(4)):
@@ -392,6 +394,20 @@ def learner_loop(
                 round(torch.cuda.memory_allocated() / 1e9, 3)
                 if cfg.device == "cuda" and torch.cuda.is_available() else None
             )
+            # Replay ratio = how many times the learner reuses each unique sample.
+            # interval = recent window (matches samp/s freshness),
+            # cumulative = whole-run average.
+            push_bs = cfg.actor_push_batch_size
+            interval_unique = drained_since_log * push_bs
+            interval_replay = (
+                (interval_upd * cfg.batch_size) / interval_unique
+                if interval_unique > 0 else float("inf")
+            )
+            cum_unique = cumulative_drained * push_bs
+            cum_replay = (
+                (session_updates * cfg.batch_size) / cum_unique
+                if cum_unique > 0 else float("inf")
+            )
             row = {
                 "updates": total_updates,
                 "version": version,
@@ -405,14 +421,20 @@ def learner_loop(
                 "queue_depth": queue_depth,
                 "gpu_mem_gb": gpu_mem_gb,
                 "drained_since_last_log": drained_since_log,
+                "cumulative_drained": cumulative_drained,
+                "replay_interval": round(interval_replay, 2) if interval_replay != float("inf") else None,
+                "replay_cumulative": round(cum_replay, 2) if cum_replay != float("inf") else None,
             }
             with metrics_path.open("a") as f:
                 f.write(json.dumps(row) + "\n")
             logger.info(
-                "updates=%d ver=%d buf=%d loss=%s  %.0f samp/s (%.2f upd/s)  q=%d gpu=%sGB drained=%d  ETA %dh%02dm",
+                "updates=%d ver=%d buf=%d loss=%s  %.0f samp/s (%.2f upd/s)  replay=%.1fx(int)/%.1fx(cum)  q=%d gpu=%sGB drained=%d  ETA %dh%02dm",
                 total_updates, version, buffer.total_size(),
                 " ".join(f"p{p}={v:.4f}" for p, v in sorted(last_losses.items())),
-                interval_samp_per_sec, interval_upd_per_sec, queue_depth,
+                interval_samp_per_sec, interval_upd_per_sec,
+                interval_replay if interval_replay != float("inf") else -1.0,
+                cum_replay if cum_replay != float("inf") else -1.0,
+                queue_depth,
                 f"{gpu_mem_gb:.2f}" if gpu_mem_gb is not None else "n/a",
                 drained_since_log,
                 eta_h, eta_m,

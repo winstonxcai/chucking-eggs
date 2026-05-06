@@ -3,7 +3,7 @@
 # A10G batch=4096 bench (LOGBOOK §44): ~10977 samp/s (2.68 upd/s × 4096) — ~2.7× M1.
 # Throughput metric is samples/sec (batch-size-independent).
 
-n_actors: 8
+n_actors: 16
 sync_interval_episodes: 20
 actor_push_batch_size: 512
 sample_queue_maxsize: 64

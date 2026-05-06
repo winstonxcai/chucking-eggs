@@ -34,4 +34,6 @@ use_oracle_others_hand: true
 # A10G throughput
 device: cuda
 use_bf16_learner: true
+# reduce-overhead uses CUDA graphs (stream-pinned); learner auto-downgrades to
+# "default" on CUDA so per-position streams can run in parallel.
 compile_mode: reduce-overhead

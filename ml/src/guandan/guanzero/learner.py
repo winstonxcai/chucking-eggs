@@ -10,6 +10,7 @@ publishing helpers used by both the learner and the actors.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import logging
@@ -44,6 +45,12 @@ class Learner:
             for p in range(4)
         }
         self.use_bf16 = use_bf16 and self.device.type == "cuda"
+        # One stream per position so CUDA can schedule all 4 forward+backward
+        # passes concurrently. Not used on MPS (no multi-stream support).
+        self.streams: dict[int, torch.cuda.Stream] | None = (
+            {p: torch.cuda.Stream(device=self.device) for p in range(4)}
+            if self.device.type == "cuda" else None
+        )
 
     def update(
         self,
@@ -51,28 +58,48 @@ class Learner:
         batch_size: int,
         min_buffer_size: int,
     ) -> dict[int, float]:
-        """One gradient step per position. Skips a position whose buffer is
-        below ``min_buffer_size``. Returns per-position loss."""
-        losses: dict[int, float] = {}
+        """One gradient step per position, all 4 in parallel on CUDA.
+
+        Collates all positions first so H2D copies can overlap, then launches
+        forward+backward on separate streams. Loss tensors are read after a
+        single synchronize() to avoid per-position CPU stalls.
+        """
+        # --- collate all positions (CPU work + async H2D) ---
+        batches: dict[int, tuple] = {}
         for p in range(4):
             if buffer.size(p) < min_buffer_size:
                 continue
             samples = buffer.sample_for_player(p, batch_size)
-            if not samples:
-                continue
-            batch, targets = collate(samples, device=self.device)
-            if self.use_bf16:
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            if samples:
+                batches[p] = collate(samples, device=self.device)
+
+        if not batches:
+            return {}
+
+        # --- parallel forward + backward ---
+        loss_tensors: dict[int, torch.Tensor] = {}
+        for p, (batch, targets) in batches.items():
+            ctx = (torch.cuda.stream(self.streams[p])
+                   if self.streams else contextlib.nullcontext())
+            with ctx:
+                self.q_nets[p].train()
+                if self.use_bf16:
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        q_pred = self.q_nets[p](batch)
+                        loss = F.mse_loss(q_pred, targets)
+                else:
                     q_pred = self.q_nets[p](batch)
                     loss = F.mse_loss(q_pred, targets)
-            else:
-                q_pred = self.q_nets[p](batch)
-                loss = F.mse_loss(q_pred, targets)
-            self.optims[p].zero_grad(set_to_none=True)
-            loss.backward()
-            self.optims[p].step()
-            losses[p] = float(loss.item())
-        return losses
+                self.optims[p].zero_grad(set_to_none=True)
+                loss.backward()
+                self.optims[p].step()
+                loss_tensors[p] = loss  # defer .item() to avoid per-stream sync
+
+        # Single sync point — all streams complete before we read loss values
+        if self.streams:
+            torch.cuda.synchronize(self.device)
+
+        return {p: float(lt.item()) for p, lt in loss_tensors.items()}
 
 
 # ─── Atomic weight publishing ─────────────────────────────
@@ -200,6 +227,12 @@ def learner_loop(
         use_oracle_others_hand=cfg.use_oracle_others_hand,
     )
     compile_mode = getattr(cfg, "compile_mode", "default") or "default"
+    if compile_mode == "reduce-overhead" and cfg.device == "cuda":
+        # reduce-overhead captures CUDA graphs on the default stream; those
+        # graphs can't be replayed on per-position streams. Fall back to
+        # "default" which still JIT-fuses kernels but is stream-safe.
+        compile_mode = "default"
+        logger.info("compile_mode downgraded reduce-overhead→default for multi-stream positions")
     for p, net in q_nets.items():
         q_nets[p] = torch.compile(net, mode=compile_mode)
     learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device,

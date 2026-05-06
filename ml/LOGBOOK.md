@@ -2403,3 +2403,209 @@ either platform.
 - [sweep_distributed_n_actors.py](ml/scripts/util/sweep_distributed_n_actors.py) — end-to-end orchestrator sweep
 - `ml/runs/profile/rollout_cpu_eps0.prof` — cProfile dump (gitignored under runs/)
 
+
+## 44. GuanZero M0 — A10G learner throughput, 16k → 50k samp/s (2026-05-06)
+
+The M1 work in §43 left the M1 learner at ~4k samp/s (post `non_blocking` fix).
+On Modal A10G the same code ran at 16k samp/s — only ~2.7× M1 despite ~10×
+the GPU. This entry traces the journey from 16k to 50k samp/s through one
+profile-driven rewrite of the replay buffer, plus several findings that turned
+out wrong before measurement.
+
+### TL;DR
+
+| Stage | samp/s @ batch=2048 | What changed |
+|---|---|---|
+| Baseline (start of session) | 16,384 | Sequential 4-net loop, per-sample dict storage, `np.stack` collate |
+| Per-stream CUDA streams | ~12,000 | Multi-stream + `compile_mode=default` |
+| **Contiguous uint8 buffer** | **~44,000** | **The actual win — single change** |
+| `+ n_actors=16`               | ~44-47,000 | No throughput cliff anymore + better data freshness |
+| `+ batch=4096`                | ~50,000   | Modest +10-15% from larger batch |
+
+The key result is the buffer rewrite. Everything else is rounding.
+
+### Throughput metric
+
+We standardized on **`samples_per_sec = batch_size × upd/s`** for cross-config
+comparisons. `upd/s` is meaningless across batches; `samp/s` is the
+hardware-independent figure. Also added an *interval* `samp/s` to the metrics
+log (delta since last log) so it converges to steady-state quickly instead of
+being dragged down by buffer-warmup time.
+
+### What didn't work (all measured)
+
+These were tried and rejected. Documenting because the reasoning sounded right
+beforehand and only measurement disproved them.
+
+- **Batch=32768**: predicted big win from "lots of GPU memory". Got 8.6k
+  samp/s — *worse* than batch=4096's 12k. Per-update wall scaled linearly
+  with batch (7.56× longer for 8× more samples) → not compute-bound, just
+  multiplied the per-update overhead. With the old collate path this was
+  catastrophic.
+- **Per-stream CUDA graphs (`reduce-overhead` + streams)**: aimed to combine
+  CUDA-graph dispatch elimination with multi-stream parallelism. Measured
+  11,378 samp/s — *worse* than streams alone. PyTorch's `cudagraph_trees`
+  shares a CUDA memory pool that serializes graphs across streams; the two
+  optimizations are not additive.
+- **n_actors=16 with old buffer**: dropped throughput from 16k → 11k samp/s
+  (~30% cliff). Suspected CPU starvation, queue lock contention, or weight-
+  sync IO. Tested cpu=64 (no change), `actor_push_batch_size=2048` (no change).
+  None of the suspects were the actual cause.
+
+### Per-phase profiling — the breakthrough
+
+Added `GUANZERO_PROFILE_PHASES=1` to `Learner.update()`: inserts
+`torch.cuda.synchronize()` between phases to attribute wall time accurately
+(forwarded through Modal launcher as a `--profile` arg, not via local env
+since Modal containers don't inherit local env vars).
+
+**Profile at batch=2048 with old buffer (~16k samp/s):**
+
+```
+PHASE  total=127ms
+  collate+h2d=92ms (73%)    ← DOMINANT
+  backward+step=19ms (15%)
+  forward=11ms (9%)
+  sample=4ms (3%)
+  loss_item=0.1ms
+```
+
+This was completely different from what I'd been theorizing about (kernel
+launch overhead, LSTM sequential bottleneck). The actual GPU compute was
+~24% of wall time — the GPU was idle most of the time waiting for CPU-side
+numpy stacking.
+
+The old `collate()` did `np.stack([s.encoded[k] for s in samples])` for each
+of 9 keys × 4 positions = **36 numpy stacks per update**, each iterating 2048
+per-sample dicts. Pure CPU memory work, blocking the entire pipeline.
+
+### The fix: contiguous-array replay buffer
+
+Replaced per-sample `TrainSample(player, encoded: dict, mc_return)` storage
+with pre-allocated contiguous arrays per (player, key):
+
+```python
+own_hand:                  uint8  [capacity, 108]
+others_hand:               uint8  [capacity, 108]
+recent_action_each_player: uint8  [capacity, 4, 108]
+played_cards_others:       uint8  [capacity, 3, 108]
+remaining_counts_others:   uint8  [capacity, 3, 27]
+level:                     uint8  [capacity, 13]
+history:                   uint8  [capacity, 20, 108]
+behavior:                  uint8  [capacity, 9]
+candidate_action:          uint8  [capacity, 108]
+returns:                   float32 [capacity]
+```
+
+Sampling becomes:
+
+```python
+idx = np.random.randint(0, size, batch_size)
+batch = {k: torch.from_numpy(field[k][idx]).to(device, non_blocking=True).float()
+         for k in KEYS}
+```
+
+Two compounding wins:
+
+1. **No per-sample stacking**: data is already contiguous. Sampling is one
+   fancy-index per key — much cheaper than 2048 dict lookups + np.stack.
+2. **uint8 storage**: encoder produces 0/1 binary multi-hot/one-hot vectors,
+   so uint8 is exact. 4× less memory (~400MB → ~100MB at full cap) and 4×
+   less PCIe bandwidth on H2D. Cast back to float32 on GPU after H2D.
+
+**Profile at batch=2048 with new buffer (~44k samp/s):**
+
+```
+PHASE  total=44ms
+  backward+step=19ms (44%)
+  sample+h2d=14ms (32%)
+  forward=11ms (25%)
+```
+
+`sample+h2d` collapsed from 92ms → 14ms (6.5× faster). Total per-update from
+127ms → 44ms (2.9× faster). The `backward+step` and `forward` phases are
+unchanged because the GPU compute itself was never the bottleneck.
+
+### n_actors=16 revisited
+
+The old throughput cliff at n_actors=16 was specifically caused by the collate
+bottleneck — 16 actors producing more samples didn't help because the learner
+spent all its time in numpy stacks anyway, and the additional pickle/unpickle
+work for actor pushes stole CPU cycles needed for that hot path.
+
+With the contiguous buffer, **n_actors=16 runs at ~44-47k samp/s — same as
+n_actors=8 — but fills the buffer 25% faster** (better data freshness). Strict
+win. Made it the new default.
+
+### Batch size sweep (with new buffer)
+
+| batch | wall/update | samp/s (with profile) |
+|---|---|---|
+| 2048 | 44 ms  | ~46-47k |
+| 4096 | 75 ms  | ~50k    |
+| 8192 | 143 ms | ~52k    |
+
+Per-update time scales nearly linearly with batch (1.7× for 2× samples), so
+samp/s grows sub-linearly. Diminishing returns kick in hard above 4096:
+batch=8192 gives only +4% over 4096 for 2× the per-update wall time, hurting
+both buffer freshness and gradient noise. **batch=4096 is the new default**.
+
+This contradicts the previous "batch=2048 sweet spot" finding from earlier in
+this session — that result was an artifact of the broken collate path. With
+the new buffer, the sweet spot shifted up.
+
+### Remaining bottleneck
+
+After the buffer fix, the breakdown at batch=4096:
+
+- backward+step: 31ms (42%)
+- sample+h2d:    23ms (31%)
+- forward:       20ms (27%)
+
+GPU compute (forward + backward + step) is now 70% of wall time — the system
+is finally compute-bound on the GPU side. The next architectural lever is the
+4-position sequential loop in `Learner.update()`: each of the 4 Q-nets has its
+own `forward → backward → step` issued sequentially in Python. Replacing this
+with a single batched 4-net `bmm`-based model (weights stacked on a leading
+position dim, all 4 forwards in one kernel) would address ~70% of the
+remaining wall time. Estimated 2× more headroom (→ ~80-95k samp/s) but it's a
+real refactor and 44k samp/s is already enough for paper-faithful M0.
+
+### What we kept vs reverted
+
+| Change | Status | Why |
+|---|---|---|
+| `non_blocking=True` on training collate (§43) | kept | Free win on MPS, harmless on CUDA |
+| Multi-stream `Learner.update()` | kept | Marginal but positive on CUDA |
+| `compile_mode=default` auto-downgrade on CUDA | kept | `reduce-overhead` + streams measured worse |
+| Per-stream `CUDAGraph` capture | reverted | Negative result, not additive with streams |
+| `cpu=64` on Modal | reverted | No effect, not the bottleneck |
+| `actor_push_batch_size=2048` | reverted to 512 | No effect with new buffer |
+| **Contiguous uint8 replay buffer** | **kept** | **The actual fix** |
+| `n_actors=16` (with new buffer) | kept | Strict win for freshness |
+| `batch_size=4096` | kept | New sweet spot |
+| Per-phase profiler | kept | `GUANZERO_PROFILE_PHASES=1` flag |
+| `samples_per_sec` interval-rate metric | kept | Replaces cumulative `upd/s` |
+
+### Files added/modified
+
+- `ml/src/guandan/guanzero/buffer.py` — contiguous-array `ReplayBuffer`
+  with `sample_batch_for_player` fast path + legacy paths for tests
+- `ml/src/guandan/guanzero/learner.py` — uses new buffer fast path,
+  per-phase profiler, multi-stream updates
+- `ml/src/guandan/guanzero/train_distributed.py` — tqdm bar in samp/s
+  instead of upd/s (`unit_scale=True` for k/M suffixes)
+- `ml/scripts/modal/train_guanzero_modal.py` — `--profile` flag
+- `ml/src/guandan/guanzero/config/m0_a10g_distributed.yaml` —
+  n_actors=16, batch_size=4096, log_every_updates=5
+
+### Numbers to remember
+
+- **A10G learner ceiling**: ~50k samp/s at batch=4096 with paper-spec net
+- **Per-update budget**: 75ms (forward 20 + backward+step 31 + sample+h2d 23)
+- **GPU memory**: 0.5GB (24GB available — model is tiny relative to A10G)
+- **Replay ratio at 50k samp/s with 16 actors**: actors produce ~5-10k
+  samp/s total → buffer churn rate gives ~6-10× replay before eviction.
+  Fine for off-policy DMC but means freshness is sample-rate-limited, not
+  storage-limited. Next bottleneck if/when learner gets faster: actor
+  inference rate.

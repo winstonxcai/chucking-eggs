@@ -938,45 +938,60 @@ def shared_server_loop_entry(
     import os
     import sys
     import logging as _logging
+    import traceback
     import torch
     from .q_network import init_position_nets
+
+    # Raw print so we can see server startup even if logger setup fails
+    print("[server-entry] starting; cfg_device=" + str(cfg_dict.get("inference_device")),
+          flush=True)
 
     # Wire server logger to stdout so its messages reach `modal run` output
     # alongside the learner's. Mirrors the GUANZERO_STREAM_LOGS hook used by
     # the learner subprocess (see learner.py).
     _logging.getLogger("guanzero.inference_server").handlers.clear()
-    if os.environ.get("GUANZERO_STREAM_LOGS") == "1":
-        _h = _logging.StreamHandler(sys.stdout)
-        _h.setFormatter(_logging.Formatter(
-            "%(asctime)s [%(levelname)-5s] [server] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
-        _h.setLevel(_logging.INFO)
-        _slog = _logging.getLogger("guanzero.inference_server")
-        _slog.addHandler(_h)
-        _slog.setLevel(_logging.INFO)
+    # Always route to stdout in this subprocess so failures are visible.
+    _h = _logging.StreamHandler(sys.stdout)
+    _h.setFormatter(_logging.Formatter(
+        "%(asctime)s [%(levelname)-5s] [server] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    _h.setLevel(_logging.INFO)
+    _slog = _logging.getLogger("guanzero.inference_server")
+    _slog.addHandler(_h)
+    _slog.setLevel(_logging.INFO)
 
     torch.set_num_threads(1)
 
-    cfg_device              = cfg_dict.get("inference_device", "cpu")
-    max_requests            = cfg_dict.get("inference_batch_max_requests", 32)
-    max_action_rows         = cfg_dict.get("inference_batch_max_action_rows", 4096)
-    timeout_ms              = cfg_dict.get("inference_batch_timeout_ms", 5.0)
-    weight_refresh_s        = cfg_dict.get("inference_weight_refresh_s", 5.0)
-    use_bf16                = cfg_dict.get("use_bf16_learner", False) and cfg_device == "cuda"
+    try:
+        cfg_device              = cfg_dict.get("inference_device", "cpu")
+        max_requests            = cfg_dict.get("inference_batch_max_requests", 32)
+        max_action_rows         = cfg_dict.get("inference_batch_max_action_rows", 4096)
+        timeout_ms              = cfg_dict.get("inference_batch_timeout_ms", 5.0)
+        weight_refresh_s        = cfg_dict.get("inference_weight_refresh_s", 5.0)
+        use_bf16                = cfg_dict.get("use_bf16_learner", False) and cfg_device == "cuda"
 
-    bufs = attach_shared_buffers(
-        meta=meta,
-        free_slots=free_slots,
-        request_queue=request_queue,
-        events=events,
-        weights_version=weights_version,
-    )
+        print(f"[server-entry] attaching shared buffers...", flush=True)
+        bufs = attach_shared_buffers(
+            meta=meta,
+            free_slots=free_slots,
+            request_queue=request_queue,
+            events=events,
+            weights_version=weights_version,
+        )
 
-    q_nets = init_position_nets(**q_net_kwargs)
-    if initial_state_dicts is not None:
+        print(f"[server-entry] building q_nets and moving to {cfg_device}...", flush=True)
+        q_nets = init_position_nets(**q_net_kwargs)
+        if initial_state_dicts is not None:
+            for p in range(4):
+                q_nets[p].load_state_dict(initial_state_dicts[p])
         for p in range(4):
-            q_nets[p].load_state_dict(initial_state_dicts[p])
+            q_nets[p] = q_nets[p].to(cfg_device).eval()
+        print(f"[server-entry] q_nets ready on {cfg_device}", flush=True)
+    except Exception as e:
+        print(f"[server-entry] SETUP FAILED: {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
+        raise
 
     server = SharedInferenceServer(
         q_nets=q_nets,
@@ -1032,9 +1047,15 @@ def shared_server_loop_entry(
     else:
         refresher = None
 
+    print("[server-entry] entering server_loop", flush=True)
     try:
         server.server_loop()
+    except Exception as e:
+        print(f"[server-entry] server_loop crashed: {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
+        raise
     finally:
+        print("[server-entry] server_loop exited; cleaning up", flush=True)
         refresh_stop.set()
         if refresher is not None:
             refresher.join(timeout=2.0)

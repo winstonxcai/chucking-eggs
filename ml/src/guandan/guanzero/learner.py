@@ -287,6 +287,7 @@ def learner_loop(
                 round(torch.cuda.memory_allocated() / 1e9, 3)
                 if cfg.device == "cuda" and torch.cuda.is_available() else None
             )
+            samples_per_sec = upd_per_sec * cfg.batch_size
             row = {
                 "updates": total_updates,
                 "version": version,
@@ -295,6 +296,7 @@ def learner_loop(
                 "loss": {str(p): round(v, 6) for p, v in last_losses.items()},
                 "elapsed_s": round(elapsed, 1),
                 "upd_per_sec": round(upd_per_sec, 3),
+                "samples_per_sec": round(samples_per_sec, 1),
                 "queue_depth": queue_depth,
                 "gpu_mem_gb": gpu_mem_gb,
                 "drained_since_last_log": drained_since_log,
@@ -302,10 +304,10 @@ def learner_loop(
             with metrics_path.open("a") as f:
                 f.write(json.dumps(row) + "\n")
             logger.info(
-                "updates=%d ver=%d buf=%d loss=%s  %.2f upd/s  q=%d gpu=%sGB drained=%d  ETA %dh%02dm",
+                "updates=%d ver=%d buf=%d loss=%s  %.0f samp/s (%.2f upd/s)  q=%d gpu=%sGB drained=%d  ETA %dh%02dm",
                 total_updates, version, buffer.total_size(),
                 " ".join(f"p{p}={v:.4f}" for p, v in sorted(last_losses.items())),
-                upd_per_sec, queue_depth,
+                samples_per_sec, upd_per_sec, queue_depth,
                 f"{gpu_mem_gb:.2f}" if gpu_mem_gb is not None else "n/a",
                 drained_since_log,
                 eta_h, eta_m,

@@ -1,5 +1,7 @@
 # GuanZero M0 — distributed actor-learner DMC, tuned for Modal A10G + 32 vCPU.
-# Target: 10x M1 throughput (~27 upd/s steady-state).
+# M1 baseline (post non_blocking fix, LOGBOOK §43): ~4096 samp/s (8 upd/s × 512).
+# A10G batch=4096 bench (LOGBOOK §44): ~10977 samp/s (2.68 upd/s × 4096) — ~2.7× M1.
+# Throughput metric is samples/sec (batch-size-independent).
 
 n_actors: 8
 sync_interval_episodes: 20
@@ -26,7 +28,7 @@ buffer_min_size: 5000
 epsilon_start: 0.1
 epsilon_final: 0.01
 epsilon_decay_episodes: 15000
-max_legal_actions: 128
+max_legal_actions: 256
 use_oracle_others_hand: true
 
 # A10G throughput

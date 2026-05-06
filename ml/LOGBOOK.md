@@ -2601,8 +2601,10 @@ real refactor and 44k samp/s is already enough for paper-faithful M0.
 
 ### Numbers to remember
 
-- **A10G learner ceiling**: ~50k samp/s at batch=4096 with paper-spec net
-- **Per-update budget**: 75ms (forward 20 + backward+step 31 + sample+h2d 23)
+- **A10G learner ceiling**: ~50-55k samp/s at batch=4096 with paper-spec net
+  (final no-profile run: 51k mean, 55k peak; profile overhead is ~3%)
+- **Per-update budget**: ~70ms (forward 20 + backward+step 31 + sample+h2d 23,
+  measured with profile syncs which add a few ms)
 - **GPU memory**: 0.5GB (24GB available — model is tiny relative to A10G)
 - **Replay ratio at 50k samp/s with 16 actors**: actors produce ~5-10k
   samp/s total → buffer churn rate gives ~6-10× replay before eviction.

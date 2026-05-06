@@ -21,6 +21,10 @@ from guandan.guanzero.encoder import StateActionEncoder
 from guandan.guanzero.inference_server import (
     InferenceClient,
     InferenceServer,
+    SharedInferenceClient,
+    SharedInferenceServer,
+    allocate_shared_buffers,
+    release_shared_buffers,
 )
 from guandan.guanzero.q_network import GuanZeroQNet, init_position_nets
 from guandan.game import GuanDanEnv
@@ -172,6 +176,145 @@ def test_batched_requests_match_serial():
         f"  expected={expected}\n"
         f"  actual  ={actual}"
     )
+
+
+# ─── Phase 2: shared-memory client/server ────────────────────
+
+
+def _shared_argmaxes(
+    q_nets: Mapping[int, GuanZeroQNet],
+    decisions: list[tuple[int, list[dict]]],
+    device: str = "cpu",
+    num_slots: int = 16,
+    max_actions: int = 320,
+    max_requests: int = 8,
+    timeout_ms: float = 50.0,
+) -> list[int]:
+    """In-process shared-mem path: server in a thread, single in-process actor.
+
+    Uses real shared-memory blocks so we exercise the pack/unpack offsets and
+    response-slot wiring, but skips spawn-context multiprocessing since we
+    don't need cross-process isolation for numerics validation.
+    """
+    ctx = mp.get_context("spawn")
+    bufs, _meta = allocate_shared_buffers(
+        num_slots=num_slots,
+        max_actions=max_actions,
+        n_actors=1,
+        ctx=ctx,
+    )
+    stop_event = ctx.Event()
+
+    server = SharedInferenceServer(
+        q_nets=q_nets,
+        bufs=bufs,
+        stop_event=stop_event,
+        device=device,
+        max_requests=max_requests,
+        max_action_rows=max_requests * max_actions,
+        timeout_ms=timeout_ms,
+        use_bf16=False,
+    )
+
+    server_thread = threading.Thread(target=server.server_loop, daemon=True)
+    server_thread.start()
+
+    client = SharedInferenceClient(
+        actor_id=0,
+        bufs=bufs,
+        timeout_s=10.0,
+        max_actions=max_actions,
+    )
+
+    out: list[int] = []
+    try:
+        for seat, encoded in decisions:
+            chosen, _ver = client.submit(seat, encoded)
+            out.append(chosen)
+    finally:
+        stop_event.set()
+        server_thread.join(timeout=5.0)
+        release_shared_buffers(bufs, unlink=True)
+    return out
+
+
+def test_shared_mem_cpu_equivalence():
+    """Phase 2: shared-memory wire format must produce identical argmax to local."""
+    torch.manual_seed(0)
+    q_nets = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    for net in q_nets.values():
+        net.eval()
+
+    decisions = _build_decisions(n=20, seed=42)
+    expected = _local_argmaxes(q_nets, decisions, device="cpu")
+    actual   = _shared_argmaxes(q_nets, decisions, device="cpu")
+
+    assert actual == expected, (
+        f"shared-mem server diverged from local _argmax_q.\n"
+        f"  expected={expected}\n"
+        f"  actual  ={actual}"
+    )
+
+
+def test_shared_mem_batched_requests_match_serial():
+    """Phase 2 with forced batching across multiple requests."""
+    torch.manual_seed(1)
+    q_nets = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    for net in q_nets.values():
+        net.eval()
+
+    decisions = _build_decisions(n=12, seed=99)
+    expected = _local_argmaxes(q_nets, decisions, device="cpu")
+    actual = _shared_argmaxes(
+        q_nets, decisions, device="cpu",
+        max_requests=12, timeout_ms=200.0,
+    )
+
+    assert actual == expected, (
+        f"batched shared-mem argmax diverged.\n"
+        f"  expected={expected}\n"
+        f"  actual  ={actual}"
+    )
+
+
+def test_shared_mem_client_rejects_oversize_K():
+    """K > inference_max_actions should fail loudly, not silently truncate."""
+    torch.manual_seed(2)
+    q_nets = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    ctx = mp.get_context("spawn")
+    bufs, _ = allocate_shared_buffers(num_slots=4, max_actions=8, n_actors=1, ctx=ctx)
+    try:
+        client = SharedInferenceClient(actor_id=0, bufs=bufs, max_actions=8)
+        # Build a fake encoded_list of length 9 (over the 8-cap).
+        encoder = StateActionEncoder()
+        env = GuanDanEnv()
+        env.reset(seed=0)
+        legal = _select_legal(env, env.current_player, max_legal=128)
+        # Force K=9 by replicating any encoded entry
+        encoded = encoder.encode_all(env, env.current_player, legal[:1]) * 9
+        with pytest.raises(AssertionError, match="exceeds inference_max_actions"):
+            client.submit(env.current_player, encoded)
+    finally:
+        release_shared_buffers(bufs, unlink=True)
+
+
+def test_shared_mem_actor_timeout_raises():
+    """If no server is running, the actor's submit() must time out cleanly."""
+    from guandan.guanzero.inference_server import InferenceTimeoutError
+    torch.manual_seed(3)
+    encoder = StateActionEncoder()
+    ctx = mp.get_context("spawn")
+    bufs, _ = allocate_shared_buffers(num_slots=4, max_actions=128, n_actors=1, ctx=ctx)
+    try:
+        client = SharedInferenceClient(actor_id=0, bufs=bufs, timeout_s=0.5, max_actions=128)
+        env = GuanDanEnv()
+        env.reset(seed=0)
+        legal = _select_legal(env, env.current_player, max_legal=128)
+        encoded = encoder.encode_all(env, env.current_player, legal)
+        with pytest.raises(InferenceTimeoutError):
+            client.submit(env.current_player, encoded)
+    finally:
+        release_shared_buffers(bufs, unlink=True)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")

@@ -2654,3 +2654,64 @@ Phase 4.
 
 - [ml/scripts/util/bench_shared_inference.py](ml/scripts/util/bench_shared_inference.py)
 - [ml/scripts/modal/bench_shared_inference_modal.py](ml/scripts/modal/bench_shared_inference_modal.py)
+
+## 46. Shared-inference Phase 4 result: architecture works, throughput regresses (2026-05-07)
+
+End-to-end smoke at 500 updates with the inference server enabled, 32 actors,
+batch=4096, paper-spec net, BF16. Architecture validates: server processes
+1759 batches / 55,698 requests / 308k rows over the 53s steady-state window
+without ANY data-corruption bugs. Numerical equivalence tests still pass.
+
+Throughput is the disappointment:
+
+| metric                  | baseline (no server) | shared inference |
+|---|---|---|
+| learner samp/s          | ~50,000              | ~32,000  (-36%)  |
+| actor production        | ~1,500 samp/s        | ~430 samp/s     |
+| per-actor decision rate | ~95 dec/s            | ~35 dec/s       |
+| forward_ms (steady)     | n/a                  | 30–34 ms        |
+| cum replay @ 60s        | ~12×                 | **49×** (worse) |
+
+### Why shared inference doesn't win here
+
+For paper-spec (LSTM 256 + MLP 1024×6) at typical Guan Dan K ≈ 5–10:
+
+- Local CPU forward: ~1–2 ms (small batch)
+- Server roundtrip: ~10 ms (cold) → ~30 ms (under learner contention)
+  + IPC, batching wait, GPU forward share, response scatter
+
+The IPC + GPU contention cost exceeds the local CPU cost. Server processed
+~2,000 reqs/sec total at peak (limited by `max_requests=32` flushing before
+`max_action_rows=4096` because real K is ~5 not 16 like the bench), giving
+each of 32 actors ~60 dec/s — half the local-CPU rate.
+
+This was warned about in LOGBOOK §43 ("server only earns its keep when forward
+dominates IPC") and confirmed empirically here. The plan's expectation of
+"5-10× actor throughput from shared inference" assumed the model was big
+enough to amortize IPC; paper-spec isn't.
+
+### What Phase 4 still validated
+
+- Shared-memory ring + descriptor queue is correct (no corruption, no
+  protocol errors over 55k requests)
+- Disk-based weight refresh works (server reloaded version 1 and 2 mid-run)
+- Per-actor response slot + mp.Event delivery is correct
+- Actor resilience to inference timeouts (retry-and-continue) keeps the
+  pipeline alive under contention
+- The architecture is ready for use IF the model gets bigger
+
+### What does fix the eval gap
+
+The actual blocker is replay ratio (49× → train mostly on stale data),
+which is independent of whether inference is shared or local. **Phase 5's
+replay-ratio controller** throttles the learner regardless of inference
+backend — that's the fix. Implementing Phase 5 as the next step; the
+shared-inference path stays in tree as a config option for larger-model
+ablations.
+
+### Files
+
+- LOGBOOK §44 confirmed the same diagnosis: "actors are bottlenecked, not
+  the learner — replay ratio is the issue."
+- The plan's Phase 4 acceptance criteria were missed (samp/s -36% vs ≤30%
+  budget, replay ↑ vs ↓ target). Phase 5 takes priority.

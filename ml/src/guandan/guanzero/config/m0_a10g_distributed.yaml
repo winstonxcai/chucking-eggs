@@ -5,7 +5,7 @@
 
 n_actors: 32
 sync_interval_episodes: 20
-actor_push_batch_size: 512
+actor_push_batch_size: 128
 sample_queue_maxsize: 64
 max_drain_batches_per_loop: 16
 publish_interval_updates: 200

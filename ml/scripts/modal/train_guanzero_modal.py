@@ -40,7 +40,7 @@ image = (
 @app.function(
     image=image,
     gpu="A10G",
-    cpu=32,
+    cpu=64,
     memory=64 * 1024,
     timeout=3600 * 6,  # 6-hour cap per CLAUDE.md
     volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},

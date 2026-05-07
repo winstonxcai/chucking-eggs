@@ -49,6 +49,7 @@ import numpy as np
 import torch
 
 from .buffer import collate_encoded
+from .encoder import ENCODE_CHANNEL_SHAPES
 from .q_network import GuanZeroQNet
 
 
@@ -61,36 +62,34 @@ logger = logging.getLogger("guanzero.inference_server")
 NO_VERSION = -1
 
 
-# ─── Field byte layout (must match encoder.py output) ────────
+# ─── Field element layout (derived from encoder.py schema) ───
 
 
-# (key, byte length per row); order matters — these are the offsets the
+def _channel_elements(name: str) -> int:
+    """Number of uint8 elements in one row of ``name``.
+
+    Uses ``ENCODE_CHANNEL_SHAPES`` as the single source of truth so this
+    file never duplicates the per-channel size arithmetic.
+    """
+    import math
+    return math.prod(ENCODE_CHANNEL_SHAPES[name])
+
+
+# (key, element count per row); order matters — these are the offsets the
 # server uses to slice flat state/action tensors back into named channels.
 _STATE_FIELDS: tuple[tuple[str, int], ...] = (
-    ("own_hand",                  108),
-    ("others_hand",               108),
-    ("recent_action_each_player", 4 * 108),
-    ("played_cards_others",       3 * 108),
-    ("remaining_counts_others",   3 * 27),
-    ("level",                     13),
-    ("history",                   20 * 108),
+    ("own_hand",                  _channel_elements("own_hand")),
+    ("others_hand",               _channel_elements("others_hand")),
+    ("recent_action_each_player", _channel_elements("recent_action_each_player")),
+    ("played_cards_others",       _channel_elements("played_cards_others")),
+    ("remaining_counts_others",   _channel_elements("remaining_counts_others")),
+    ("level",                     _channel_elements("level")),
+    ("history",                   _channel_elements("history")),
 )
 _ACTION_FIELDS: tuple[tuple[str, int], ...] = (
-    ("behavior",                  9),
-    ("candidate_action",          108),
+    ("behavior",                  _channel_elements("behavior")),
+    ("candidate_action",          _channel_elements("candidate_action")),
 )
-# Shape per field (used to reshape the sliced flat tensor back to its 2-D form).
-_FIELD_SHAPES: dict[str, tuple[int, ...]] = {
-    "own_hand":                  (108,),
-    "others_hand":               (108,),
-    "recent_action_each_player": (4, 108),
-    "played_cards_others":       (3, 108),
-    "remaining_counts_others":   (3, 27),
-    "level":                     (13,),
-    "history":                   (20, 108),
-    "behavior":                  (9,),
-    "candidate_action":          (108,),
-}
 
 STATE_SIZE  = sum(n for _, n in _STATE_FIELDS)    # 3226
 ACTION_SIZE = sum(n for _, n in _ACTION_FIELDS)   # 117
@@ -978,10 +977,10 @@ class SharedInferenceServer:
         N = state_rows.shape[0]
         out: dict[str, torch.Tensor] = {}
         for name, (lo, hi) in _STATE_OFFSETS.items():
-            shape = (N,) + _FIELD_SHAPES[name]
+            shape = (N,) + ENCODE_CHANNEL_SHAPES[name]
             out[name] = state_rows[:, lo:hi].reshape(*shape)
         for name, (lo, hi) in _ACTION_OFFSETS.items():
-            shape = (N,) + _FIELD_SHAPES[name]
+            shape = (N,) + ENCODE_CHANNEL_SHAPES[name]
             out[name] = actions[:, lo:hi].reshape(*shape)
         return out
 

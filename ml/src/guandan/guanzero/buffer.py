@@ -30,22 +30,11 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from .encoder import ENCODE_CHANNEL_KEYS, ENCODE_CHANNEL_SHAPES
 from .returns import TrainSample
 
-
-# Per-sample shape of each encoded channel. Order matches encoder.encode_all().
-_KEY_SHAPES: dict[str, tuple[int, ...]] = {
-    "own_hand":                  (108,),
-    "others_hand":               (108,),
-    "recent_action_each_player": (4, 108),
-    "played_cards_others":       (3, 108),
-    "remaining_counts_others":   (3, 27),
-    "level":                     (13,),
-    "history":                   (20, 108),
-    "behavior":                  (9,),
-    "candidate_action":          (108,),
-}
-_KEYS = tuple(_KEY_SHAPES.keys())
+_KEY_SHAPES = ENCODE_CHANNEL_SHAPES
+_KEYS = ENCODE_CHANNEL_KEYS
 
 
 class ReplayBuffer:

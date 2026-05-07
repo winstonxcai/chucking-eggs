@@ -16,9 +16,8 @@ Channel shapes match the paper's 3343-dim total when concatenated:
     behavior                  (9,)
     candidate_action          (108,)
 
-The 9-dim behavior channel reuses ``azguan.behavior_flags`` (cooperation /
-dwarfing / assisting × {N/A, doing, refusing}) — that file already
-implements the paper's behavior-status definition exactly.
+The 9-dim behavior channel encodes team-coordination intent:
+cooperating / dwarfing / assisting × {N/A, doing, refusing}.
 """
 
 from __future__ import annotations
@@ -27,10 +26,118 @@ from typing import Iterable
 
 import numpy as np
 
-from ..azguan.behavior_flags import FLAG_DIM, compute_behavior_flags
 from ..cards import Card, ComboType, Rank, make_deck
 from ..combos import Combo
 from ..game import GuanDanEnv
+
+# ─── Canonical channel schema ─────────────────────────────
+#
+# Single source of truth for the encoded-state channel shapes.
+# buffer.py and inference_server.py import these instead of duplicating the
+# layout. Every channel is uint8; the Q-network forward converts to float32.
+
+ENCODE_CHANNEL_SHAPES: dict[str, tuple[int, ...]] = {
+    "own_hand":                  (108,),
+    "others_hand":               (108,),
+    "recent_action_each_player": (4, 108),
+    "played_cards_others":       (3, 108),
+    "remaining_counts_others":   (3, 27),
+    "level":                     (13,),
+    "history":                   (20, 108),
+    "behavior":                  (9,),
+    "candidate_action":          (108,),
+}
+
+ENCODE_CHANNEL_KEYS: tuple[str, ...] = tuple(ENCODE_CHANNEL_SHAPES.keys())
+
+# ─── Behavior flags ──────────────────────────────────────
+
+FLAG_DIM = 9
+
+
+def _is_highest_rank(combo: Combo, level_rank: int) -> bool:
+    if combo.type != ComboType.TRIPLE:
+        return False
+    return all(c.rank == level_rank for c in combo.cards)
+
+
+def compute_behavior_flags(
+    env: GuanDanEnv,
+    player: int,
+    action: Combo,
+    legal_moves: list[Combo],
+) -> np.ndarray:
+    """9-dim flags for (env, player, action). Layout:
+
+      [0:3] cooperating [N/A, doing, refusing]
+      [3:6] dwarfing    [N/A, doing, refusing]
+      [6:9] assisting   [N/A, doing, refusing]
+    """
+    flags = np.zeros(FLAG_DIM, dtype=np.float32)
+    partner = (player + 2) % 4
+    opp_left = (player + 1) % 4
+    opp_right = (player - 1) % 4
+
+    is_pass = action.type == ComboType.PASS
+    is_leading = env.current_trick is None
+
+    # cooperating: partner is winning the trick and we have a beat
+    can_coop = (
+        not is_leading
+        and env.current_trick is not None
+        and env.trick_winner == partner
+        and any(m.type != ComboType.PASS for m in legal_moves)
+    )
+    if not can_coop:
+        flags[0] = 1.0
+    elif is_pass:
+        flags[1] = 1.0
+    else:
+        flags[2] = 1.0
+
+    # dwarfing: leading with a combo larger than min active opponent
+    active_opp_sizes = [
+        len(env.hands[opp_left]) if not env.is_out[opp_left] else None,
+        len(env.hands[opp_right]) if not env.is_out[opp_right] else None,
+    ]
+    active_opp_sizes = [s for s in active_opp_sizes if s is not None]
+    min_opp = min(active_opp_sizes) if active_opp_sizes else 27
+
+    can_dwarf = is_leading and any(
+        m.type != ComboType.PASS and len(m.cards) > min_opp
+        for m in legal_moves
+    )
+
+    action_card_count = len(action.cards) if not is_pass else 0
+
+    if not can_dwarf:
+        flags[3] = 1.0
+    elif not is_pass and action_card_count > min_opp:
+        flags[4] = 1.0
+    else:
+        flags[5] = 1.0
+
+    # assisting: leading small non-strong combo to help partner shed
+    partner_hand_size = len(env.hands[partner])
+    can_assist = is_leading and any(
+        m.type != ComboType.PASS
+        and len(m.cards) < partner_hand_size
+        and not _is_highest_rank(m, env.level_rank)
+        for m in legal_moves
+    )
+
+    if not can_assist:
+        flags[6] = 1.0
+    elif (
+        not is_pass
+        and action_card_count < partner_hand_size
+        and not _is_highest_rank(action, env.level_rank)
+    ):
+        flags[7] = 1.0
+    else:
+        flags[8] = 1.0
+
+    return flags
 
 # ─── Card-id mapping ─────────────────────────────────────
 

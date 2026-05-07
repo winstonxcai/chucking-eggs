@@ -237,8 +237,10 @@ def actor_loop(
             dropout=cfg.dropout,
             use_oracle_others_hand=cfg.use_oracle_others_hand,
         )
-        for net in q_nets.values():
+        for p, net in list(q_nets.items()):
             net.eval()
+            if cfg.compile_actor:
+                q_nets[p] = torch.compile(net, dynamic=True)
     else:
         q_nets = None
 

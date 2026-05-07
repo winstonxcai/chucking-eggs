@@ -93,7 +93,8 @@ class _ActorProfiler:
         if episodes > 0:
             lines.append(f"  decisions/episode (avg) : {n_dec / episodes:.1f}")
         lines.append(f"  legal_actions/decision  : {n_legal / n_dec:.1f}")
-        for ph in ("legal_actions", "encode_all", "q_forward", "inference_submit",
+        for ph in ("legal_actions", "encode_all", "q_forward", "q_collate",
+                   "q_net_forward", "q_argmax_item", "inference_submit",
                    "env_step"):
             if ph in self.times:
                 lines.append(f"  {ph:22s}: {1000*self.times[ph]/n_dec:.3f} ms/decision")
@@ -165,8 +166,16 @@ def play_episode(
                 idx, _server_version = inference_client.submit(p, encoded_list)
         else:
             net = q_nets[p]
-            with prof.time("q_forward"):
-                idx = _argmax_q(net, encoded_list, device)
+            # Inlined and instrumented version of _argmax_q so we can see
+            # where time goes in the local-CPU forward path: collate (np.stack
+            # + H2D), the actual q-net forward, then argmax+.item() on CPU.
+            with prof.time("q_collate"):
+                batch = collate_encoded(encoded_list, device=device)
+            with prof.time("q_net_forward"):
+                with torch.no_grad():
+                    q_vals = net(batch)
+            with prof.time("q_argmax_item"):
+                idx = int(q_vals.argmax().item())
 
         trajectory.append({"player": p, "encoded": encoded_list[idx]})
         with prof.time("env_step"):

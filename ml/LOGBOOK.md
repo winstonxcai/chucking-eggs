@@ -3205,3 +3205,34 @@ breaks the actor/learner balance.
 Modal launcher updated to `gpu="L4"`. Save ~$0.30/hr ≈ $0.72 per
 40M-sample run, ~$3 per 200k-update run. Worth it for any non-deadline
 production training.
+
+## 55. T4 GPU bench: cheaper hourly but slower per-sample (2026-05-07)
+
+T4 is $0.59/hr GPU (-26% vs L4's $0.80). Did the savings translate?
+
+| GPU  | $/hr  | actor samp/s | $/M-samples | 40M-sample cost |
+|---|---:|---:|---:|---:|
+| A10G | $2.37 | 4,951        | $0.133      | $5.32           |
+| **L4** | **$2.06** | **5,029**  | **$0.114**  | **$4.55**       |
+| T4   | $1.85 | 4,384        | $0.117      | $4.69           |
+
+T4 saves $0.21/hr on GPU but **actor throughput drops 13%**
+(5,029 → 4,384 samp/s). Net cost-per-sample is ~2.5% **higher** than L4.
+
+### Why T4 hurts actor throughput
+
+Actors don't use the GPU — they run paper-spec forward on CPU. The
+throughput drop comes from the **host CPU**:
+- T4 → AWS g4dn instances (Intel Cascade Lake Xeon, ~2nd gen)
+- L4 → AWS g6 instances (Intel Sapphire Rapids Xeon, ~4th gen)
+- ~10-15% per-core perf gap on compute-bound paper-spec forward
+
+GPU choice on Modal implicitly picks a host generation. The cheapest
+GPU silicon doesn't necessarily come with the cheapest *system*.
+
+### Production decision
+
+Stay on **L4**. T4 only wins if your workload is GPU-bound enough that
+the 4× tensor-core headroom of L4 is wasted (true here — we use ~5%
+of L4's TFLOPS) but you'd still need to overcome the CPU host gap.
+For paper-spec on Modal, that doesn't pan out.

@@ -21,8 +21,6 @@ from guandan.guanzero.encoder import StateActionEncoder
 from guandan.guanzero.inference_server import (
     InferenceClient,
     InferenceServer,
-    SharedInferenceClient,
-    SharedInferenceServer,
     allocate_shared_buffers,
     release_shared_buffers,
 )
@@ -74,111 +72,7 @@ def _local_argmaxes(
     return out
 
 
-def _server_argmaxes(
-    q_nets: Mapping[int, GuanZeroQNet],
-    decisions: list[tuple[int, list[dict]]],
-    device: str = "cpu",
-    max_requests: int = 8,
-    timeout_ms: float = 50.0,
-) -> list[int]:
-    """In-process server: run the InferenceServer in a background thread,
-    submit decisions one at a time as if from a single actor.
-
-    Using a thread (not subprocess) for the test keeps it deterministic and
-    avoids spawning fresh torch processes for every test run.
-    """
-    ctx = mp.get_context("spawn")
-    request_queue = ctx.Queue()
-    response_queue = ctx.Queue()
-    stop_event = ctx.Event()
-
-    server = InferenceServer(
-        q_nets=q_nets,
-        request_queue=request_queue,
-        response_queues={0: response_queue},
-        stop_event=stop_event,
-        device=device,
-        max_requests=max_requests,
-        max_action_rows=8192,
-        timeout_ms=timeout_ms,
-        use_bf16=False,
-    )
-
-    # Run server in a daemon thread so we can submit from main and then signal stop.
-    server_thread = threading.Thread(target=server.server_loop, daemon=True)
-    server_thread.start()
-
-    client = InferenceClient(
-        actor_id=0,
-        request_queue=request_queue,
-        response_queue=response_queue,
-        timeout_s=10.0,
-    )
-
-    out: list[int] = []
-    try:
-        for seat, encoded in decisions:
-            chosen, _ver = client.submit(seat, encoded)
-            out.append(chosen)
-    finally:
-        stop_event.set()
-        server_thread.join(timeout=5.0)
-    return out
-
-
 # ─── tests ───────────────────────────────────────────────────
-
-
-def test_cpu_equivalence_argmax_matches_local():
-    """For matching weights, the server's argmax must equal the local-CPU
-    `argmax_q` path for every decision. CPU FP is deterministic so this
-    must be exact."""
-    torch.manual_seed(0)
-    # Tiny net for fast test; equivalence is architecture-independent.
-    q_nets = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
-    for net in q_nets.values():
-        net.eval()
-
-    decisions = _build_decisions(n=20, seed=42)
-    assert len(decisions) == 20
-
-    expected = _local_argmaxes(q_nets, decisions, device="cpu")
-    actual   = _server_argmaxes(q_nets, decisions, device="cpu")
-
-    assert actual == expected, (
-        f"server argmax diverged from local argmax_q.\n"
-        f"  expected={expected}\n"
-        f"  actual  ={actual}"
-    )
-
-
-def test_batched_requests_match_serial():
-    """The server batches across decisions; argmax over each request's K-row
-    slice must still pick the same index as a per-decision local forward."""
-    torch.manual_seed(1)
-    q_nets = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
-    for net in q_nets.values():
-        net.eval()
-
-    decisions = _build_decisions(n=12, seed=99)
-    assert len(decisions) == 12
-
-    expected = _local_argmaxes(q_nets, decisions, device="cpu")
-    # Force batching by setting max_requests high — server will drain the
-    # whole load before the timeout hits, exercising the per-seat slicing path.
-    actual = _server_argmaxes(
-        q_nets, decisions, device="cpu",
-        max_requests=12, timeout_ms=200.0,
-    )
-
-    assert actual == expected, (
-        f"batched server argmax diverged from per-request local argmax.\n"
-        f"  expected={expected}\n"
-        f"  actual  ={actual}"
-    )
-
-
-# ─── Phase 2: shared-memory client/server ────────────────────
 
 
 def _shared_argmaxes(
@@ -205,7 +99,7 @@ def _shared_argmaxes(
     )
     stop_event = ctx.Event()
 
-    server = SharedInferenceServer(
+    server = InferenceServer(
         q_nets=q_nets,
         bufs=bufs,
         stop_event=stop_event,
@@ -219,7 +113,7 @@ def _shared_argmaxes(
     server_thread = threading.Thread(target=server.server_loop, daemon=True)
     server_thread.start()
 
-    client = SharedInferenceClient(
+    client = InferenceClient(
         actor_id=0,
         bufs=bufs,
         timeout_s=10.0,
@@ -284,7 +178,7 @@ def test_shared_mem_client_rejects_oversize_K():
     ctx = mp.get_context("spawn")
     bufs, _ = allocate_shared_buffers(num_slots=4, max_actions=8, n_actors=1, ctx=ctx)
     try:
-        client = SharedInferenceClient(actor_id=0, bufs=bufs, max_actions=8)
+        client = InferenceClient(actor_id=0, bufs=bufs, max_actions=8)
         # Build a fake encoded_list of length 9 (over the 8-cap).
         encoder = StateActionEncoder()
         env = GuanDanEnv()
@@ -306,7 +200,7 @@ def test_shared_mem_actor_timeout_raises():
     ctx = mp.get_context("spawn")
     bufs, _ = allocate_shared_buffers(num_slots=4, max_actions=128, n_actors=1, ctx=ctx)
     try:
-        client = SharedInferenceClient(actor_id=0, bufs=bufs, timeout_s=0.5, max_actions=128)
+        client = InferenceClient(actor_id=0, bufs=bufs, timeout_s=0.5, max_actions=128)
         env = GuanDanEnv()
         env.reset(seed=0)
         legal = select_legal(env, env.current_player)
@@ -331,7 +225,7 @@ def test_cuda_tolerance_argmax_matches_local_or_near_tie():
     decisions = _build_decisions(n=10, seed=42)
 
     expected_cpu = _local_argmaxes(q_nets, decisions, device="cpu")
-    actual_cuda  = _server_argmaxes(q_nets, decisions, device="cuda")
+    actual_cuda  = _shared_argmaxes(q_nets, decisions, device="cuda")
 
     # For each decision where they differ, verify the gap is below tolerance
     # by computing both Q-vectors on CPU and checking near-tie.

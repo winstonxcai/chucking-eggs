@@ -137,7 +137,7 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
             "use_oracle_others_hand": cfg.use_oracle_others_hand,
         }
         inf_server_proc = ctx.Process(
-            target=_isrv.shared_server_loop_entry,
+            target=_isrv.run_server,
             args=(
                 cfg_dict, q_net_kwargs, inf_meta,
                 inf_bufs.free_slots, inf_bufs.request_queue, inf_bufs.events,

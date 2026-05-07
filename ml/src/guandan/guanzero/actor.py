@@ -228,6 +228,168 @@ def play_episode(
         return compute_mc_returns(trajectory, rewards, gamma=gamma)
 
 
+# ─── Vectorized rollouts (env lanes per actor) ───────────
+
+
+@dataclasses.dataclass
+class _Lane:
+    """One independent Guan Dan game lane within a vectorized actor."""
+    env:                GuanDanEnv
+    trajectory:         list[dict]
+    episode_seed:       int
+    episodes_completed: int = 0
+
+
+class VectorizedRollout:
+    """N independent Guan Dan game lanes inside one actor process.
+
+    All lanes share the actor's local q_nets and encoder. Each call to
+    ``step_round(eps)`` does:
+
+      1. for each finished lane: compute MC returns, append to output,
+         reset the lane with a new episode
+      2. for each active lane: compute legal moves, encode all candidates;
+         classify the decision as shortcut / epsilon / greedy
+      3. group all greedy decisions by current seat; run one batched
+         forward per seat (much larger flat batch than the per-lane K)
+      4. step every lane with its chosen action (greedy, shortcut, or eps)
+
+    Returns: list[TrainSample] from any episodes that finished this round.
+
+    With ``num_lanes=1`` this degrades to the same behavior as the original
+    one-env-per-actor path (one decision per round, group of size 1).
+    """
+
+    def __init__(
+        self,
+        num_lanes:         int,
+        q_nets:            Mapping[int, GuanZeroQNet],
+        encoder:           StateActionEncoder,
+        max_legal_actions: int,
+        gamma:             float,
+        device:            torch.device,
+        rng:               random.Random,
+        profiler:          _ActorProfiler | None = None,
+    ) -> None:
+        self.q_nets            = q_nets
+        self.encoder           = encoder
+        self.max_legal_actions = max_legal_actions
+        self.gamma             = gamma
+        self.device            = device
+        self.rng               = rng
+        self.prof              = profiler if profiler is not None else _ActorProfiler(enabled=False)
+
+        self.lanes: list[_Lane] = []
+        for _ in range(num_lanes):
+            seed = rng.randint(0, 10_000_000)
+            env = GuanDanEnv()
+            env.reset(seed=seed)
+            self.lanes.append(_Lane(env=env, trajectory=[], episode_seed=seed))
+
+    @property
+    def total_episodes_completed(self) -> int:
+        return sum(l.episodes_completed for l in self.lanes)
+
+    def step_round(self, eps: float) -> list[TrainSample]:
+        prof = self.prof
+        output: list[TrainSample] = []
+
+        # 1. Resolve any finished episodes
+        for lane in self.lanes:
+            if lane.env.done:
+                with prof.time("mc_returns"):
+                    samples = compute_mc_returns(
+                        lane.trajectory, lane.env.get_rewards(), gamma=self.gamma,
+                    )
+                output.extend(samples)
+                lane.episodes_completed += 1
+                # Reset for the next episode
+                new_seed = self.rng.randint(0, 10_000_000)
+                env = GuanDanEnv()
+                env.reset(seed=new_seed)
+                lane.env = env
+                lane.trajectory = []
+                lane.episode_seed = new_seed
+
+        # 2. Per-lane: legal moves + encode + classification
+        immediate: list[tuple] = []      # (lane_id, seat, idx, encoded_list, legal)
+        pending_greedy: list[dict] = []  # batched forward path
+
+        for lane_id, lane in enumerate(self.lanes):
+            env = lane.env
+            p = env.current_player
+            with prof.time("legal_actions"):
+                legal = _select_legal(env, p, self.max_legal_actions)
+            K = len(legal)
+            bucket = _k_bucket(K)
+            prof.add_count("num_decisions", 1)
+            prof.add_count("num_legal_actions", K)
+            prof.add_count(f"decisions_{bucket}", 1)
+
+            with prof.time("encode_all"):
+                encoded_list = self.encoder.encode_all(env, p, legal)
+
+            if K == 1:
+                immediate.append((lane_id, p, 0, encoded_list, legal))
+                prof.add_count("shortcut_K1", 1)
+            elif self.rng.random() < eps:
+                immediate.append((lane_id, p, self.rng.randrange(K), encoded_list, legal))
+            else:
+                pending_greedy.append({
+                    "lane_id":      lane_id,
+                    "seat":         p,
+                    "encoded_list": encoded_list,
+                    "legal":        legal,
+                })
+
+        # 3. Group greedy by seat → one batched forward per seat
+        if pending_greedy:
+            by_seat: dict[int, list[dict]] = {p: [] for p in range(4)}
+            for item in pending_greedy:
+                by_seat[item["seat"]].append(item)
+
+            for seat, items in by_seat.items():
+                if not items:
+                    continue
+                # Flatten encoded rows; remember per-lane row spans
+                flat: list[dict] = []
+                spans: list[tuple] = []   # (item, start_row, end_row)
+                cur = 0
+                for it in items:
+                    n = len(it["encoded_list"])
+                    flat.extend(it["encoded_list"])
+                    spans.append((it, cur, cur + n))
+                    cur += n
+
+                with prof.time("q_collate_grouped"):
+                    batch = collate_encoded(flat, device=self.device)
+
+                # Bucket by total flat group size (sum of K across lanes)
+                group_bucket = _k_bucket(cur)
+                prof.add_count("greedy_groups", 1)
+                prof.add_count(f"greedy_group_rows_{group_bucket}", cur)
+                with prof.time(f"q_net_forward_grouped_{group_bucket}"):
+                    with torch.no_grad():
+                        q_vals = self.q_nets[seat](batch)
+
+                with prof.time("q_argmax_grouped"):
+                    for it, start, end in spans:
+                        idx = int(q_vals[start:end].argmax().item())
+                        immediate.append(
+                            (it["lane_id"], it["seat"], idx,
+                             it["encoded_list"], it["legal"])
+                        )
+
+        # 4. Step every lane (immediate + greedy collapsed into one list)
+        for lane_id, seat, idx, encoded_list, legal in immediate:
+            lane = self.lanes[lane_id]
+            lane.trajectory.append({"player": seat, "encoded": encoded_list[idx]})
+            with prof.time("env_step"):
+                lane.env.step(legal[idx])
+
+        return output
+
+
 # ─── Distributed actor helpers ───────────────────────────
 
 
@@ -309,6 +471,50 @@ def actor_loop(
     prof = _ActorProfiler(enabled=profile_enabled)
     snapshot_every_episodes = max(1, cfg.log_every_updates * 10)
 
+    # Branch on env_lanes_per_actor: 1 (default) keeps the original
+    # one-episode-at-a-time loop. >1 routes through VectorizedRollout so
+    # decisions across lanes are batched into one forward per seat per round.
+    use_lanes = (
+        inference_client is None
+        and getattr(cfg, "env_lanes_per_actor", 1) > 1
+    )
+
+    rollout: VectorizedRollout | None = None
+    if use_lanes:
+        rollout = VectorizedRollout(
+            num_lanes         = cfg.env_lanes_per_actor,
+            q_nets            = q_nets,
+            encoder           = encoder,
+            max_legal_actions = cfg.max_legal_actions,
+            gamma             = cfg.gamma,
+            device            = torch.device("cpu"),
+            rng               = rng,
+            profiler          = prof,
+        )
+
+    def _push_buffered() -> None:
+        """Drain accumulated samples to the learner queue if we have a full batch."""
+        nonlocal buf_dicts, buf_players, buf_returns
+        if len(buf_dicts) < cfg.actor_push_batch_size:
+            return
+        with prof.time("buffer_stack"):
+            stacked = {k: np.stack([d[k] for d in buf_dicts], axis=0) for k in _KEYS}
+            msg = {
+                "actor_id": actor_id,
+                "version":  local_version,
+                "stacked":  stacked,
+                "players":  np.asarray(buf_players, dtype=np.int8),
+                "returns":  np.asarray(buf_returns, dtype=np.float32),
+            }
+        with prof.time("queue_put"):
+            try:
+                sample_queue.put(msg, timeout=5)
+            except Exception:
+                pass   # queue full or closed — drop and continue
+        buf_dicts.clear()
+        buf_players.clear()
+        buf_returns.clear()
+
     n_inference_timeouts = 0
     while not stop_event.is_set():
         # Periodic weight sync — only on the local-CPU path; the inference
@@ -318,63 +524,52 @@ def actor_loop(
                 local_version = maybe_sync_weights(q_nets, weight_dir, local_version)
 
         eps  = _epsilon(episode_count + actor_id, cfg)
-        seed = rng.randint(0, 10_000_000)
 
-        try:
-            samples = play_episode(
-                q_nets=q_nets,
-                encoder=encoder,
-                epsilon=eps,
-                max_legal_actions=cfg.max_legal_actions,
-                seed=seed,
-                device="cpu",
-                gamma=cfg.gamma,
-                inference_client=inference_client,
-                profiler=prof,
-            )
-        except Exception as e:
-            # InferenceTimeoutError or any other transient failure: skip this
-            # episode and try again. Actor processes that crash here are gone
-            # for the rest of the run — surviving the timeout keeps the buffer
-            # producer pipeline alive.
-            from .inference_server import InferenceTimeoutError
-            if isinstance(e, InferenceTimeoutError):
-                n_inference_timeouts += 1
-                if n_inference_timeouts <= 3 or n_inference_timeouts % 10 == 0:
-                    print(f"[actor-{actor_id}] inference timeout #{n_inference_timeouts}: {e}",
-                          flush=True)
-                # Brief sleep before retrying so we don't busy-loop if the server
-                # is wedged. stop_event check below caps it.
-                if stop_event.wait(timeout=0.5):
-                    break
-                continue
-            # Anything else: re-raise (don't hide real bugs)
-            raise
-        episode_count += 1
+        if rollout is not None:
+            # Vectorized lane mode: one round of batched decisions
+            samples = rollout.step_round(eps)
+            episode_count = rollout.total_episodes_completed
+        else:
+            # Single-env mode (or server-mode): play one full episode
+            seed = rng.randint(0, 10_000_000)
+            try:
+                samples = play_episode(
+                    q_nets=q_nets,
+                    encoder=encoder,
+                    epsilon=eps,
+                    max_legal_actions=cfg.max_legal_actions,
+                    seed=seed,
+                    device="cpu",
+                    gamma=cfg.gamma,
+                    inference_client=inference_client,
+                    profiler=prof,
+                )
+            except Exception as e:
+                # InferenceTimeoutError or any other transient failure: skip this
+                # episode and try again. Actor processes that crash here are gone
+                # for the rest of the run — surviving the timeout keeps the buffer
+                # producer pipeline alive.
+                from .inference_server import InferenceTimeoutError
+                if isinstance(e, InferenceTimeoutError):
+                    n_inference_timeouts += 1
+                    if n_inference_timeouts <= 3 or n_inference_timeouts % 10 == 0:
+                        print(f"[actor-{actor_id}] inference timeout #{n_inference_timeouts}: {e}",
+                              flush=True)
+                    # Brief sleep before retrying so we don't busy-loop if the server
+                    # is wedged. stop_event check below caps it.
+                    if stop_event.wait(timeout=0.5):
+                        break
+                    continue
+                # Anything else: re-raise (don't hide real bugs)
+                raise
+            episode_count += 1
 
         for s in samples:
             buf_dicts.append(s.encoded)
             buf_players.append(s.player)
             buf_returns.append(s.mc_return)
 
-        if len(buf_dicts) >= cfg.actor_push_batch_size:
-            with prof.time("buffer_stack"):
-                stacked = {k: np.stack([d[k] for d in buf_dicts], axis=0) for k in _KEYS}
-                msg = {
-                    "actor_id": actor_id,
-                    "version":  local_version,
-                    "stacked":  stacked,
-                    "players":  np.asarray(buf_players, dtype=np.int8),
-                    "returns":  np.asarray(buf_returns, dtype=np.float32),
-                }
-            with prof.time("queue_put"):
-                try:
-                    sample_queue.put(msg, timeout=5)
-                except Exception:
-                    pass   # queue full or closed — drop and continue
-            buf_dicts.clear()
-            buf_players.clear()
-            buf_returns.clear()
+        _push_buffered()
 
         # Periodic snapshot to stdout — first actor only, to avoid 32× spam.
         if (profile_enabled and actor_id == 0

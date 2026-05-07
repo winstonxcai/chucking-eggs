@@ -77,6 +77,8 @@ class TrainConfig:
     # ── A10G / CUDA throughput knobs ──────────────────────
     use_bf16_learner: bool = False     # BF16 autocast in Learner.update (cuda only)
     compile_mode: str = "default"      # passes to torch.compile(mode=...)
+    compile_actor: bool = False        # torch.compile actor q-nets (LOGBOOK §50: regresses paper-spec)
+    env_lanes_per_actor: int = 1       # >1 enables VectorizedRollout for batched per-seat fwd
 
     # ── Shared GPU inference server (Phase 4+) ────────────
     # When true, actors send inference requests to a shared GPU server instead

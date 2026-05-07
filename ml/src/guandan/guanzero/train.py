@@ -25,6 +25,7 @@ from tqdm import tqdm
 
 from .actor import play_episode
 from .buffer import ReplayBuffer
+from .checkpoint import save_checkpoint
 from .encoder import StateActionEncoder
 from .learner import Learner
 from .q_network import init_position_nets
@@ -198,23 +199,6 @@ def _fmt_eta(elapsed_s: float, ep: int, total: int) -> str:
     return f"{s}s"
 
 
-def _save_checkpoint(
-    path: Path,
-    q_nets: dict[int, Any],
-    cfg: TrainConfig,
-    episode: int,
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _unwrap = lambda net: getattr(net, "_orig_mod", net)
-    torch.save(
-        {
-            "episode": episode,
-            "config": dataclasses.asdict(cfg),
-            "q_nets": {p: _unwrap(q_nets[p]).state_dict() for p in range(4)},
-        },
-        path,
-    )
-
 
 def train(cfg: TrainConfig) -> None:
     random.seed(cfg.seed)
@@ -325,12 +309,12 @@ def train(cfg: TrainConfig) -> None:
 
         if ep % cfg.checkpoint_every_episodes == 0 or ep == cfg.episodes:
             ckpt = run_dir / "checkpoints" / f"ep_{ep:07d}.pt"
-            _save_checkpoint(ckpt, q_nets, cfg, ep)
+            save_checkpoint(ckpt, q_nets, cfg, ep)
             logger.debug("checkpoint saved → %s", ckpt)
 
     bar.close()
     final_ckpt = run_dir / "checkpoints" / "final.pt"
-    _save_checkpoint(final_ckpt, q_nets, cfg, cfg.episodes)
+    save_checkpoint(final_ckpt, q_nets, cfg, cfg.episodes)
     elapsed = time.time() - t0
     h, m, s = int(elapsed // 3600), int((elapsed % 3600) // 60), int(elapsed % 60)
     sep = "=" * 68

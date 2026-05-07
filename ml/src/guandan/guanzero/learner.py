@@ -24,6 +24,7 @@ import torch
 import torch.nn.functional as F
 
 from .buffer import ReplayBuffer
+from .checkpoint import save_checkpoint, unwrap_compiled
 from .q_network import GuanZeroQNet, init_position_nets
 
 
@@ -178,15 +179,12 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int) -> None:
     tmp   = weight_dir / f"weights_{version}.tmp"
     final = weight_dir / f"weights_{version}.pt"
 
-    def _unwrap(net):
-        # torch.compile wraps in _orig_mod; actors load into plain nets
-        return getattr(net, "_orig_mod", net)
-
     torch.save(
         {
             "version": version,
             "state_dicts": {
-                p: {k: v.detach().cpu() for k, v in _unwrap(q_nets[p]).state_dict().items()}
+                p: {k: v.detach().cpu()
+                    for k, v in unwrap_compiled(q_nets[p]).state_dict().items()}
                 for p in range(4)
             },
         },
@@ -247,7 +245,7 @@ def learner_loop(
     """
     # Lazy import here — this function runs in a spawned child process where
     # the full guanzero package is re-imported from scratch.
-    from .train import TrainConfig, _save_checkpoint
+    from .train import TrainConfig
 
     cfg = TrainConfig(**{k: v for k, v in cfg_dict.items()
                          if k in {f.name for f in dataclasses.fields(TrainConfig)}})
@@ -402,7 +400,7 @@ def learner_loop(
         # 4. Checkpoint
         if total_updates % cfg.checkpoint_every_updates == 0:
             ckpt = run_dir / "checkpoints" / f"update_{total_updates:08d}.pt"
-            _save_checkpoint(ckpt, q_nets, cfg, total_updates)
+            save_checkpoint(ckpt, q_nets, cfg, total_updates)
             logger.info("checkpoint → %s", ckpt)
 
         # 5. Metrics log
@@ -502,7 +500,7 @@ def learner_loop(
 
     # Final checkpoint on clean shutdown
     if total_updates > 0:
-        _save_checkpoint(
+        save_checkpoint(
             run_dir / "checkpoints" / "final.pt",
             q_nets, cfg, total_updates,
         )

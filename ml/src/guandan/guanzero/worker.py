@@ -181,28 +181,12 @@ def actor_loop(
 
 
 def _build_inference_client(actor_id: int, inference_args: dict, cfg) -> "object":
-    """Construct a InferenceClient inside the actor subprocess.
-
-    ``inference_args`` carries the SharedBufferMeta plus queue/event handles
-    from the parent. The actor reattaches to shared-memory blocks here since
-    spawn-context children don't inherit parent mappings.
-    """
-    from .inference_server import (
-        InferenceClient,
-        attach_shared_buffers,
-    )
-    bufs = attach_shared_buffers(
-        meta            = inference_args["meta"],
-        free_slots      = inference_args["free_slots"],
-        request_queue   = inference_args["request_queue"],
-        events          = inference_args["events"],
-        weights_version = inference_args.get("weights_version"),
-    )
-    return InferenceClient(
-        actor_id    = actor_id,
-        bufs        = bufs,
-        timeout_s   = cfg.inference.timeout_s,
-        max_actions = cfg.inference.max_actions,
+    from .inference_server import build_client
+    return build_client(
+        actor_id       = actor_id,
+        inference_args = inference_args,
+        timeout_s      = cfg.inference.timeout_s,
+        max_actions    = cfg.inference.max_actions,
     )
 
 

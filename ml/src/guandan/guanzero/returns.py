@@ -11,7 +11,7 @@ discounted returns (e.g. shaped intermediate rewards).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, TypedDict
 
 import numpy as np
 
@@ -22,7 +22,13 @@ import numpy as np
 TERMINAL_REWARD_SCALE = 3.0
 
 
-@dataclass
+class TrajectoryStep(TypedDict):
+    """One timestep produced by the actor rollout, before MC return is assigned."""
+    player: int
+    encoded: dict[str, np.ndarray]
+
+
+@dataclass(slots=True, frozen=True)
 class TrainSample:
     player: int
     encoded: dict[str, np.ndarray]
@@ -34,7 +40,7 @@ def normalize_terminal_rewards(rewards: Mapping[int, float]) -> dict[int, float]
 
 
 def compute_mc_returns(
-    trajectory: list[dict],
+    trajectory: list[TrajectoryStep],
     terminal_rewards: Mapping[int, float],
     gamma: float = 1.0,
 ) -> list[TrainSample]:
@@ -56,7 +62,7 @@ def compute_mc_returns(
 
     returns = [0.0] * len(trajectory)
     for p, idxs in by_player.items():
-        terminal = norm.get(p, 0.0)
+        terminal = norm[p]
         g = terminal  # last step on p's trajectory carries the full reward
         for i in reversed(idxs):
             returns[i] = g
@@ -72,4 +78,10 @@ def compute_mc_returns(
     ]
 
 
-__all__ = ["TrainSample", "compute_mc_returns", "normalize_terminal_rewards"]
+__all__ = [
+    "TrajectoryStep",
+    "TrainSample",
+    "compute_mc_returns",
+    "normalize_terminal_rewards",
+    "TERMINAL_REWARD_SCALE",
+]

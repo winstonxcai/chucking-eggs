@@ -131,6 +131,33 @@ class Learner:
         return out
 
 
+# ─── Metrics row ─────────────────────────────────────────
+
+
+@dataclasses.dataclass
+class LearnerMetricsRow:
+    """One row written to ``metrics_learner.jsonl`` per log interval."""
+    updates:                 int
+    version:                 int
+    buffer_total:            int
+    buffer_per_player:       dict[int, int]
+    loss:                    dict[str, float]
+    elapsed_s:               float
+    upd_per_sec:             float
+    samples_per_sec:         float
+    cum_upd_per_sec:         float
+    queue_depth:             int
+    gpu_mem_gb:              float | None
+    drained_since_last_log:  int
+    cumulative_drained:      int
+    fresh_samples_total:     int
+    actor_rate_samp_per_sec: float
+    replay_interval:         float | None
+    replay_cumulative:       float | None
+    throttle_sleeps:         int
+    throttle_sleep_s:        float
+
+
 # ─── Atomic weight publishing ─────────────────────────────
 
 
@@ -410,29 +437,29 @@ def learner_loop(
                 ema_actor_rate = interval_actor_rate
             else:
                 ema_actor_rate = 0.5 * ema_actor_rate + 0.5 * interval_actor_rate
-            row = {
-                "updates": total_updates,
-                "version": version,
-                "buffer_total": buffer.total_size(),
-                "buffer_per_player": {p: buffer.size(p) for p in range(4)},
-                "loss": {str(p): round(v, 6) for p, v in last_losses.items()},
-                "elapsed_s": round(elapsed, 1),
-                "upd_per_sec": round(interval_upd_per_sec, 3),
-                "samples_per_sec": round(interval_samp_per_sec, 1),
-                "cum_upd_per_sec": round(cum_upd_per_sec, 3),
-                "queue_depth": queue_depth,
-                "gpu_mem_gb": gpu_mem_gb,
-                "drained_since_last_log": drained_since_log,
-                "cumulative_drained": cumulative_drained,
-                "fresh_samples_total": fresh_samples_total,
-                "actor_rate_samp_per_sec": round(ema_actor_rate, 1),
-                "replay_interval": round(interval_replay, 2) if interval_replay != float("inf") else None,
-                "replay_cumulative": round(cum_replay, 2) if cum_replay != float("inf") else None,
-                "throttle_sleeps": n_throttle_sleeps,
-                "throttle_sleep_s": round(throttle_sleep_total_s, 2),
-            }
+            row = LearnerMetricsRow(
+                updates                 = total_updates,
+                version                 = version,
+                buffer_total            = buffer.total_size(),
+                buffer_per_player       = {p: buffer.size(p) for p in range(4)},
+                loss                    = {str(p): round(v, 6) for p, v in last_losses.items()},
+                elapsed_s               = round(elapsed, 1),
+                upd_per_sec             = round(interval_upd_per_sec, 3),
+                samples_per_sec         = round(interval_samp_per_sec, 1),
+                cum_upd_per_sec         = round(cum_upd_per_sec, 3),
+                queue_depth             = queue_depth,
+                gpu_mem_gb              = gpu_mem_gb,
+                drained_since_last_log  = drained_since_log,
+                cumulative_drained      = cumulative_drained,
+                fresh_samples_total     = fresh_samples_total,
+                actor_rate_samp_per_sec = round(ema_actor_rate, 1),
+                replay_interval         = round(interval_replay, 2) if interval_replay != float("inf") else None,
+                replay_cumulative       = round(cum_replay, 2) if cum_replay != float("inf") else None,
+                throttle_sleeps         = n_throttle_sleeps,
+                throttle_sleep_s        = round(throttle_sleep_total_s, 2),
+            )
             with metrics_path.open("a") as f:
-                f.write(json.dumps(row) + "\n")
+                f.write(json.dumps(dataclasses.asdict(row)) + "\n")
             logger.info(
                 "updates=%d ver=%d buf=%d loss=%s  %.0f samp/s (%.2f upd/s)  replay=%.1fx(int)/%.1fx(cum)  q=%d gpu=%sGB drained=%d  ETA %dh%02dm",
                 total_updates, version, buffer.total_size(),
@@ -470,6 +497,7 @@ def learner_loop(
 
 __all__ = [
     "Learner",
+    "LearnerMetricsRow",
     "publish_weights",
     "load_latest_weights",
     "learner_loop",

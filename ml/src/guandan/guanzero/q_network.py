@@ -82,4 +82,4 @@ def init_seat_nets(cfg: QNetConfig) -> dict[int, GuanZeroQNet]:
     return {p: GuanZeroQNet(cfg) for p in range(4)}
 
 
-__all__ = ["GuanZeroQNet", "init_seat_nets", "HISTORY_LEN"]
+__all__ = ["GuanZeroQNet", "init_seat_nets"]

@@ -32,7 +32,7 @@ import time
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from multiprocessing import shared_memory
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional, TypedDict
 
 import numpy as np
 import torch
@@ -258,6 +258,44 @@ def release_shared_buffers(bufs: SharedBuffers, unlink: bool) -> None:
 
 
 # ── Actor side ──────────────────────────────────────────────
+
+
+class InferenceArgs(TypedDict):
+    """Shared-memory handles passed from the training process to each actor.
+
+    Produced by ``train.py`` after ``allocate_shared_buffers``; consumed by
+    ``build_client`` inside each spawned actor subprocess.
+    """
+    meta:          "SharedBufferMeta"
+    free_slots:    Any   # mp.Semaphore — slot ownership
+    request_queue: Any   # mp.Queue[RequestDesc]
+    events:        Any   # list[mp.Event] — per-actor response signals
+
+
+def build_client(
+    actor_id:       int,
+    inference_args: InferenceArgs,
+    timeout_s:      float,
+    max_actions:    int,
+) -> "InferenceClient":
+    """Construct an ``InferenceClient`` inside a spawned actor subprocess.
+
+    Reattaches to shared-memory blocks here because spawn-context children
+    do not inherit parent memory mappings.
+    """
+    bufs = attach_shared_buffers(
+        meta            = inference_args["meta"],
+        free_slots      = inference_args["free_slots"],
+        request_queue   = inference_args["request_queue"],
+        events          = inference_args["events"],
+        weights_version = inference_args.get("weights_version"),
+    )
+    return InferenceClient(
+        actor_id    = actor_id,
+        bufs        = bufs,
+        timeout_s   = timeout_s,
+        max_actions = max_actions,
+    )
 
 
 class InferenceClient:
@@ -780,9 +818,11 @@ def run_server(
 
 
 __all__ = [
+    "InferenceArgs",
     "InferenceClient",
     "InferenceServer",
     "run_server",
+    "build_client",
     "SharedBuffers",
     "SharedBufferMeta",
     "RequestDesc",

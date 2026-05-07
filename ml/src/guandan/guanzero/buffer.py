@@ -36,6 +36,8 @@ from .returns import TrainSample
 _KEY_SHAPES = ENCODE_CHANNEL_SHAPES
 _KEYS = ENCODE_CHANNEL_KEYS
 
+Batch = tuple[dict[str, torch.Tensor], torch.Tensor]
+
 
 class ReplayBuffer:
     """Per-player circular FIFO buffer of contiguous uint8 arrays.
@@ -70,6 +72,12 @@ class ReplayBuffer:
 
     def size(self, player: int) -> int:
         return self.sizes[player]
+
+    def clear(self) -> None:
+        """Reset all write pointers and sizes without reallocating storage."""
+        for p in range(4):
+            self.write_idx[p] = 0
+            self.sizes[p] = 0
 
     # ─── ingest ──────────────────────────────────────────────
 
@@ -192,4 +200,4 @@ def collate_encoded(
     return batch
 
 
-__all__ = ["ReplayBuffer", "collate_encoded"]
+__all__ = ["ReplayBuffer", "collate_encoded", "Batch"]

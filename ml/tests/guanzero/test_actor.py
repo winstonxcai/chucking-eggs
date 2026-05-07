@@ -1,5 +1,3 @@
-"""End-to-end actor smoke: a single self-play episode produces samples."""
-
 from __future__ import annotations
 
 from guandan.guanzero.actor import play_episode

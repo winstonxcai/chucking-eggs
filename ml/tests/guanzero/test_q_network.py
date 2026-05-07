@@ -1,13 +1,11 @@
-"""Q-network forward pass + gradient flow."""
-
 from __future__ import annotations
 
 import torch
 
 from guandan.game import GuanDanEnv
 from guandan.guanzero.buffer import collate_encoded
-from guandan.guanzero.encoder import StateActionEncoder
 from guandan.guanzero.config import QNetConfig
+from guandan.guanzero.encoder import StateActionEncoder
 from guandan.guanzero.q_network import GuanZeroQNet
 
 
@@ -37,7 +35,6 @@ def test_gradient_flows_through_lstm_and_mlp():
     loss = ((q - target) ** 2).mean()
     loss.backward()
 
-    # Both LSTM and MLP should accumulate gradients
     lstm_grads = [p.grad for p in net.history_lstm.parameters()]
     mlp_grads = [p.grad for p in net.mlp.parameters()]
     assert all(g is not None and torch.isfinite(g).all() for g in lstm_grads)

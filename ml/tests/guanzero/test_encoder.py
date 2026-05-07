@@ -1,5 +1,3 @@
-"""Encoder channel shapes match the paper-faithful spec."""
-
 from __future__ import annotations
 
 import numpy as np
@@ -76,7 +74,6 @@ def test_oracle_off_zeroes_others_hand():
     enc = StateActionEncoder(use_oracle_others_hand=False)
     out = enc.encode_all(env, p, legal)[0]
     assert np.all(out["others_hand"] == 0.0)
-    # Other channels still populated
     assert out["own_hand"].sum() > 0
 
 

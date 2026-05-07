@@ -2774,3 +2774,69 @@ Since shared inference regresses paper-spec throughput (LOGBOOK §46) but
 the architecture is correct (Phases 1-3 numerics tests pass), it stays
 as `use_inference_server: false` default. Toggle to true for ablation
 studies on larger models where forward dominates IPC.
+
+## 48. Inference-server runtime diagnosis (2026-05-07)
+
+200-update profiled smoke (`use_inference_server=true`, paper-spec, n_actors=32,
+target_replay_ratio=0). Per-phase server wall over 29.5s / 1494 batches:
+
+| phase            |   %  |  time |  ms/call | calls |
+|---|---:|---:|---:|---:|
+| forward          | 30.6 | 8.98s | 1.50 | 5,976  |
+| argmax+d2h       | 26.4 | 7.75s | 0.16 | 47,400 |
+| h2d+expand       | 17.7 | 5.19s | 0.87 | 5,976  |
+| drain_batch      | 14.7 | 4.30s | 2.88 | 1,494  |
+| scatter+events   |  9.8 | 2.89s | 0.06 | 47,400 |
+| collate_cpu      |  0.8 | 0.23s | 0.04 | 5,976  |
+| group_by_seat    |  0.1 | 0.02s | 0.01 | 1,494  |
+
+### Verdict
+
+**The GPU forward is only 31% of server wall.** The remaining 70% is
+non-compute overhead, dominated by:
+
+- **argmax + per-request `.item()` D2H sync (26%)** — one D2H per request
+  in the batch (47,400 syncs in 200 updates). Each costs ~0.16ms but
+  the count is huge.
+- **h2d + state expansion via `repeat_interleave` (18%)** — expanding the
+  per-request state to `sum_K` rows on the GPU before the forward. State
+  bytes are ~3.2KB × K duplicated rows.
+- **drain_batch (15%)** — server polls the request queue with
+  `time.sleep(0.0001)` between empty checks. Batches average 31.6 reqs
+  (= max_requests=32), so they're filling but slowly.
+
+### Fixable wins
+
+**(a) Batched argmax — high leverage:** replace the per-request
+`.item()` loop with `torch.stack([q.argmax() for ...]).cpu()` so the
+batch incurs ONE D2H instead of len(batch). Estimated saving: 7s/29s →
+~24% server speedup.
+
+**(b) Skip GPU-side state expansion:** the model's state-action input
+treats state as identical across the K candidate actions. We can keep
+the state as `[B, state_dim]` and the per-action features as
+`[sum_K, action_dim]` with a `repeats` index, then compute the LSTM/MLP
+prefix on `[B, ...]` once and only the per-action head on `[sum_K, ...]`.
+Requires a small q_network surgery — saves ~5s/29s → ~17% speedup AND
+reduces GPU memory.
+
+**(c) `mp.Event.set()` × 32 batch overhead (10%):** harder to fix; could
+swap to a single shared atomic counter that actors poll on, but the
+event mechanism is correct and the absolute cost is small.
+
+### Why the inference server *still* regresses paper-spec throughput
+
+Even with all three fixes, server roundtrip would be ~5-7ms per decision
+(batching wait + 1.5ms forward + IPC). Local CPU forward at K=10 is
+~1-2ms. So shared inference would still lose for paper-spec unless we
+also drop the batching wait — but smaller batches collapse GPU
+utilization. **The structural conclusion holds**: shared inference is a
+win only when forward dominates IPC, i.e. for larger models. For
+paper-spec, local-CPU forward is the right answer; the server stays as
+a config flag for future ablations.
+
+### Files
+
+- Profile produced via `--profile` → `GUANZERO_PROFILE_PHASES=1`.
+- `ml/src/guandan/guanzero/inference_server.py:_ServerProfiler` mirrors
+  the `_ActorProfiler` in `actor.py` so output tables read consistently.

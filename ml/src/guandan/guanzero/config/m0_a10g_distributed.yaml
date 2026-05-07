@@ -1,10 +1,8 @@
-# GuanZero M0 — distributed actor-learner DMC, tuned for Modal A10G + 32 vCPU.
-# M1 baseline (post non_blocking fix, LOGBOOK §43): ~4096 samp/s (8 upd/s × 512).
-# A10G batch=4096 bench (LOGBOOK §44): ~10977 samp/s (2.68 upd/s × 4096) — ~2.7× M1.
+# GuanZero — distributed actor-learner DMC, tuned for Modal A10G + 32 vCPU.
+# A10G at batch=4096 delivers ~2.7× the sample throughput of a local M1 Pro.
 # Throughput metric is samples/sec (batch-size-independent).
 
 n_actors: 32
-env_lanes_per_actor: 1       # §51/§52: lanes regress; §53: cpu=64/n=64 only +10% for 2× cost
 sync_interval_episodes: 20
 actor_push_batch_size: 512
 sample_queue_maxsize: 64
@@ -14,11 +12,10 @@ checkpoint_every_updates: 5000
 log_every_updates: 10
 updates_per_learner_step: 1
 
-# ── Shared-GPU inference (LOGBOOK §45, §46) ──
-# Architecture works (Phases 1-4 validated) but regresses paper-spec
-# throughput by ~36% due to IPC + GPU contention exceeding local CPU
-# forward cost at small K. Default OFF for paper-spec; flip to true for
-# larger-model ablations where forward dominates IPC.
+# ── Shared-GPU inference ──
+# Regresses paper-spec throughput by ~36% due to IPC + GPU contention
+# exceeding local CPU forward cost at small K. Default OFF for paper-spec;
+# flip to true for larger-model ablations where forward dominates IPC.
 use_inference_server: false
 inference_device: cuda
 inference_batch_max_requests: 32
@@ -27,25 +24,24 @@ inference_batch_timeout_ms: 5.0
 inference_max_actions: 512
 inference_n_slots: 512
 
-# ── Replay-ratio controller (Phase 5) ──
+# ── Replay-ratio controller ──
 # Throttles the learner when cum_replay > max_replay_ratio so we don't
-# overfit to a small slow-growing buffer. At baseline n_actors=32 we
-# measured replay 12-22× (LOGBOOK §44) — the learner consumed samples
-# 12-22× faster than actors produced them, training mostly on stale data.
+# overfit to a small slow-growing buffer. At n_actors=32 the learner
+# consumes samples ~12-22× faster than actors produce them, training
+# mostly on stale data without this throttle.
 #
 # Early in training the policy is changing quickly and stale samples
-# carry obsolete behavior — we want replay ≈ 1 (essentially on-policy)
-# so each gradient step sees fresh-from-current-policy data. As training
-# matures and policy churn slows, replay can drift up without hurting
-# eval — M1's published 200k checkpoint trained at ~2.5×.
+# carry obsolete behavior — replay ≈ 1 keeps each gradient step near
+# on-policy data. As training matures replay can drift up without
+# hurting eval (a 200k-update checkpoint trained at ~2.5× was published).
 #
-# Conservative defaults below: target ≈ 1, hard cap at 1.5. Bump
+# Conservative defaults: target ≈ 1, hard cap at 1.0. Bump
 # max_replay_ratio later in long runs once the policy stabilizes.
 target_replay_ratio: 1.0
 max_replay_ratio: 1.0
 max_throttle_sleep_s: 0.05
 
-# Network (paper spec — same as M1)
+# Network (paper spec)
 hidden_lstm: 256
 hidden_mlp: 1024
 n_mlp_layers: 6
@@ -69,8 +65,6 @@ use_bf16_learner: true
 # "default" on CUDA so per-position streams can run in parallel.
 compile_mode: reduce-overhead
 
-# torch.compile(net, dynamic=True) on actor q-nets (LOGBOOK §49):
-# 36% faster forward on Modal x86 CPU (7.08ms → 4.62ms per decision),
-# no-op on M1 ARM CPU (Inductor CPU backend targets x86). Set true for
-# Modal training, leave false for M1 dev (saves first-decision warmup).
+# torch.compile on actor q-nets: 36% faster forward on x86 CPU,
+# no-op on M1 ARM (Inductor targets x86). Set true for Modal training.
 compile_actor: false

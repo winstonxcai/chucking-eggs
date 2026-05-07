@@ -261,9 +261,10 @@ def release_shared_buffers(bufs: SharedBuffers, unlink: bool) -> None:
 
 
 class InferenceClient:
-    """Phase 2 actor-side client. Same `submit(seat, encoded_list)` API as
-    `InferenceClient`; payload travels through preallocated shared-memory
-    slots referenced by tiny `RequestDesc` descriptors on `request_queue`.
+    """Actor-side client for the shared-memory inference server.
+
+    Payload travels through preallocated shared-memory slots referenced by
+    tiny ``RequestDesc`` descriptors on ``request_queue``.
     """
 
     def __init__(
@@ -356,13 +357,13 @@ class InferenceClient:
 
 
 class InferenceServer:
-    """Phase 2 server. Same hybrid batching policy as InferenceServer.
+    """Batched GPU inference server.
 
-    Reads from `request_queue` (descriptors), gathers payloads directly from
-    `state_buf` / `action_buf`, runs forward, writes responses to
-    `response_buf[actor_id]`, and signals `events[actor_id]`.
+    Reads from ``request_queue`` (descriptors), gathers payloads from
+    ``state_buf`` / ``action_buf``, runs batched forward, writes responses to
+    ``response_buf[actor_id]``, and signals ``events[actor_id]``.
 
-    Server never returns slots to `free_slots` — actors do that on read.
+    Server never returns slots to ``free_slots`` — actors do that on read.
     """
 
     def __init__(
@@ -375,7 +376,7 @@ class InferenceServer:
         max_action_rows:  int = 4096,
         timeout_ms:       float = 1.0,
         use_bf16:         bool = False,
-        # Optional shared-mem weight refresh (Phase 4+)
+        # Optional shared-mem weight refresh
         weights_lock=None,
         weights_buf:      Optional[torch.Tensor] = None,
         weights_version=None,
@@ -405,7 +406,7 @@ class InferenceServer:
 
         import os as _os
         self.profiler = PhaseProfiler(
-            enabled=(_os.environ.get("GUANZERO_PROFILE_PHASES") == "1"),
+            enabled=(_os.environ.get("GUANZERO_SERVER_PROFILE") == "1"),
             device=self.device,
         )
         self._loop_t0 = time.perf_counter()
@@ -619,7 +620,7 @@ def run_server(
     weights_buf=None,
     weights_version=None,
     weight_specs=None,
-    weight_dir=None,                   # Phase 4: disk-based weight refresh
+    weight_dir=None,                   # optional: disk-based weight refresh
     server_log_path=None,              # Optional[Path] — server writes its own log here
 ) -> None:
     """Top-level shared-mem server entry point. Picklable for spawn."""
@@ -720,10 +721,9 @@ def run_server(
         weight_specs=weight_specs,
     )
 
-    # ── Phase 4 disk-based weight refresh thread ──
+    # ── Disk-based weight refresh thread ──
     # Polls weight_dir/latest.txt on a background thread; reloads q-nets when
-    # the on-disk version is newer than what the server holds. Keeps the
-    # shared-mem path open for Phase 5 (which will short-circuit this).
+    # the on-disk version is newer than what the server holds.
     refresh_stop = threading.Event()
 
     def _disk_refresh_loop():

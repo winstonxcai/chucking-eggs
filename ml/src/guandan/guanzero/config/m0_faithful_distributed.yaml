@@ -1,8 +1,7 @@
-# GuanZero M0 — faithful persistent actor-learner DMC
+# GuanZero — faithful persistent actor-learner DMC
 # Tuned for M1 Pro (8 P-cores, paper-spec net, MPS learner). n_actors=1 is the
-# optimum (LOGBOOK §43, end-to-end sweeps): N≥4 starves the MPS-dispatching
-# learner of CPU. With n_actors=1, BLAS thread limit is also a no-op — let torch
-# pick the default; explicit OMP/MKL/VECLIB_MAX overrides do not help.
+# optimum (end-to-end sweeps): N≥4 starves the MPS-dispatching learner of CPU.
+# With n_actors=1, BLAS thread limit is also a no-op — let torch pick the default.
 # Steady-state ~8 upd/s after the non_blocking H2D fix in collate{,_encoded}.
 
 n_actors: 1

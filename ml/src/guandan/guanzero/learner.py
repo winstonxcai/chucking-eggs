@@ -241,7 +241,7 @@ def learner_loop(
     q_nets  = init_seat_nets(cfg.qnet)
     compile_mode = cfg.compile_mode or "default"
     if compile_mode == "reduce-overhead" and cfg.device == "cuda":
-        # Empirically (LOGBOOK §44): per-stream cudagraph_trees did NOT compose
+        # Empirically: per-stream cudagraph_trees did NOT compose
         # with multi-stream parallelism — graphs share a CUDA memory pool that
         # serializes them. "default" + streams gave the best throughput.
         compile_mode = "default"

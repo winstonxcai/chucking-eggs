@@ -18,7 +18,7 @@ Why this shape:
       float32. Cast back to float32 happens on GPU after H2D — cheap.
     * Sampling = one np.random.randint + fancy-indexing per key, then a single
       H2D copy per key. No per-sample numpy stacks (the previous bottleneck —
-      LOGBOOK §44 profile showed collate+H2D was 73% of update wall time).
+      profiling showed collate+H2D was 73% of update wall time without this).
 
 DMC samples are correlated within an episode but not within a player's own
 subsequence. We keep four independent buffers (one per seat) so the learner

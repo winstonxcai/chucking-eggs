@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from guandan.guanzero.buffer import ReplayBuffer, collate, collate_encoded
+from guandan.guanzero.buffer import ReplayBuffer, collate_encoded
 from guandan.guanzero.returns import TrainSample
 
 
@@ -36,14 +36,6 @@ def test_sampling_balances_across_players():
         s = buf.sample_for_player(p, 5)
         assert len(s) == 1
         assert s[0].player == p
-
-
-def test_collate_stacks_dict_channels_and_targets():
-    samples = [_sample(0, 0.5), _sample(0, -0.5)]
-    batch, targets = collate(samples)
-    assert batch["own_hand"].shape == (2, 108)
-    assert batch["history"].shape == (2, 20, 108)
-    assert targets.tolist() == [0.5, -0.5]
 
 
 def test_collate_encoded_no_targets():

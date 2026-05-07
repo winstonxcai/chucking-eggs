@@ -1,8 +1,8 @@
-"""Paper-faithful state-action encoder for GuanZero (M0).
+"""State-action encoder for GuanZero.
 
-Outputs a *dict* of channels (not a flat vector) so M1–M4 can swap
-individual channels (transformer history, set encoder, role-aware,
-belief) without rewriting the rest of the pipeline.
+Outputs a *dict* of channels (not a flat vector) keyed by
+``ENCODE_CHANNEL_KEYS``.  Each call to ``encode_all`` produces one dict per
+legal action; callers stack them with ``buffer.collate_encoded``.
 
 Channel shapes match the paper's 3343-dim total when concatenated:
 
@@ -258,10 +258,10 @@ def static_dim(use_oracle_others_hand: bool = True) -> int:
 
 
 class StateActionEncoder:
-    """Stateless encoder. Holds config so we can ablate channels later.
+    """Configurable encoder; threadsafe; no per-call mutable state.
 
-    For M0, ``use_oracle_others_hand=True`` reproduces the paper. M4 will
-    flip it to False and replace with a belief-state channel.
+    ``use_oracle_others_hand=True`` includes the oracle others-hand channel
+    as in the paper. Set False to run without it (pure observation space).
     """
 
     def __init__(self, use_oracle_others_hand: bool = True) -> None:

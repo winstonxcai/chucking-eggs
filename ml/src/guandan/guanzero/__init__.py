@@ -1,10 +1,8 @@
-"""GuanZero (M0 baseline) — paper-faithful Deep Monte Carlo.
+"""GuanZero — Deep Monte Carlo training for Guan Dan.
 
 Replicates *GuanZero: Mastering the Game of Guandan with Deep RL and
-Behavior Regulating* (arXiv:2402.13582) as a clean baseline. M1–M4
-architecture extensions (transformer history, set encoders, role-aware
-encoder, belief encoder) will follow as separate PRs that swap individual
-encoder channels and the network module.
+Behavior Regulating* (arXiv:2402.13582). See ``config.TrainConfig`` for
+the hyperparameter surface and ``train.train`` for the entry point.
 """
 
 from .encoder import (

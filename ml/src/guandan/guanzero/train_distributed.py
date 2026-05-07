@@ -166,7 +166,7 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
         p = ctx.Process(
             target=actor_loop,
             args=(actor_id, cfg_dict, sample_queue, stop_event, weight_dir),
-            kwargs={"inference_args": inference_args},
+            kwargs={"inference_args": inference_args, "run_dir": run_dir},
             daemon=True,
             name=f"actor-{actor_id}",
         )

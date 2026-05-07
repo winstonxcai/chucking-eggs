@@ -66,6 +66,7 @@ def train_remote(
     env["GUANZERO_WEIGHT_DIR"] = "/tmp/guanzero_weights"
     if profile:
         env["GUANZERO_PROFILE_PHASES"] = "1"
+        env["GUANZERO_ACTOR_PROFILE"]  = "1"
     # Pin BLAS thread pools to 1 — actor processes already set torch.set_num_threads(1)
     # but numpy/MKL/OpenBLAS are separate and would otherwise contend across vCPUs.
     env["OMP_NUM_THREADS"] = "1"

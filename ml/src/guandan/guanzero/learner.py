@@ -295,7 +295,7 @@ def learner_loop(
 
     # Optionally resume from a prior checkpoint
     if resume_checkpoint is not None:
-        ckpt = torch.load(Path(resume_checkpoint), map_location="cpu")
+        ckpt = torch.load(Path(resume_checkpoint), map_location="cpu", weights_only=True)
         for p in range(4):
             q_nets[p].load_state_dict(ckpt["q_nets"][p])
         total_updates = int(ckpt.get("episode", 0))

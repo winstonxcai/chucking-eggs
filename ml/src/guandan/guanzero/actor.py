@@ -10,8 +10,6 @@ import dataclasses
 import os
 import random
 import time
-from collections import defaultdict
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Mapping
 
@@ -22,8 +20,9 @@ from ..cards import ComboType
 from ..combos import Combo
 from ..game import GuanDanEnv
 from .buffer import collate_encoded
-from .legal_utils import dedup_strategic
 from .encoder import StateActionEncoder
+from .legal_utils import dedup_strategic
+from .profiler import PhaseProfiler, _k_bucket, _K_BUCKETS
 from .q_network import GuanZeroQNet
 from .returns import TrainSample, compute_mc_returns
 
@@ -36,102 +35,6 @@ _KEYS = (
 
 
 _PASS = Combo(ComboType.PASS, 0, [])
-
-
-def _k_bucket(K: int) -> str:
-    """Coarse buckets for legal-action count K, used for per-K profile rows."""
-    if K <= 1:   return "K1"
-    if K <= 5:   return "K2-5"
-    if K <= 10:  return "K6-10"
-    if K <= 20:  return "K11-20"
-    return "K>20"
-
-
-_K_BUCKETS = ("K1", "K2-5", "K6-10", "K11-20", "K>20")
-
-
-class _ActorProfiler:
-    """Per-actor phase timer. Enabled with GUANZERO_ACTOR_PROFILE=1.
-
-    Mirrors the format of ml/scripts/util/profile_guanzero_rollout.py so output
-    tables read consistently across the rollout-only and in-loop profilers.
-    """
-
-    def __init__(self, enabled: bool) -> None:
-        self.enabled = enabled
-        self.times: dict[str, float] = defaultdict(float)
-        self.counts: dict[str, int] = defaultdict(int)
-        self.t_start = time.perf_counter()
-
-    @contextmanager
-    def time(self, name: str):
-        if not self.enabled:
-            yield
-            return
-        t0 = time.perf_counter()
-        try:
-            yield
-        finally:
-            self.times[name] += time.perf_counter() - t0
-            self.counts[name] += 1
-
-    def add_count(self, name: str, value: int) -> None:
-        if self.enabled:
-            self.counts[name] += value
-
-    def report(self, episodes: int) -> str:
-        total_wall  = time.perf_counter() - self.t_start
-        total_timed = sum(self.times.values())
-        n_dec   = self.counts.get("num_decisions", 1) or 1
-        n_legal = self.counts.get("num_legal_actions", 0)
-
-        lines: list[str] = []
-        lines.append("")
-        lines.append(f"Actor profile  |  {episodes} episodes  |  {total_wall:.2f}s wall")
-        lines.append(f"{'section':18s} {'sec':>9s} {'%':>7s} {'count':>10s} {'ms/call':>10s}")
-        lines.append("-" * 60)
-        for k, v in sorted(self.times.items(), key=lambda x: -x[1]):
-            c = max(1, self.counts.get(k, 1))
-            pct = 100 * v / total_timed if total_timed > 0 else 0
-            lines.append(f"{k:18s} {v:9.3f} {pct:7.1f} {c:10d} {1000*v/c:10.3f}")
-        lines.append("-" * 60)
-        lines.append(f"{'TOTAL TIMED':18s} {total_timed:9.3f}  ({100*total_timed/total_wall:.1f}% of wall)")
-        lines.append("")
-        lines.append("Derived:")
-        if total_wall > 0:
-            lines.append(f"  episodes/sec            : {episodes / total_wall:.2f}")
-            lines.append(f"  decisions/sec           : {n_dec / total_wall:.1f}")
-        if episodes > 0:
-            lines.append(f"  decisions/episode (avg) : {n_dec / episodes:.1f}")
-        lines.append(f"  legal_actions/decision  : {n_legal / n_dec:.1f}")
-        for ph in ("legal_actions", "encode_all", "q_forward", "q_collate",
-                   "q_net_forward", "q_argmax_item", "inference_submit",
-                   "env_step"):
-            if ph in self.times:
-                lines.append(f"  {ph:22s}: {1000*self.times[ph]/n_dec:.3f} ms/decision")
-
-        # Per-K-bucket breakdown — shows where forward time is spent and
-        # how often the K=1 shortcut fires.
-        bucket_decisions = {b: self.counts.get(f"decisions_{b}", 0) for b in _K_BUCKETS}
-        if any(bucket_decisions.values()):
-            lines.append("")
-            lines.append("K distribution + q_net_forward per bucket:")
-            lines.append(f"  {'bucket':>8s} {'decisions':>10s} {'%':>6s} "
-                         f"{'fwd_calls':>10s} {'fwd_total_s':>12s} {'fwd_ms/call':>12s}")
-            shortcut_K1 = self.counts.get("shortcut_K1", 0)
-            for b in _K_BUCKETS:
-                d = bucket_decisions[b]
-                pct = 100 * d / n_dec if n_dec else 0
-                fwd_key = f"q_net_forward_{b}"
-                fwd_calls = self.counts.get(fwd_key, 0)
-                fwd_total = self.times.get(fwd_key, 0.0)
-                ms_per_call = 1000 * fwd_total / fwd_calls if fwd_calls else 0
-                tag = " (shortcut)" if b == "K1" and shortcut_K1 else ""
-                lines.append(f"  {b:>8s} {d:>10d} {pct:>5.1f}% "
-                             f"{fwd_calls:>10d} {fwd_total:>12.3f} {ms_per_call:>12.3f}{tag}")
-            if shortcut_K1:
-                lines.append(f"  (K=1 shortcut fired {shortcut_K1}× — no forward needed)")
-        return "\n".join(lines)
 
 
 def _select_legal(env: GuanDanEnv, player: int) -> list[Combo]:
@@ -160,7 +63,7 @@ def play_episode(
     device: torch.device | str = "cpu",
     gamma: float = 1.0,
     inference_client=None,
-    profiler: _ActorProfiler | None = None,
+    profiler: PhaseProfiler | None = None,
 ) -> list[TrainSample]:
     """Roll one self-play episode, return per-step MC training samples.
 
@@ -173,7 +76,7 @@ def play_episode(
     env.reset(seed=seed)
 
     trajectory: list[dict] = []
-    prof = profiler if profiler is not None else _ActorProfiler(enabled=False)
+    prof = profiler if profiler is not None else PhaseProfiler(enabled=False)
 
     while not env.done:
         p = env.current_player
@@ -260,14 +163,14 @@ class VectorizedRollout:
         gamma:     float,
         device:    torch.device,
         rng:       random.Random,
-        profiler:  _ActorProfiler | None = None,
+        profiler:  PhaseProfiler | None = None,
     ) -> None:
         self.q_nets  = q_nets
         self.encoder = encoder
         self.gamma   = gamma
         self.device            = device
         self.rng               = rng
-        self.prof              = profiler if profiler is not None else _ActorProfiler(enabled=False)
+        self.prof              = profiler if profiler is not None else PhaseProfiler(enabled=False)
 
         self.lanes: list[_Lane] = []
         for _ in range(num_lanes):
@@ -459,7 +362,8 @@ def actor_loop(
     rng = random.Random(cfg.seed + actor_id * 10_000)
 
     profile_enabled = os.environ.get("GUANZERO_ACTOR_PROFILE") == "1"
-    prof = _ActorProfiler(enabled=profile_enabled)
+    prof = PhaseProfiler(enabled=profile_enabled)
+    prof_t_start = time.perf_counter()
     snapshot_every_episodes = max(1, cfg.log_every_updates * 10)
 
     # Branch on env_lanes_per_actor: 1 (default) keeps the original
@@ -563,15 +467,23 @@ def actor_loop(
         # Periodic snapshot to stdout — first actor only, to avoid 32× spam.
         if (profile_enabled and actor_id == 0
                 and episode_count > 0 and episode_count % snapshot_every_episodes == 0):
-            print(f"[actor-{actor_id}] profile snapshot @ episode {episode_count}:\n"
-                  f"{prof.report(episode_count)}", flush=True)
+            wall_s = time.perf_counter() - prof_t_start
+            n_dec = prof._counts.get("num_decisions", 0)
+            snap = prof.report(wall_s=wall_s, n_events=episode_count, event_label="episodes")
+            snap += prof.report_k_buckets(n_decisions=n_dec)
+            print(f"[actor-{actor_id}] profile snapshot @ episode {episode_count}:{snap}",
+                  flush=True)
 
     # ── Shutdown: write per-actor profile summary ────────────
     if profile_enabled and run_dir is not None:
         try:
             run_dir.mkdir(parents=True, exist_ok=True)
+            wall_s = time.perf_counter() - prof_t_start
+            n_dec = prof._counts.get("num_decisions", 0)
+            report = prof.report(wall_s=wall_s, n_events=episode_count, event_label="episodes")
+            report += prof.report_k_buckets(n_decisions=n_dec)
             out = run_dir / f"actor_{actor_id}_profile.txt"
-            out.write_text(prof.report(episode_count) + "\n")
+            out.write_text(report + "\n")
         except Exception as e:
             print(f"[actor-{actor_id}] failed to write profile: {e}", flush=True)
 

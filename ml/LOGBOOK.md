@@ -2715,3 +2715,62 @@ ablations.
   the learner — replay ratio is the issue."
 - The plan's Phase 4 acceptance criteria were missed (samp/s -36% vs ≤30%
   budget, replay ↑ vs ↓ target). Phase 5 takes priority.
+
+## 47. Phase 5 — replay-ratio controller validated (2026-05-07)
+
+1000-update smoke with `target_replay_ratio=2.5`, `max_replay_ratio=4.0`,
+`use_inference_server=false` (paper-spec local-CPU forward path), n_actors=32.
+
+| metric                    | value                |
+|---|---|
+| wall                      | 278s                 |
+| updates                   | 1000                 |
+| effective upd/s           | 3.6 (vs ~12 baseline) |
+| effective samp/s          | ~14.7k (vs ~50k)     |
+| `replay_cumulative` final | **4.0** (== max)     |
+| `replay_interval` steady  | 3.9-4.2              |
+| `fresh_samples_total`     | 1.024M               |
+| throttle sleeps           | 2569                 |
+| throttle slept            | 128s (46% of wall)   |
+
+The controller pins replay at the configured ceiling instead of letting it
+drift up monotonically (LOGBOOK §44/§46 showed it climbing to 49× without
+control, training mostly on stale data). Buffer no longer stuck — fresh
+samples grow linearly with wall time.
+
+### Throughput vs eval-quality trade
+
+| config                                       | samp/s | replay | eval (vs M1 200k)  |
+|---|---|---|---|
+| baseline n_actors=8, no controller           | 16k    | 22×    | 65/41/18%          |
+| baseline n_actors=28, no controller          | 17k    | 12×    | 71/51/20%          |
+| **Phase 5: n_actors=32, replay≤4 controller** | **15k** | **4×** | TBD (Phase 6)      |
+| (M1 baseline reference, replay=2.5)           | 4k     | 2.5×   | 83/66/32%          |
+
+Phase 6's full training run will measure whether replay≤4 closes the eval
+gap to M1's checkpoint.
+
+### Controller mechanics
+
+In `learner.py` the throttle uses an EMA actor rate (0.5 weight per log
+interval, samples/sec) to size each sleep:
+
+```python
+if cum_replay > cfg.max_replay_ratio:
+    extra_fresh_needed = (sample_uses / target_replay_ratio) - fresh_samples_total
+    sleep_s = min(extra_fresh_needed / ema_actor_rate, max_throttle_sleep_s)
+    time.sleep(sleep_s)
+    continue
+```
+
+`max_throttle_sleep_s=0.05` caps each sleep so the loop stays responsive
+to `stop_event`. With actors producing ~4k samp/s and the learner
+consuming `batch_size=4096` per update, each ~1 update of "ahead" needs
+~1s of sleep — chunked into 20× 0.05s sleeps.
+
+### Inference server is now optional
+
+Since shared inference regresses paper-spec throughput (LOGBOOK §46) but
+the architecture is correct (Phases 1-3 numerics tests pass), it stays
+as `use_inference_server: false` default. Toggle to true for ablation
+studies on larger models where forward dominates IPC.

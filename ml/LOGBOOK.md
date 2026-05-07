@@ -3125,15 +3125,30 @@ system throughput barely budged (+10%). Two contributors:
    CPU forwards share L2/L3 caches and DRAM bandwidth. Each forward stalls
    on memory more often.
 
-### Cost analysis
+### Cost analysis (Modal per-resource pricing, May 2026)
 
-| | $/hr (approx) | samp/s | $/M-samples |
+Modal bills per-resource: A10 GPU $0.000306/sec, physical core $0.0000131/sec
+(= 2 vCPU equivalent), memory $0.00000222/GiB/sec. With cpu=32 (=16 phys
+cores) + 64 GiB RAM:
+
+```
+GPU A10:           $0.000306 × 3600        = $1.10/hr
+CPU 16 phys cores: $0.0000131 × 16 × 3600  = $0.75/hr
+Memory 64 GiB:     $0.00000222 × 64 × 3600 = $0.51/hr
+                                          ─────────
+                                          = $2.37/hr
+```
+
+| | $/hr | samp/s | $/M-samples |
 |---|---:|---:|---:|
-| A: cpu=32 | ~$1.25 | 5,000 | $0.069 |
-| E: cpu=64 | ~$2.50 | 5,400 | $0.129 |
+| A: cpu=32 / n=32 | **$2.37** | 5,000 | **$0.131** |
+| E: cpu=64 / n=64 | $3.12 | 5,400 | $0.160 |
 
-A wins cost-efficiency by ~85%. The extra throughput from cpu=64 doesn't
-come close to justifying the doubled hourly cost.
+A wins cost-efficiency by ~22% per sample (initial estimate of 85% was
+wrong — only the CPU line scales when doubling vCPUs; GPU and memory are
+fixed). For matching M1's 40M unique samples: **A=$5.27 (2.22h)**, E=$6.42
+(2.06h). The wall difference is small in absolute terms; A is the
+cost-efficient default for any non-deadline-driven run.
 
 ### Conclusion
 

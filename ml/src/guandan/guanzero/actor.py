@@ -39,6 +39,18 @@ _KEYS = (
 _PASS = Combo(ComboType.PASS, 0, [])
 
 
+def _k_bucket(K: int) -> str:
+    """Coarse buckets for legal-action count K, used for per-K profile rows."""
+    if K <= 1:   return "K1"
+    if K <= 5:   return "K2-5"
+    if K <= 10:  return "K6-10"
+    if K <= 20:  return "K11-20"
+    return "K>20"
+
+
+_K_BUCKETS = ("K1", "K2-5", "K6-10", "K11-20", "K>20")
+
+
 class _ActorProfiler:
     """Per-actor phase timer. Enabled with GUANZERO_ACTOR_PROFILE=1.
 
@@ -98,6 +110,28 @@ class _ActorProfiler:
                    "env_step"):
             if ph in self.times:
                 lines.append(f"  {ph:22s}: {1000*self.times[ph]/n_dec:.3f} ms/decision")
+
+        # Per-K-bucket breakdown — shows where forward time is spent and
+        # how often the K=1 shortcut fires.
+        bucket_decisions = {b: self.counts.get(f"decisions_{b}", 0) for b in _K_BUCKETS}
+        if any(bucket_decisions.values()):
+            lines.append("")
+            lines.append("K distribution + q_net_forward per bucket:")
+            lines.append(f"  {'bucket':>8s} {'decisions':>10s} {'%':>6s} "
+                         f"{'fwd_calls':>10s} {'fwd_total_s':>12s} {'fwd_ms/call':>12s}")
+            shortcut_K1 = self.counts.get("shortcut_K1", 0)
+            for b in _K_BUCKETS:
+                d = bucket_decisions[b]
+                pct = 100 * d / n_dec if n_dec else 0
+                fwd_key = f"q_net_forward_{b}"
+                fwd_calls = self.counts.get(fwd_key, 0)
+                fwd_total = self.times.get(fwd_key, 0.0)
+                ms_per_call = 1000 * fwd_total / fwd_calls if fwd_calls else 0
+                tag = " (shortcut)" if b == "K1" and shortcut_K1 else ""
+                lines.append(f"  {b:>8s} {d:>10d} {pct:>5.1f}% "
+                             f"{fwd_calls:>10d} {fwd_total:>12.3f} {ms_per_call:>12.3f}{tag}")
+            if shortcut_K1:
+                lines.append(f"  (K=1 shortcut fired {shortcut_K1}× — no forward needed)")
         return "\n".join(lines)
 
 
@@ -153,25 +187,33 @@ def play_episode(
         p = env.current_player
         with prof.time("legal_actions"):
             legal = _select_legal(env, p, max_legal_actions)
+        K = len(legal)
+        bucket = _k_bucket(K)
         prof.add_count("num_decisions", 1)
-        prof.add_count("num_legal_actions", len(legal))
+        prof.add_count("num_legal_actions", K)
+        # Per-K-bucket decision counts (covers shortcut + epsilon + server +
+        # forward paths so the bucket totals sum to num_decisions).
+        prof.add_count(f"decisions_{bucket}", 1)
 
         with prof.time("encode_all"):
             encoded_list = encoder.encode_all(env, p, legal)
 
-        if random.random() < epsilon:
-            idx = random.randrange(len(legal))
+        if K == 1:
+            idx = 0
+            prof.add_count("shortcut_K1", 1)
+        elif random.random() < epsilon:
+            idx = random.randrange(K)
         elif inference_client is not None:
             with prof.time("inference_submit"):
                 idx, _server_version = inference_client.submit(p, encoded_list)
         else:
             net = q_nets[p]
             # Inlined and instrumented version of _argmax_q so we can see
-            # where time goes in the local-CPU forward path: collate (np.stack
-            # + H2D), the actual q-net forward, then argmax+.item() on CPU.
+            # where time goes in the local-CPU forward path. q_net_forward is
+            # bucketed by K so we can attribute time to the K distribution.
             with prof.time("q_collate"):
                 batch = collate_encoded(encoded_list, device=device)
-            with prof.time("q_net_forward"):
+            with prof.time(f"q_net_forward_{bucket}"):
                 with torch.no_grad():
                     q_vals = net(batch)
             with prof.time("q_argmax_item"):

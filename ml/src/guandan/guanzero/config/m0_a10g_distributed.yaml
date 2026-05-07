@@ -18,7 +18,7 @@ updates_per_learner_step: 1
 # throughput by ~36% due to IPC + GPU contention exceeding local CPU
 # forward cost at small K. Default OFF for paper-spec; flip to true for
 # larger-model ablations where forward dominates IPC.
-use_inference_server: true
+use_inference_server: false
 inference_device: cuda
 inference_batch_max_requests: 32
 inference_batch_max_action_rows: 4096
@@ -31,7 +31,7 @@ inference_n_slots: 512
 # gap problem head-on: at baseline n_actors=32 we measured replay 12-22x
 # (LOGBOOK §44), but M1's published 200k checkpoint trained at replay 2.5x.
 # This forces the learner to run at the actor production rate.
-target_replay_ratio: 0.0     # disable controller for clean diagnostic measurement
+target_replay_ratio: 2.5     # match M1's 200k checkpoint training regime
 max_replay_ratio: 4.0
 max_throttle_sleep_s: 0.05
 
@@ -59,3 +59,9 @@ use_bf16_learner: true
 # reduce-overhead uses CUDA graphs (stream-pinned); learner auto-downgrades to
 # "default" on CUDA so per-position streams can run in parallel.
 compile_mode: reduce-overhead
+
+# torch.compile(net, dynamic=True) on actor q-nets (LOGBOOK §49):
+# 36% faster forward on Modal x86 CPU (7.08ms → 4.62ms per decision),
+# no-op on M1 ARM CPU (Inductor CPU backend targets x86). Set true for
+# Modal training, leave false for M1 dev (saves first-decision warmup).
+compile_actor: true

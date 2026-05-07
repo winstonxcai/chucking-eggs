@@ -2840,3 +2840,93 @@ a config flag for future ablations.
 - Profile produced via `--profile` → `GUANZERO_PROFILE_PHASES=1`.
 - `ml/src/guandan/guanzero/inference_server.py:_ServerProfiler` mirrors
   the `_ActorProfiler` in `actor.py` so output tables read consistently.
+
+## 49. Actor q-forward decomposition: MLP dispatch dominates, torch.compile is a 36% Modal win (2026-05-07)
+
+### Per-op breakdown (paper-spec, K=5, 500 iters)
+
+`profile_actor_forward.py` runs the actor's local-CPU forward through
+torch.profiler with `record_function` blocks for the logical phases.
+
+**Wall-time phase summary on M1 ARM CPU:**
+
+```
+phase                  ms/call    %
+collate_encoded         0.157   2.4%
+net(batch) forward      6.234  97.2%   ← dominant
+argmax + .item()        0.022   0.3%
+TOTAL                   6.413  per decision
+```
+
+**Inside net forward (M1 ARM):**
+
+| op | calls/fwd | µs/call | total ms/fwd | % of fwd |
+|---|---:|---:|---:|---:|
+| aten::addmm (MLP) | 27 | 154 | 4.16 | 67% |
+| aten::lstm (history) | 1 | 1613 | 1.61 | 26% |
+| aten::tanh / matmul / cat / etc | many | tiny | <0.5 | <8% |
+
+**Same on Modal x86 CPU (no compile):**
+
+```
+phase                  ms/call    %
+collate_encoded         0.183   2.5%
+net(batch) forward      7.083  96.6%
+argmax + .item()        0.068   0.9%
+TOTAL                   7.334
+```
+
+x86 LSTM uses `aten::mkldnn_rnn_layer` (one fused op) instead of decomposing
+into many addmm calls, so x86 sees only 7 linear calls per forward (the MLP
+exactly) vs ARM's 28 (MLP + LSTM internals). x86 is *slower* than ARM at
+small K despite MKLDNN, because the MLP linears dispatch is unbatched.
+
+### torch.compile is a 36% win on Modal x86 only
+
+`torch.compile(net, dynamic=True)` outcomes:
+
+| platform | net forward (no compile) | net forward (compile) | speedup |
+|---|---:|---:|---:|
+| M1 ARM CPU | 6.23ms | 6.40ms | **0%** |
+| **Modal x86 CPU** | **7.08ms** | **4.62ms** | **−35%** |
+
+Per-op compile vs no-compile on x86:
+
+```
+aten::addmm   558µs/call → 358µs/call   (−36%)
+aten::lstm   2722µs/call →1661µs/call   (−39%, MKLDNN-RNN fusion kicks in)
+```
+
+Inductor's C++/OpenMP CPU codegen targets x86 with AVX2/AVX512 well; ARM
+support is much less mature, so M1 dev sees no win (and pays a 30-60s
+first-decision warmup cost). On Modal we get 36% on the dominant 97% of
+actor wall time — a free system-level win.
+
+### Implication for actor production rate
+
+Without compile, 32 actors × ~140 dec/s ≈ 4,400 dec/s system-wide.
+With compile, ≈ 215 dec/s/actor → ~6,900 dec/s = ~57% more fresh samples
+per second.
+
+Pairing with Phase 5's `target_replay_ratio=2.5`, the learner can do
+`(actor_rate × replay) / batch_size = (6900 × 2.5) / 4096 ≈ 4.2 upd/s`
+sustained vs ~3 upd/s without compile. **~40% wall-clock speedup at the
+same training-data quality.**
+
+### Config changes
+
+`m0_a10g_distributed.yaml`:
+- `compile_actor: true` (was false; turn on for Modal x86)
+- `use_inference_server: false` (the diagnostic showed shared-inference
+  regresses paper-spec by 36% due to GPU contention with the learner;
+  keep the architecture as a config flag for larger-model ablations)
+- `target_replay_ratio: 2.5` (was 0.0; enable Phase 5 controller for
+  the actual training run)
+
+The M1 config (`m0_faithful_distributed.yaml`) leaves `compile_actor: false`
+since it's a no-op on ARM and adds startup cost.
+
+### Files
+
+- `ml/scripts/util/profile_actor_forward.py` — torch.profiler bench
+- `ml/scripts/modal/profile_actor_forward_modal.py` — Modal launcher for x86 testing

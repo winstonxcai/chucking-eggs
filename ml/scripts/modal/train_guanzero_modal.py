@@ -1,16 +1,16 @@
-"""Modal launcher for GuanZero (M0) faithful persistent actor-learner DMC.
+"""Modal launcher for GuanZero persistent actor-learner DMC.
 
 Drives the distributed orchestrator (`guandan.guanzero.train`) with
-a config tuned for **A10G + 32 vCPU**. Steady-state target is ~10x the M1 Pro
-baseline (~2.7 upd/s -> ~27 upd/s).
+a config tuned for Modal GPU workers with 32 vCPUs. The default worker uses
+an L4 GPU; override `config_path`, `n_actors`, and `updates` for other shapes.
 
 Sanity smoke (~5 min, ~$0.25):
     modal run ml/scripts/modal/train_guanzero_modal.py \\
-        --smoke --run-name guanzero_a10g_sanity
+        --updates 2000 --n-actors 8 --run-name guanzero_l4_sanity
 
-Benchmark smoke (~10 min, ~$0.50) — primary perf-tuning target:
+Benchmark (~10 min, ~$0.50) — primary perf-tuning target:
     modal run ml/scripts/modal/train_guanzero_modal.py \\
-        --updates 4000 --run-name guanzero_a10g_bench
+        --updates 4000 --run-name guanzero_l4_bench
 
 Streamed stdout shows learner.log; metrics_learner.jsonl on the volume
 carries upd_per_sec, queue_depth, gpu_mem_gb, drained_since_last_log.
@@ -54,6 +54,8 @@ def train_remote(
     n_actors:    int | None,
     device:      str,
     profile:     bool = False,
+    resume:      str | None = None,
+    quick:       bool = False,
 ) -> str:
     import os
     import subprocess
@@ -67,6 +69,7 @@ def train_remote(
     if profile:
         env["GUANZERO_SERVER_PROFILE"] = "1"
         env["GUANZERO_ACTOR_PROFILE"]  = "1"
+        env["GUANZERO_LEARNER_PROFILE"] = "1"
     # Pin BLAS thread pools to 1 — actor processes already set torch.set_num_threads(1)
     # but numpy/MKL/OpenBLAS are separate and would otherwise contend across vCPUs.
     env["OMP_NUM_THREADS"] = "1"
@@ -81,10 +84,15 @@ def train_remote(
         "--config",  config_path,
         "--updates", str(updates),
         "--device",  device,
+        "--seed",    str(seed),
         "--run-dir", run_dir,
     ]
     if n_actors is not None:
         cmd.extend(["--n-actors", str(n_actors)])
+    if resume:
+        cmd.extend(["--resume", resume])
+    if quick:
+        cmd.append("--quick")
 
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, env=env, check=True)
@@ -95,17 +103,15 @@ def train_remote(
 @app.local_entrypoint()
 def main(
     updates: int = 1000,
-    run_name: str = "guanzero_a10g_bench",
+    run_name: str = "guanzero_l4_bench",
     seed: int = 0,
     config_path: str = "/root/ml/src/guandan/guanzero/config/m0_a10g_distributed.yaml",
     n_actors: int | None = None,
     device: str = "cuda",
-    smoke: bool = False,
     profile: bool = False,
+    resume: str | None = None,
+    quick: bool = False,
 ) -> None:
-    if smoke:
-        updates = 2000
-        n_actors = 8
     out = train_remote.remote(
         updates=updates,
         run_name=run_name,
@@ -114,5 +120,7 @@ def main(
         n_actors=n_actors,
         device=device,
         profile=profile,
+        resume=resume,
+        quick=quick,
     )
     print(f"Final checkpoint: {out}")

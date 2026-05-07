@@ -17,7 +17,8 @@ def test_publish_and_load_weights():
     from guandan.guanzero.learner import load_latest_weights, publish_weights
     from guandan.guanzero.q_network import init_seat_nets
 
-    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    from guandan.guanzero.config import QNetConfig
+    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
 
     with tempfile.TemporaryDirectory() as td:
         weight_dir = Path(td) / "weights"
@@ -51,7 +52,8 @@ def test_maybe_sync_weights_no_op_when_not_newer():
     from guandan.guanzero.learner import publish_weights
     from guandan.guanzero.q_network import init_seat_nets
 
-    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    from guandan.guanzero.config import QNetConfig
+    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
 
     with tempfile.TemporaryDirectory() as td:
         weight_dir = Path(td) / "weights"
@@ -71,8 +73,9 @@ def test_maybe_sync_weights_loads_newer():
     from guandan.guanzero.learner import publish_weights
     from guandan.guanzero.q_network import init_seat_nets
 
-    q_nets_pub  = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
-    q_nets_actor = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    from guandan.guanzero.config import QNetConfig as _QNetConfig
+    q_nets_pub  = init_seat_nets(_QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets_actor = init_seat_nets(_QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
 
     # Perturb published nets so we can verify the actor's nets got updated
     for net in q_nets_pub.values():
@@ -102,16 +105,16 @@ def test_actor_loop_single_episode():
     from guandan.guanzero.worker import actor_loop
     from guandan.guanzero.learner import publish_weights
     from guandan.guanzero.q_network import init_seat_nets
-    from guandan.guanzero.config import TrainConfig
+    from guandan.guanzero.config import QNetConfig, TrainConfig
 
     cfg = TrainConfig(
-        hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2,
-        actor_push_batch_size=1,   # push after every episode
+        qnet=QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2),
+        actor_push_batch_size=1,
         sync_interval_episodes=1,
     )
     cfg_dict = dataclasses.asdict(cfg)
 
-    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets = init_seat_nets(cfg.qnet)
 
     ctx = mp.get_context("spawn")
 
@@ -162,10 +165,10 @@ def test_learner_drains_queue_and_updates():
 
     from guandan.guanzero.learner import learner_loop, publish_weights
     from guandan.guanzero.q_network import init_seat_nets
-    from guandan.guanzero.config import TrainConfig
+    from guandan.guanzero.config import QNetConfig, TrainConfig
 
     cfg = TrainConfig(
-        hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2,
+        qnet=QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2),
         buffer_min_size=2,
         batch_size=2,
         max_drain_batches_per_loop=10,

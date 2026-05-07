@@ -62,20 +62,13 @@ def actor_loop(
 
     torch.set_num_threads(1)
 
-    cfg = TrainConfig(**{k: v for k, v in cfg_dict.items()
-                         if k in {f.name for f in dataclasses.fields(TrainConfig)}})
+    cfg = TrainConfig.from_flat_dict(cfg_dict)
 
-    encoder = StateActionEncoder(use_oracle_others_hand=cfg.use_oracle_others_hand)
+    encoder = StateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
 
     inference_client = _build_inference_client(actor_id, inference_args, cfg) if inference_args else None
     if inference_client is None:
-        q_nets = init_seat_nets(
-            hidden_lstm=cfg.hidden_lstm,
-            hidden_mlp=cfg.hidden_mlp,
-            n_mlp_layers=cfg.n_mlp_layers,
-            dropout=cfg.dropout,
-            use_oracle_others_hand=cfg.use_oracle_others_hand,
-        )
+        q_nets = init_seat_nets(cfg.qnet)
         for net in q_nets.values():
             net.eval()
     else:
@@ -128,7 +121,7 @@ def actor_loop(
             with prof.time("weight_sync"):
                 local_version = maybe_sync_weights(q_nets, weight_dir, local_version)
 
-        eps = epsilon_linear(episode_count + actor_id, cfg)
+        eps = epsilon_linear(episode_count + actor_id, cfg.epsilon)
 
         seed = rng.randint(0, 10_000_000)
         try:
@@ -208,8 +201,8 @@ def _build_inference_client(actor_id: int, inference_args: dict, cfg) -> "object
     return InferenceClient(
         actor_id    = actor_id,
         bufs        = bufs,
-        timeout_s   = cfg.inference_timeout_s,
-        max_actions = cfg.inference_max_actions,
+        timeout_s   = cfg.inference.timeout_s,
+        max_actions = cfg.inference.max_actions,
     )
 
 

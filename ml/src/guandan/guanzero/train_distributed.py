@@ -120,26 +120,19 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
     # ── Optional inference server ─────────────────────────
     inf_bufs = inf_meta = inf_server_proc = None
     inference_args = None
-    if cfg.use_inference_server:
+    if cfg.inference.enabled:
         from . import inference_server as _isrv
 
         inf_bufs, inf_meta = _isrv.allocate_shared_buffers(
-            num_slots   = cfg.inference_n_slots,
-            max_actions = cfg.inference_max_actions,
+            num_slots   = cfg.inference.n_slots,
+            max_actions = cfg.inference.max_actions,
             n_actors    = cfg.n_actors,
             ctx         = ctx,
         )
-        q_net_kwargs = {
-            "hidden_lstm":            cfg.hidden_lstm,
-            "hidden_mlp":             cfg.hidden_mlp,
-            "n_mlp_layers":           cfg.n_mlp_layers,
-            "dropout":                cfg.dropout,
-            "use_oracle_others_hand": cfg.use_oracle_others_hand,
-        }
         inf_server_proc = ctx.Process(
             target=_isrv.run_server,
             args=(
-                cfg_dict, q_net_kwargs, inf_meta,
+                cfg_dict, inf_meta,
                 inf_bufs.free_slots, inf_bufs.request_queue, inf_bufs.events,
                 stop_event,
             ),
@@ -152,7 +145,7 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
         )
         inf_server_proc.start()
         tqdm.write(f"  Inference server started (pid={inf_server_proc.pid}) "
-                   f"on device={cfg.inference_device}")
+                   f"on device={cfg.inference.device}")
 
         inference_args = {
             "meta":            inf_meta,
@@ -176,7 +169,7 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
 
     sep = "=" * 68
     tqdm.write(sep)
-    if cfg.use_inference_server:
+    if cfg.inference.enabled:
         tqdm.write(f"  GuanZero distributed  |  {cfg.n_actors} actors + 1 learner + 1 inference server")
     else:
         tqdm.write(f"  GuanZero distributed  |  {cfg.n_actors} actors + 1 learner")

@@ -7,6 +7,7 @@ import torch
 from guandan.game import GuanDanEnv
 from guandan.guanzero.buffer import collate_encoded
 from guandan.guanzero.encoder import StateActionEncoder
+from guandan.guanzero.config import QNetConfig
 from guandan.guanzero.q_network import GuanZeroQNet
 
 
@@ -21,7 +22,7 @@ def _build_batch(n: int) -> dict[str, torch.Tensor]:
 
 
 def test_forward_returns_one_q_per_candidate():
-    net = GuanZeroQNet(hidden_lstm=32, hidden_mlp=64, n_mlp_layers=2)
+    net = GuanZeroQNet(QNetConfig(hidden_lstm=32, hidden_mlp=64, n_mlp_layers=2))
     batch = _build_batch(n=5)
     q = net(batch)
     assert q.shape == (5,)
@@ -29,7 +30,7 @@ def test_forward_returns_one_q_per_candidate():
 
 
 def test_gradient_flows_through_lstm_and_mlp():
-    net = GuanZeroQNet(hidden_lstm=32, hidden_mlp=64, n_mlp_layers=2)
+    net = GuanZeroQNet(QNetConfig(hidden_lstm=32, hidden_mlp=64, n_mlp_layers=2))
     batch = _build_batch(n=4)
     target = torch.zeros(4)
     q = net(batch)

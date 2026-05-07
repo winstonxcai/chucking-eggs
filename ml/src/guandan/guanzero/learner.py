@@ -207,8 +207,7 @@ def learner_loop(
     # the full guanzero package is re-imported from scratch.
     from .config import TrainConfig
 
-    cfg = TrainConfig(**{k: v for k, v in cfg_dict.items()
-                         if k in {f.name for f in dataclasses.fields(TrainConfig)}})
+    cfg = TrainConfig.from_flat_dict(cfg_dict)
 
     run_dir    = Path(run_dir)
     weight_dir = Path(weight_dir)
@@ -239,14 +238,8 @@ def learner_loop(
         except Exception:
             pass
 
-    q_nets  = init_seat_nets(
-        hidden_lstm=cfg.hidden_lstm,
-        hidden_mlp=cfg.hidden_mlp,
-        n_mlp_layers=cfg.n_mlp_layers,
-        dropout=cfg.dropout,
-        use_oracle_others_hand=cfg.use_oracle_others_hand,
-    )
-    compile_mode = getattr(cfg, "compile_mode", "default") or "default"
+    q_nets  = init_seat_nets(cfg.qnet)
+    compile_mode = cfg.compile_mode or "default"
     if compile_mode == "reduce-overhead" and cfg.device == "cuda":
         # Empirically (LOGBOOK §44): per-stream cudagraph_trees did NOT compose
         # with multi-stream parallelism — graphs share a CUDA memory pool that
@@ -256,7 +249,7 @@ def learner_loop(
     for p, net in q_nets.items():
         q_nets[p] = torch.compile(net, mode=compile_mode)
     learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device,
-                      use_bf16=getattr(cfg, "use_bf16_learner", False))
+                      use_bf16=cfg.use_bf16_learner)
     buffer  = ReplayBuffer(capacity_per_player=cfg.buffer_capacity_per_player)
 
     version       = 0

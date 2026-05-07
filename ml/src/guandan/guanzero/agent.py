@@ -17,6 +17,7 @@ from ..agents.base import Agent
 from ..combos import Combo
 from ..game import GuanDanEnv
 from .buffer import collate_encoded
+from .config import TrainConfig
 from .encoder import StateActionEncoder
 from .legal_utils import dedup_strategic
 from .q_network import init_seat_nets
@@ -35,20 +36,12 @@ class GuanZeroBot(Agent):
 
     @classmethod
     def load(cls, path: str | Path, device: str | torch.device = "cpu") -> "GuanZeroBot":
-        ckpt = torch.load(path, map_location=device)
-        cfg = ckpt["config"]
-        q_nets = init_seat_nets(
-            hidden_lstm=cfg["hidden_lstm"],
-            hidden_mlp=cfg["hidden_mlp"],
-            n_mlp_layers=cfg["n_mlp_layers"],
-            dropout=cfg.get("dropout", 0.0),
-            use_oracle_others_hand=cfg.get("use_oracle_others_hand", True),
-        )
+        ckpt = torch.load(path, map_location=device, weights_only=False)
+        cfg = TrainConfig.from_flat_dict(ckpt["config"])
+        q_nets = init_seat_nets(cfg.qnet)
         for p in range(4):
             q_nets[p].load_state_dict(ckpt["q_nets"][p])
-        encoder = StateActionEncoder(
-            use_oracle_others_hand=cfg.get("use_oracle_others_hand", True)
-        )
+        encoder = StateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
         return cls(q_nets=q_nets, encoder=encoder, device=device)
 
     @torch.no_grad()

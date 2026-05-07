@@ -24,6 +24,7 @@ from guandan.guanzero.inference_server import (
     allocate_shared_buffers,
     release_shared_buffers,
 )
+from guandan.guanzero.config import QNetConfig
 from guandan.guanzero.q_network import GuanZeroQNet, init_seat_nets
 from guandan.game import GuanDanEnv
 
@@ -135,7 +136,7 @@ def _shared_argmaxes(
 def test_shared_mem_cpu_equivalence():
     """Phase 2: shared-memory wire format must produce identical argmax to local."""
     torch.manual_seed(0)
-    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     for net in q_nets.values():
         net.eval()
 
@@ -153,7 +154,7 @@ def test_shared_mem_cpu_equivalence():
 def test_shared_mem_batched_requests_match_serial():
     """Phase 2 with forced batching across multiple requests."""
     torch.manual_seed(1)
-    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     for net in q_nets.values():
         net.eval()
 
@@ -174,7 +175,7 @@ def test_shared_mem_batched_requests_match_serial():
 def test_shared_mem_client_rejects_oversize_K():
     """K > inference_max_actions should fail loudly, not silently truncate."""
     torch.manual_seed(2)
-    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     ctx = mp.get_context("spawn")
     bufs, _ = allocate_shared_buffers(num_slots=4, max_actions=8, n_actors=1, ctx=ctx)
     try:
@@ -218,7 +219,7 @@ def test_cuda_tolerance_argmax_matches_local_or_near_tie():
     Q-value is below 1e-5.
     """
     torch.manual_seed(0)
-    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     for net in q_nets.values():
         net.eval()
 

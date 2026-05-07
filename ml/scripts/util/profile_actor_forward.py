@@ -136,11 +136,8 @@ def main():
 
     # Build paper-spec net
     from guandan.guanzero.q_network import init_seat_nets
-    nets = init_seat_nets(
-        hidden_lstm=args.hidden_lstm, hidden_mlp=args.hidden_mlp,
-        n_mlp_layers=args.n_mlp_layers, dropout=0.0,
-        use_oracle_others_hand=True,
-    )
+    from guandan.guanzero.config import QNetConfig
+    nets = init_seat_nets(QNetConfig(hidden_lstm=args.hidden_lstm, hidden_mlp=args.hidden_mlp, n_mlp_layers=args.n_mlp_layers))
     net = nets[0].to(device)
     net.eval()
     if args.compile:

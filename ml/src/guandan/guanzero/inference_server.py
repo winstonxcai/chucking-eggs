@@ -609,7 +609,6 @@ class InferenceServer:
 
 def run_server(
     cfg_dict:           dict,
-    q_net_kwargs:       dict,
     meta:               SharedBufferMeta,
     free_slots,
     request_queue,
@@ -652,7 +651,7 @@ def run_server(
             except Exception:
                 pass
 
-    _log("entry reached; cfg_device=" + str(cfg_dict.get("inference_device")))
+    _log("entry reached")
 
     # Route the module logger through our _log() so existing logger.info calls
     # also land in the server log file.
@@ -673,13 +672,16 @@ def run_server(
     torch.set_num_threads(1)
 
     try:
-        cfg_device              = cfg_dict.get("inference_device", "cpu")
-        max_requests            = cfg_dict.get("inference_batch_max_requests", 32)
-        max_action_rows         = cfg_dict.get("inference_batch_max_action_rows", 4096)
-        timeout_ms              = cfg_dict.get("inference_batch_timeout_ms", 5.0)
-        weight_refresh_s        = cfg_dict.get("inference_weight_refresh_s", 5.0)
-        use_bf16                = cfg_dict.get("use_bf16_learner", False) and cfg_device == "cuda"
+        from .config import TrainConfig
+        cfg             = TrainConfig.from_flat_dict(cfg_dict)
+        cfg_device      = cfg.inference.device
+        max_requests    = cfg.inference.batch_max_requests
+        max_action_rows = cfg.inference.batch_max_action_rows
+        timeout_ms      = cfg.inference.batch_timeout_ms
+        weight_refresh_s = cfg.inference.weight_refresh_s
+        use_bf16        = cfg.use_bf16_learner and cfg_device == "cuda"
 
+        _log(f"cfg.inference.device={cfg_device}")
         _log("attaching shared buffers...")
         bufs = attach_shared_buffers(
             meta=meta,
@@ -690,7 +692,7 @@ def run_server(
         )
 
         _log(f"building q_nets and moving to {cfg_device}...")
-        q_nets = init_seat_nets(**q_net_kwargs)
+        q_nets = init_seat_nets(cfg.qnet)
         if initial_state_dicts is not None:
             for p in range(4):
                 q_nets[p].load_state_dict(initial_state_dicts[p])

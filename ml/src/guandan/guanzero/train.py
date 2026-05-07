@@ -53,14 +53,14 @@ def _log_header(logger: logging.Logger, cfg: TrainConfig,
         logger.debug("  %-32s %s", field.name, getattr(cfg, field.name))
     logger.debug(sep)
     logger.debug("  Network: LSTM(108→%d) + MLP(%d layers, %d hidden) | %s params/seat | %s total",
-                 cfg.hidden_lstm, cfg.n_mlp_layers, cfg.hidden_mlp,
+                 cfg.qnet.hidden_lstm, cfg.qnet.n_mlp_layers, cfg.qnet.hidden_mlp,
                  f"{params_per[0]:,}", f"{total:,}")
     logger.debug(sep)
 
     # Stdout: compact banner (written before tqdm bar appears)
     tqdm.write(sep)
-    tqdm.write(f"  GuanZero M0  |  {cfg.episodes} episodes  |  "
-               f"LSTM {cfg.hidden_lstm}→MLP {cfg.n_mlp_layers}×{cfg.hidden_mlp}  |  "
+    tqdm.write(f"  GuanZero M0  |  episodes  |  "
+               f"LSTM {cfg.qnet.hidden_lstm}→MLP {cfg.qnet.n_mlp_layers}×{cfg.qnet.hidden_mlp}  |  "
                f"{params_per[0]:,} params/seat")
     tqdm.write(f"  Log → {log_path}")
     tqdm.write(sep)
@@ -100,14 +100,8 @@ def train(cfg: TrainConfig) -> None:
     (run_dir / "config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
     metrics_path = run_dir / "metrics.jsonl"
 
-    encoder = StateActionEncoder(use_oracle_others_hand=cfg.use_oracle_others_hand)
-    q_nets = init_seat_nets(
-        hidden_lstm=cfg.hidden_lstm,
-        hidden_mlp=cfg.hidden_mlp,
-        n_mlp_layers=cfg.n_mlp_layers,
-        dropout=cfg.dropout,
-        use_oracle_others_hand=cfg.use_oracle_others_hand,
-    )
+    encoder = StateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
+    q_nets = init_seat_nets(cfg.qnet)
     learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device,
                       use_bf16=cfg.use_bf16_learner)
     buffer = ReplayBuffer(capacity_per_player=cfg.buffer_capacity_per_player)
@@ -126,7 +120,7 @@ def train(cfg: TrainConfig) -> None:
         smoothing=0.05,
     )
     for ep in bar:
-        eps = epsilon_linear(ep, cfg)
+        eps = epsilon_linear(ep, cfg.epsilon)
         for net in q_nets.values():
             net.eval()
         samples = play_episode(

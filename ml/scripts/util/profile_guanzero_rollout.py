@@ -41,6 +41,8 @@ from guandan.game import GuanDanEnv
 from guandan.guanzero.buffer import collate_encoded
 from guandan.guanzero.encoder import StateActionEncoder
 from guandan.guanzero.q_network import init_seat_nets
+from guandan.guanzero.config import QNetConfig
+    from guandan.guanzero.config import QNetConfig
 from guandan.guanzero.returns import compute_mc_returns
 from guandan.guanzero.encoder import _multi_hot
 from guandan.azguan.behavior_flags import compute_behavior_flags
@@ -191,13 +193,7 @@ def main():
     torch.manual_seed(args.seed)
 
     encoder = StateActionEncoder(use_oracle_others_hand=True)
-    q_nets = init_seat_nets(
-        hidden_lstm=args.hidden_lstm,
-        hidden_mlp=args.hidden_mlp,
-        n_mlp_layers=args.n_mlp_layers,
-        dropout=0.0,
-        use_oracle_others_hand=True,
-    )
+    q_nets = init_seat_nets(QNetConfig(hidden_lstm=args.hidden_lstm, hidden_mlp=args.hidden_mlp, n_mlp_layers=args.n_mlp_layers))
     for net in q_nets.values():
         net.eval()
         net.to(args.device)

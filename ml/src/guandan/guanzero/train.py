@@ -27,7 +27,7 @@ from .config import TrainConfig
 from .encoder import StateActionEncoder
 from .learner import Learner
 from .logging_setup import setup_run_logging
-from .q_network import init_position_nets
+from .q_network import init_seat_nets
 from .schedules import epsilon_linear
 
 
@@ -101,7 +101,7 @@ def train(cfg: TrainConfig) -> None:
     metrics_path = run_dir / "metrics.jsonl"
 
     encoder = StateActionEncoder(use_oracle_others_hand=cfg.use_oracle_others_hand)
-    q_nets = init_position_nets(
+    q_nets = init_seat_nets(
         hidden_lstm=cfg.hidden_lstm,
         hidden_mlp=cfg.hidden_mlp,
         n_mlp_layers=cfg.n_mlp_layers,

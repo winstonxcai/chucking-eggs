@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from guandan.guanzero.actor import play_episode
 from guandan.guanzero.encoder import StateActionEncoder
-from guandan.guanzero.q_network import init_position_nets
+from guandan.guanzero.q_network import init_seat_nets
 from guandan.guanzero.returns import TrainSample
 
 
 def test_one_episode_returns_team_signed_samples():
     encoder = StateActionEncoder()
-    q_nets = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
     samples = play_episode(
         q_nets=q_nets,
         encoder=encoder,

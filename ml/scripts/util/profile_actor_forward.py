@@ -135,8 +135,8 @@ def main():
     rng = np.random.default_rng(0)
 
     # Build paper-spec net
-    from guandan.guanzero.q_network import init_position_nets
-    nets = init_position_nets(
+    from guandan.guanzero.q_network import init_seat_nets
+    nets = init_seat_nets(
         hidden_lstm=args.hidden_lstm, hidden_mlp=args.hidden_mlp,
         n_mlp_layers=args.n_mlp_layers, dropout=0.0,
         use_oracle_others_hand=True,

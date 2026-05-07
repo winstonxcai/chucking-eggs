@@ -12,13 +12,13 @@ from guandan.combos import Combo
 from guandan.game import GuanDanEnv
 from guandan.guanzero.agent import GuanZeroBot
 from guandan.guanzero.encoder import StateActionEncoder
-from guandan.guanzero.q_network import init_position_nets
+from guandan.guanzero.q_network import init_seat_nets
 from guandan.guanzero.config import TrainConfig
 
 
 def _save_dummy_checkpoint(path: Path) -> None:
     cfg = TrainConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
-    q_nets = init_position_nets(
+    q_nets = init_seat_nets(
         hidden_lstm=cfg.hidden_lstm,
         hidden_mlp=cfg.hidden_mlp,
         n_mlp_layers=cfg.n_mlp_layers,

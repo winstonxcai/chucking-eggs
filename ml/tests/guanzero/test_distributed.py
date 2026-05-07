@@ -15,9 +15,9 @@ import torch
 
 def test_publish_and_load_weights():
     from guandan.guanzero.learner import load_latest_weights, publish_weights
-    from guandan.guanzero.q_network import init_position_nets
+    from guandan.guanzero.q_network import init_seat_nets
 
-    q_nets = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
 
     with tempfile.TemporaryDirectory() as td:
         weight_dir = Path(td) / "weights"
@@ -49,9 +49,9 @@ def test_publish_and_load_weights():
 def test_maybe_sync_weights_no_op_when_not_newer():
     from guandan.guanzero.worker import maybe_sync_weights
     from guandan.guanzero.learner import publish_weights
-    from guandan.guanzero.q_network import init_position_nets
+    from guandan.guanzero.q_network import init_seat_nets
 
-    q_nets = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
 
     with tempfile.TemporaryDirectory() as td:
         weight_dir = Path(td) / "weights"
@@ -69,10 +69,10 @@ def test_maybe_sync_weights_no_op_when_not_newer():
 def test_maybe_sync_weights_loads_newer():
     from guandan.guanzero.worker import maybe_sync_weights
     from guandan.guanzero.learner import publish_weights
-    from guandan.guanzero.q_network import init_position_nets
+    from guandan.guanzero.q_network import init_seat_nets
 
-    q_nets_pub  = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
-    q_nets_actor = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets_pub  = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets_actor = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
 
     # Perturb published nets so we can verify the actor's nets got updated
     for net in q_nets_pub.values():
@@ -101,7 +101,7 @@ def test_actor_loop_single_episode():
 
     from guandan.guanzero.worker import actor_loop
     from guandan.guanzero.learner import publish_weights
-    from guandan.guanzero.q_network import init_position_nets
+    from guandan.guanzero.q_network import init_seat_nets
     from guandan.guanzero.config import TrainConfig
 
     cfg = TrainConfig(
@@ -111,7 +111,7 @@ def test_actor_loop_single_episode():
     )
     cfg_dict = dataclasses.asdict(cfg)
 
-    q_nets = init_position_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
+    q_nets = init_seat_nets(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
 
     ctx = mp.get_context("spawn")
 
@@ -161,7 +161,7 @@ def test_learner_drains_queue_and_updates():
     import numpy as np
 
     from guandan.guanzero.learner import learner_loop, publish_weights
-    from guandan.guanzero.q_network import init_position_nets
+    from guandan.guanzero.q_network import init_seat_nets
     from guandan.guanzero.config import TrainConfig
 
     cfg = TrainConfig(

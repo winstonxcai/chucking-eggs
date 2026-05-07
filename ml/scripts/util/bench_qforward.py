@@ -14,7 +14,7 @@ import time
 import numpy as np
 import torch
 
-from guandan.guanzero.q_network import init_position_nets
+from guandan.guanzero.q_network import init_seat_nets
 
 _KEYS = (
     "own_hand", "others_hand", "recent_action_each_player",
@@ -57,7 +57,7 @@ def main():
     torch.set_num_threads(args.threads)
     device = torch.device(args.device)
 
-    nets = init_position_nets(
+    nets = init_seat_nets(
         hidden_lstm=args.hidden_lstm, hidden_mlp=args.hidden_mlp,
         n_mlp_layers=args.n_mlp_layers, dropout=0.0,
         use_oracle_others_hand=True,

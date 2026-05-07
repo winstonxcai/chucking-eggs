@@ -67,7 +67,7 @@ class GuanZeroQNet(nn.Module):
         return self.mlp(flat).squeeze(-1)
 
 
-def init_position_nets(
+def init_seat_nets(
     hidden_lstm: int = 256,
     hidden_mlp: int = 1024,
     n_mlp_layers: int = 6,
@@ -87,4 +87,4 @@ def init_position_nets(
     }
 
 
-__all__ = ["GuanZeroQNet", "init_position_nets", "HISTORY_LEN"]
+__all__ = ["GuanZeroQNet", "init_seat_nets", "HISTORY_LEN"]

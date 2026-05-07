@@ -630,7 +630,7 @@ def run_server(
     import traceback
     from pathlib import Path
     import torch
-    from .q_network import init_position_nets
+    from .q_network import init_seat_nets
 
     # Server-side log file on the run volume (so we can pull it after a run).
     # Spawn-context children's stdout/stderr don't reliably propagate to
@@ -690,7 +690,7 @@ def run_server(
         )
 
         _log(f"building q_nets and moving to {cfg_device}...")
-        q_nets = init_position_nets(**q_net_kwargs)
+        q_nets = init_seat_nets(**q_net_kwargs)
         if initial_state_dicts is not None:
             for p in range(4):
                 q_nets[p].load_state_dict(initial_state_dicts[p])

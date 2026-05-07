@@ -26,7 +26,7 @@ def _worker(actor_id: int, args_dict: dict, return_q: mp.Queue) -> None:
     sys.path.insert(0, str(Path(args_dict["repo_root"]) / "ml" / "src"))
     from guandan.game import GuanDanEnv
     from guandan.guanzero.encoder import StateActionEncoder, _multi_hot
-    from guandan.guanzero.q_network import init_position_nets
+    from guandan.guanzero.q_network import init_seat_nets
     from guandan.guanzero.returns import compute_mc_returns
     from guandan.guanzero.buffer import collate_encoded
     from guandan.azguan.behavior_flags import compute_behavior_flags
@@ -38,7 +38,7 @@ def _worker(actor_id: int, args_dict: dict, return_q: mp.Queue) -> None:
     rng = random.Random(args_dict["seed"] + actor_id * 10_000)
 
     encoder = StateActionEncoder(use_oracle_others_hand=True)
-    nets = init_position_nets(
+    nets = init_seat_nets(
         hidden_lstm=args_dict["hidden_lstm"],
         hidden_mlp=args_dict["hidden_mlp"],
         n_mlp_layers=args_dict["n_mlp_layers"],

@@ -47,7 +47,7 @@ def _baseline_worker(worker_id: int, args_dict: dict, return_q: mp.Queue) -> Non
     sys.path.insert(0, str(Path(args_dict["repo_root"]) / "ml" / "src"))
     from guandan.game import GuanDanEnv
     from guandan.guanzero.encoder import StateActionEncoder, _multi_hot
-    from guandan.guanzero.q_network import init_position_nets
+    from guandan.guanzero.q_network import init_seat_nets
     from guandan.guanzero.buffer import collate_encoded
     from guandan.azguan.behavior_flags import compute_behavior_flags
     from guandan.pvguan.legal_utils import dedup_strategic
@@ -56,7 +56,7 @@ def _baseline_worker(worker_id: int, args_dict: dict, return_q: mp.Queue) -> Non
     torch.set_num_threads(1)
     rng = random.Random(args_dict["seed"] + worker_id * 10_000)
     encoder = StateActionEncoder(use_oracle_others_hand=True)
-    nets = init_position_nets(
+    nets = init_seat_nets(
         hidden_lstm=args_dict["hidden_lstm"],
         hidden_mlp=args_dict["hidden_mlp"],
         n_mlp_layers=args_dict["n_mlp_layers"],
@@ -162,12 +162,12 @@ def _server_loop(args_dict: dict, req_q: mp.Queue, reply_qs: list,
                  stop_event, stats_q: mp.Queue) -> None:
     import sys
     sys.path.insert(0, str(Path(args_dict["repo_root"]) / "ml" / "src"))
-    from guandan.guanzero.q_network import init_position_nets
+    from guandan.guanzero.q_network import init_seat_nets
     from guandan.guanzero.buffer import collate_encoded
 
     torch.set_num_threads(1)
     device = torch.device(args_dict["device"])
-    nets = init_position_nets(
+    nets = init_seat_nets(
         hidden_lstm=args_dict["hidden_lstm"],
         hidden_mlp=args_dict["hidden_mlp"],
         n_mlp_layers=args_dict["n_mlp_layers"],

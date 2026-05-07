@@ -26,7 +26,7 @@ import torch.nn.functional as F
 from .buffer import ReplayBuffer
 from .checkpoint import save_checkpoint, unwrap_compiled
 from .profiler import PhaseProfiler
-from .q_network import GuanZeroQNet, init_position_nets
+from .q_network import GuanZeroQNet, init_seat_nets
 
 
 # ─── Learner class (single-process) ──────────────────────
@@ -239,7 +239,7 @@ def learner_loop(
         except Exception:
             pass
 
-    q_nets  = init_position_nets(
+    q_nets  = init_seat_nets(
         hidden_lstm=cfg.hidden_lstm,
         hidden_mlp=cfg.hidden_mlp,
         n_mlp_layers=cfg.n_mlp_layers,

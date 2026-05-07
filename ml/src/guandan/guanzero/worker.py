@@ -58,7 +58,7 @@ def actor_loop(
     # Lazy imports — spawned child re-imports the full package from scratch.
     from .config import TrainConfig
     from .schedules import epsilon_linear
-    from .q_network import init_position_nets
+    from .q_network import init_seat_nets
 
     torch.set_num_threads(1)
 
@@ -69,7 +69,7 @@ def actor_loop(
 
     inference_client = _build_inference_client(actor_id, inference_args, cfg) if inference_args else None
     if inference_client is None:
-        q_nets = init_position_nets(
+        q_nets = init_seat_nets(
             hidden_lstm=cfg.hidden_lstm,
             hidden_mlp=cfg.hidden_mlp,
             n_mlp_layers=cfg.n_mlp_layers,

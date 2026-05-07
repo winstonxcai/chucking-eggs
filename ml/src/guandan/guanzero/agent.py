@@ -19,7 +19,7 @@ from ..game import GuanDanEnv
 from .buffer import collate_encoded
 from .encoder import StateActionEncoder
 from .legal_utils import dedup_strategic
-from .q_network import init_position_nets
+from .q_network import init_seat_nets
 
 
 class GuanZeroBot(Agent):
@@ -37,7 +37,7 @@ class GuanZeroBot(Agent):
     def load(cls, path: str | Path, device: str | torch.device = "cpu") -> "GuanZeroBot":
         ckpt = torch.load(path, map_location=device)
         cfg = ckpt["config"]
-        q_nets = init_position_nets(
+        q_nets = init_seat_nets(
             hidden_lstm=cfg["hidden_lstm"],
             hidden_mlp=cfg["hidden_mlp"],
             n_mlp_layers=cfg["n_mlp_layers"],

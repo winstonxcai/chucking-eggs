@@ -77,7 +77,6 @@ class TrainConfig:
     # ── A10G / CUDA throughput knobs ──────────────────────
     use_bf16_learner: bool = False     # BF16 autocast in Learner.update (cuda only)
     compile_mode: str = "default"      # passes to torch.compile(mode=...)
-    compile_actor: bool = False        # torch.compile actor q-nets (dynamic=True) for faster CPU inference
 
     # ── Shared GPU inference server (Phase 4+) ────────────
     # When true, actors send inference requests to a shared GPU server instead

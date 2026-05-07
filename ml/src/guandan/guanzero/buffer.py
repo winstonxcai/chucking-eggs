@@ -88,10 +88,6 @@ class ReplayBuffer:
         returns = np.asarray([s.mc_return for s in samples], dtype=np.float32)
         self.push_stacked(stacked, players, returns)
 
-    def push_many(self, samples: list[TrainSample]) -> None:
-        """Alias for push; used by the learner to ingest actor batches."""
-        self.push(samples)
-
     def push_stacked(
         self,
         stacked: dict[str, np.ndarray],
@@ -175,28 +171,6 @@ class ReplayBuffer:
         return out
 
 
-# ─── legacy collate helpers (used by actor inference + tests) ─────
-
-
-def collate(samples: list[TrainSample], device: str | torch.device = "cpu") -> tuple[
-    dict[str, torch.Tensor], torch.Tensor
-]:
-    """Stack a list of TrainSample dicts into batched torch tensors.
-
-    Legacy path — the hot training path uses ``ReplayBuffer.sample_batch_for_player``
-    which avoids constructing TrainSample lists entirely. This still gets used
-    by tests and the single-process trainer.
-    """
-    keys = samples[0].encoded.keys()
-    batch: dict[str, torch.Tensor] = {}
-    for k in keys:
-        arr = np.stack([s.encoded[k] for s in samples], axis=0)
-        batch[k] = torch.from_numpy(arr).to(device, non_blocking=True)
-    targets_arr = np.asarray([s.mc_return for s in samples], dtype=np.float32)
-    targets = torch.from_numpy(targets_arr).to(device, non_blocking=True)
-    return batch, targets
-
-
 def collate_encoded(
     encoded_list: list[dict[str, np.ndarray]],
     device: str | torch.device = "cpu",
@@ -218,4 +192,4 @@ def collate_encoded(
     return batch
 
 
-__all__ = ["ReplayBuffer", "collate", "collate_encoded"]
+__all__ = ["ReplayBuffer", "collate_encoded"]

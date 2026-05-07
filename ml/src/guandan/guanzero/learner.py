@@ -81,7 +81,6 @@ class Learner:
         self,
         buffer: ReplayBuffer,
         batch_size: int,
-        min_buffer_size: int,
     ) -> dict[int, float]:
         """One gradient step per position, all 4 in parallel on CUDA.
 
@@ -95,8 +94,6 @@ class Learner:
             t0 = time.perf_counter()
         batches: dict[int, tuple] = {}
         for p in range(4):
-            if buffer.size(p) < min_buffer_size:
-                continue
             res = buffer.sample_batch_for_player(p, batch_size, device=self.device)
             if res is not None:
                 batches[p] = res
@@ -380,7 +377,6 @@ def learner_loop(
             new_losses = learner.update(
                 buffer=buffer,
                 batch_size=cfg.batch_size,
-                min_buffer_size=cfg.buffer_min_size,
             )
             if new_losses:
                 last_losses = new_losses

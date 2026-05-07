@@ -28,6 +28,7 @@ from .encoder import StateActionEncoder
 from .learner import Learner
 from .logging_setup import setup_run_logging
 from .q_network import init_position_nets
+from .schedules import epsilon_linear
 
 
 @dataclasses.dataclass
@@ -105,12 +106,6 @@ class TrainConfig:
         ts = datetime.now().strftime("%Y%m%d_%H%M")
         return f"ml/runs/guanzero_m0_{ts}"
 
-
-def _epsilon(ep: int, cfg: TrainConfig) -> float:
-    if cfg.epsilon_decay_episodes <= 0:
-        return cfg.epsilon_final
-    frac = min(1.0, ep / cfg.epsilon_decay_episodes)
-    return cfg.epsilon_start + frac * (cfg.epsilon_final - cfg.epsilon_start)
 
 
 
@@ -207,7 +202,7 @@ def train(cfg: TrainConfig) -> None:
         smoothing=0.05,
     )
     for ep in bar:
-        eps = _epsilon(ep, cfg)
+        eps = epsilon_linear(ep, cfg)
         for net in q_nets.values():
             net.eval()
         samples = play_episode(

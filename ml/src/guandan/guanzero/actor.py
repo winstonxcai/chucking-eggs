@@ -420,7 +420,8 @@ def actor_loop(
     initialization and weight syncing entirely.
     """
     # Lazy import — runs in a spawned child; full package re-imported from scratch
-    from .train import TrainConfig, _epsilon
+    from .train import TrainConfig
+    from .schedules import epsilon_linear
     from .q_network import init_position_nets
 
     torch.set_num_threads(1)
@@ -512,7 +513,7 @@ def actor_loop(
             with prof.time("weight_sync"):
                 local_version = maybe_sync_weights(q_nets, weight_dir, local_version)
 
-        eps  = _epsilon(episode_count + actor_id, cfg)
+        eps  = epsilon_linear(episode_count + actor_id, cfg)
 
         if rollout is not None:
             # Vectorized lane mode: one round of batched decisions

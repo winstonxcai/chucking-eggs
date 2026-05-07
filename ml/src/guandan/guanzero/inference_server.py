@@ -451,6 +451,55 @@ def server_loop_entry(
 # ─── Phase 2: shared-memory buffers + descriptor queue ────────
 
 
+class _ServerProfiler:
+    """Per-batch phase timer. Mirrors the actor.py _ActorProfiler format.
+
+    Enabled via GUANZERO_PROFILE_PHASES=1. Inserts a CUDA synchronize
+    around the forward phase so its timing is accurate (otherwise the
+    work is just queued on the GPU stream and we'd see ~0ms).
+    """
+
+    def __init__(self, enabled: bool, device: torch.device) -> None:
+        self.enabled = enabled
+        self.device = device
+        self.is_cuda = enabled and device.type == "cuda"
+        self.times: dict[str, float] = {}
+        self.counts: dict[str, int] = {}
+
+    def start(self) -> float:
+        return time.perf_counter() if self.enabled else 0.0
+
+    def stop(self, name: str, t0: float, sync: bool = False, count: int = 1) -> None:
+        if not self.enabled:
+            return
+        if sync and self.is_cuda:
+            torch.cuda.synchronize(self.device)
+        dt = time.perf_counter() - t0
+        self.times[name] = self.times.get(name, 0.0) + dt
+        self.counts[name] = self.counts.get(name, 0) + count
+
+    def add_count(self, name: str, value: int) -> None:
+        if not self.enabled:
+            return
+        self.counts[name] = self.counts.get(name, 0) + value
+
+    def report(self, total_wall_s: float, n_batches: int) -> str:
+        if not self.enabled or not self.times:
+            return ""
+        total_timed = sum(self.times.values())
+        lines: list[str] = ["", f"Server profile  |  {n_batches} batches  |  {total_wall_s:.2f}s wall"]
+        lines.append(f"{'phase':18s} {'sec':>9s} {'%':>7s} {'count':>10s} {'ms/call':>10s}")
+        lines.append("-" * 60)
+        for k, v in sorted(self.times.items(), key=lambda x: -x[1]):
+            c = max(1, self.counts.get(k, 1))
+            pct = 100 * v / total_timed if total_timed > 0 else 0
+            lines.append(f"{k:18s} {v:9.3f} {pct:7.1f} {c:10d} {1000*v/c:10.3f}")
+        lines.append("-" * 60)
+        if total_wall_s > 0:
+            lines.append(f"{'TOTAL TIMED':18s} {total_timed:9.3f}  ({100*total_timed/total_wall_s:.1f}% of wall)")
+        return "\n".join(lines)
+
+
 @dataclass
 class SharedBufferMeta:
     """Names + shapes of the shared-memory blocks. Pickled into child
@@ -748,6 +797,14 @@ class SharedInferenceServer:
             "forward_ms_sum": 0.0,
         }
 
+        # Per-phase profiler — toggled via GUANZERO_PROFILE_PHASES=1
+        import os as _os
+        self.profiler = _ServerProfiler(
+            enabled=(_os.environ.get("GUANZERO_PROFILE_PHASES") == "1"),
+            device=self.device,
+        )
+        self._loop_t0 = time.perf_counter()
+
     # ── batching loop ──────────────────────────────────────
 
     def server_loop(self) -> None:
@@ -792,11 +849,19 @@ class SharedInferenceServer:
             logger.info("SharedInferenceServer exiting; %d batches, %d requests, %d rows",
                         int(self.metrics["n_batches"]), int(self.metrics["n_requests"]),
                         int(self.metrics["n_action_rows"]))
+            if self.profiler.enabled:
+                wall_s = time.perf_counter() - self._loop_t0
+                report = self.profiler.report(wall_s, int(self.metrics["n_batches"]))
+                for line in report.splitlines():
+                    logger.info(line)
 
     def _drain_batch(self) -> list[RequestDesc]:
+        prof = self.profiler
+        t_drain = prof.start()
         try:
             first = self.bufs.request_queue.get(timeout=0.5)
         except queue.Empty:
+            prof.stop("drain_wait_empty", t_drain)
             return []
         batch: list[RequestDesc] = [first]
         rows = first.n_actions
@@ -812,35 +877,46 @@ class SharedInferenceServer:
                 rows += desc.n_actions
             except queue.Empty:
                 time.sleep(0.0001)
+        prof.stop("drain_batch", t_drain)
         return batch
 
     # ── inference ──────────────────────────────────────────
 
     def _process_batch(self, batch: list[RequestDesc]) -> None:
+        prof = self.profiler
         t0 = time.perf_counter()
         chosen = self._infer_batch(batch)
         forward_ms = (time.perf_counter() - t0) * 1000.0
 
         # Scatter responses + signal events
+        t_scatter = prof.start()
         for desc, idx in zip(batch, chosen):
             self.bufs.response_buf[desc.actor_id, 0] = np.uint32(desc.request_id)
             self.bufs.response_buf[desc.actor_id, 1] = np.uint32(idx)
             self.bufs.response_buf[desc.actor_id, 2] = np.uint32(self._local_version)
             self.bufs.events[desc.actor_id].set()
+        prof.stop("scatter+events", t_scatter, count=len(batch))
 
         rows = sum(d.n_actions for d in batch)
         self.metrics["n_batches"]      += 1
         self.metrics["n_requests"]     += len(batch)
         self.metrics["n_action_rows"]  += rows
         self.metrics["forward_ms_sum"] += forward_ms
+        prof.add_count("batches", 1)
+        prof.add_count("requests", len(batch))
+        prof.add_count("action_rows", rows)
 
     @torch.no_grad()
     def _infer_batch(self, descs: list[RequestDesc]) -> list[int]:
         """Group by seat, gather state/action from shared mem, expand state
         on GPU via repeat_interleave, run forward, per-request argmax."""
+        prof = self.profiler
+
+        t_group = prof.start()
         by_seat: dict[int, list[tuple[int, RequestDesc]]] = {p: [] for p in range(4)}
         for original_idx, desc in enumerate(descs):
             by_seat[desc.seat].append((original_idx, desc))
+        prof.stop("group_by_seat", t_group)
 
         chosen: list[int] = [0] * len(descs)
 
@@ -851,35 +927,43 @@ class SharedInferenceServer:
             slots = [d.slot for _, d in items]
             Ks    = [d.n_actions for _, d in items]
 
-            # Gather state rows (one per request) and per-action rows (sum_K).
-            # NumPy fancy index returns a copy; for the actions we slice+concat.
+            # Gather (CPU): NumPy fancy index for state, slice+concat for actions
+            t_collate = prof.start()
             state_np  = self.bufs.state_buf[slots]                  # [B, 3226] uint8
             action_np = np.concatenate(
                 [self.bufs.action_buf[d.slot, :d.n_actions] for _, d in items],
                 axis=0,
             )                                                       # [sum_K, 117] uint8
+            prof.stop("collate_cpu", t_collate)
 
+            # H2D: torch.from_numpy + .to(device) (async; sync below to time)
+            t_h2d = prof.start()
             state   = torch.from_numpy(state_np).to(self.device, non_blocking=True).float()
             actions = torch.from_numpy(action_np).to(self.device, non_blocking=True).float()
-
             # On-GPU expansion: state[i] repeated K_i times → [sum_K, 3226]
             repeats = torch.tensor(Ks, device=self.device, dtype=torch.long)
             state_rows = torch.repeat_interleave(state, repeats, dim=0)
-
             batch_dict = self._unpack_to_qnet_dict(state_rows, actions)
+            prof.stop("h2d+expand", t_h2d, sync=True)
 
+            # Forward: GPU compute (we want this to be the dominant phase)
+            t_fwd = prof.start()
             ctx = (
                 torch.autocast(device_type=self.device.type, dtype=torch.bfloat16)
                 if self.use_bf16 else nullcontext()
             )
             with ctx:
                 q = self.q_nets[seat](batch_dict)                   # [sum_K]
+            prof.stop("forward", t_fwd, sync=True)
 
+            # Per-request argmax on GPU + .item() per request (D2H sync each)
+            t_argmax = prof.start()
             offset = 0
             for (original_idx, _), K in zip(items, Ks):
                 segment = q[offset : offset + K]
                 chosen[original_idx] = int(segment.argmax().item())
                 offset += K
+            prof.stop("argmax+d2h", t_argmax, count=len(items))
 
         return chosen
 

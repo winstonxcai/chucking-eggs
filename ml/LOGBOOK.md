@@ -2930,3 +2930,60 @@ since it's a no-op on ARM and adds startup cost.
 
 - `ml/scripts/util/profile_actor_forward.py` — torch.profiler bench
 - `ml/scripts/modal/profile_actor_forward_modal.py` — Modal launcher for x86 testing
+
+## 50. compile_actor A/B test: bench was misleading, no-compile wins (2026-05-07)
+
+Direct A/B with same config + replay controller (target=2.5, max=4.0) on
+Modal A10G + 32 actors, profiled with K-bucketed actor profile:
+
+| metric                    | compile (2000 upd) | no-compile (1000 upd) | Δ           |
+|---|---:|---:|---:|
+| wall per 1000 updates     | 252s                | 220s                   | -13%        |
+| cum samp/s                | 16,249              | 18,596                 | +14%        |
+| per-actor dec/s (actor 0) | 130.6               | 161.7                  | +24%        |
+| K=2-5 fwd ms/call         | 8.625               | **6.435**              | **-25%**    |
+| K6-10 fwd ms/call         | 12.97               | 9.97                   | -23%        |
+| K11-20 fwd ms/call        | 16.27               | 13.14                  | -19%        |
+| K>20 fwd ms/call          | 36.63               | 32.64                  | -11%        |
+
+**`torch.compile(net, dynamic=True)` regresses production performance** by
+~25% per decision in the dominant K=2-5 bucket, despite the synthetic bench
+predicting +36%. Inductor's CPU codegen on x86 was a clean win for fixed-shape
+synthetic K=5 batches but does not carry over.
+
+### Why the bench misled
+
+1. **Bench used fixed K=5** — production has highly variable K (2-320). With
+   `dynamic=True`, Inductor either compiles a single fully-dynamic kernel (worse
+   than eager for small batches) or recompiles per shape (worse warmup).
+2. **Bench inputs were uniform-random** with no data-dependent paths. Real
+   encoder outputs may exercise branches that defeat compile fusion.
+3. **Bench averaged over 500 iters of identical shape** — warmup amortizes
+   trivially. Production has ongoing recompile churn as K varies.
+
+### K distribution (per actor 0, ~250 episodes)
+
+| bucket  | decisions | %      | fwd calls | fwd_total_s | ms/call |
+|---|---:|---:|---:|---:|---:|
+| K=1     | 25,229    | 38.9%  | 0         | 0.0         | shortcut |
+| K=2-5   | 26,781    | 41.3%  | 24,197    | 208.7       | 8.6 (compile) / 6.4 (no-compile) |
+| K=6-10  | 6,406     | 9.9%   | 5,765     | 74.8        | 13.0 / 10.0 |
+| K=11-20 | 3,142     | 4.8%   | 2,848     | 46.3        | 16.3 / 13.1 |
+| K>20    | 3,250     | 5.0%   | 2,926     | 107.2       | 36.6 / 32.6 |
+
+The K=1 shortcut handles 39% of decisions for free; K=2-5 is where most actor
+time goes; K>20 is the heavy-tail (5% of decisions, 22% of wall).
+
+### Config decision
+
+`m0_a10g_distributed.yaml`:
+- `compile_actor: false` — paper-spec doesn't benefit from torch.compile in
+  production. Keep the flag for future larger-model ablations.
+
+### Updated wall-time expectations
+
+| config       | actor samp/s | learner upd/s (replay=4) | 25k upd wall |
+|---|---:|---:|---:|
+| no-compile   | ~5,000        | ~4.5                      | ~93 min      |
+| compile      | ~4,700        | ~3.97                     | ~105 min     |
+

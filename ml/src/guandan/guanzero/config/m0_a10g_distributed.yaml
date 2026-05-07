@@ -31,8 +31,8 @@ inference_n_slots: 512
 # gap problem head-on: at baseline n_actors=32 we measured replay 12-22x
 # (LOGBOOK §44), but M1's published 200k checkpoint trained at replay 2.5x.
 # This forces the learner to run at the actor production rate.
-target_replay_ratio: 2.5     # match M1's 200k checkpoint training regime
-max_replay_ratio: 4.0
+target_replay_ratio: 1.0     # match M1's 200k checkpoint training regime
+max_replay_ratio: 2.5
 max_throttle_sleep_s: 0.05
 
 # Network (paper spec — same as M1)
@@ -64,4 +64,4 @@ compile_mode: reduce-overhead
 # 36% faster forward on Modal x86 CPU (7.08ms → 4.62ms per decision),
 # no-op on M1 ARM CPU (Inductor CPU backend targets x86). Set true for
 # Modal training, leave false for M1 dev (saves first-decision warmup).
-compile_actor: true
+compile_actor: false

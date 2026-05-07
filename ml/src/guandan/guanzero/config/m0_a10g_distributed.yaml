@@ -3,8 +3,8 @@
 # A10G batch=4096 bench (LOGBOOK §44): ~10977 samp/s (2.68 upd/s × 4096) — ~2.7× M1.
 # Throughput metric is samples/sec (batch-size-independent).
 
-n_actors: 8
-env_lanes_per_actor: 4       # 8 actors × 4 lanes = 32 envs (same total as bare n_actors=32)
+n_actors: 32
+env_lanes_per_actor: 4       # D: 32 actors × 4 lanes = 128 envs
 sync_interval_episodes: 20
 actor_push_batch_size: 512
 sample_queue_maxsize: 64
@@ -28,12 +28,21 @@ inference_max_actions: 320
 inference_n_slots: 512
 
 # ── Replay-ratio controller (Phase 5) ──
-# Throttles the learner when cum_replay > max_replay_ratio. Hits the eval
-# gap problem head-on: at baseline n_actors=32 we measured replay 12-22x
-# (LOGBOOK §44), but M1's published 200k checkpoint trained at replay 2.5x.
-# This forces the learner to run at the actor production rate.
-target_replay_ratio: 1.0     # match M1's 200k checkpoint training regime
-max_replay_ratio: 2.5
+# Throttles the learner when cum_replay > max_replay_ratio so we don't
+# overfit to a small slow-growing buffer. At baseline n_actors=32 we
+# measured replay 12-22× (LOGBOOK §44) — the learner consumed samples
+# 12-22× faster than actors produced them, training mostly on stale data.
+#
+# Early in training the policy is changing quickly and stale samples
+# carry obsolete behavior — we want replay ≈ 1 (essentially on-policy)
+# so each gradient step sees fresh-from-current-policy data. As training
+# matures and policy churn slows, replay can drift up without hurting
+# eval — M1's published 200k checkpoint trained at ~2.5×.
+#
+# Conservative defaults below: target ≈ 1, hard cap at 1.5. Bump
+# max_replay_ratio later in long runs once the policy stabilizes.
+target_replay_ratio: 1.0
+max_replay_ratio: 1.5
 max_throttle_sleep_s: 0.05
 
 # Network (paper spec — same as M1)

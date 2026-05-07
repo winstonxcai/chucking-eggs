@@ -3054,3 +3054,49 @@ Revert config to `n_actors: 32`, `env_lanes_per_actor: 1` for now.
 Implementation stays in tree as a feature flag — useful for future
 larger-model ablations or if the per-decision profile shifts.
 
+
+## 52. env-lanes follow-up (C/D): stacking on top of full process pool also loses (2026-05-07)
+
+Follow-up to §51. Tested whether holding `n_actors=32` and stacking lanes
+on top recovers the lost productivity. Same 100-update profiled smoke,
+same `target_replay_ratio=1.0`, `max_replay_ratio=1.5`:
+
+| run                  | wall | fresh    | actor rate | dec/s/actor | ep/s/lane |
+|---|---:|---:|---:|---:|---:|
+| A: 32 × 1            | 55s  | 271k     | **4,951**  | **170.8**   | **1.29**  |
+| C: 32 × 2            | 88s  | 271k     | 2,710      | 101.9       | 0.37      |
+| D: 32 × 4            | 67s  | 271k     | 3,719      | 132.3       | 0.25      |
+
+### Per-lane productivity collapse
+
+```
+1 lane:   1.29 ep/s/lane
+2 lanes:  0.37 ep/s/lane   (-71% per-lane)
+4 lanes:  0.25 ep/s/lane   (-81% per-lane)
+```
+
+Lanes serialize within each `torch.set_num_threads(1)` actor process, so
+stacking N lanes spreads each process's CPU budget across N games. The
+forward-batching gain (5-19% per call) is dwarfed by the serialization
+cost of N × (legal_actions + encode_all + env_step) per round.
+
+D > C is also informative: D's 4-lane groups land in larger K buckets
+(K11-20 grouped) where per-call cost is more stable, while C's 2-lane
+groups stay in dispatch-overhead-dominated small batches.
+
+### Final verdict on env-lanes
+
+**Negative across all configurations tested**:
+- §51: 8 actors × 4 lanes = 32 envs, fewer processes — 3.2× slower than A
+- §52: 32 actors × 2 or 4 lanes, same processes — 1.3-1.8× slower than A
+
+The implementation stays in tree as `env_lanes_per_actor` (default 1) for
+future use cases:
+- Larger-model regimes where forward dominates per-decision wall enough
+  that batching's per-call gain exceeds the serialization cost
+- Hardware where actor inference is GPU-offloaded and the per-process
+  Python overhead is the actual bottleneck (CUDA-only deployments)
+
+For paper-spec on Modal x86: bare `n_actors=32, env_lanes_per_actor=1`
+is the right default.
+

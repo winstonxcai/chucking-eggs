@@ -2987,3 +2987,70 @@ time goes; K>20 is the heavy-tail (5% of decisions, 22% of wall).
 | no-compile   | ~5,000        | ~4.5                      | ~93 min      |
 | compile      | ~4,700        | ~3.97                     | ~105 min     |
 
+
+## 51. env-lanes: per-process batching helps, but cutting n_actors regresses (2026-05-07)
+
+A/B with `target_replay_ratio=1.0`, `max_replay_ratio=1.5`, 100 updates:
+
+| run                       | wall  | actor rate (overall) | per-actor dec/s | K=2-5 fwd ms |
+|---|---:|---:|---:|---:|
+| A: 32 actors × 1 lane     | 55s   | **4,951 samp/s**     | 170.8           | 6.77         |
+| B: 8 actors × 4 lanes     | 177s  | 1,525 samp/s         | **188.2**       | **5.46 (grouped)** |
+| Δ                         | 3.2× slower | -69%           | +10%            | -19%         |
+
+### What env-lanes did and didn't fix
+
+✅ **Per-process productivity rose 10%** — VectorizedRollout grouped greedy
+   decisions across 4 lanes by current seat, ran one batched forward per
+   seat group, and the forward itself sped up 19% per call.
+
+❌ **System-wide throughput dropped 69%** — the +10% per-process gain
+   cannot offset losing 75% of actor processes (32 → 8).
+
+The hidden assumption was that "8 actors × 4 lanes = 32 envs" preserves
+total work. It does NOT, because each actor process is single-threaded
+and the 4 lanes serialize within it. Real total = 32 envs sharing 8 vCPUs
+instead of 32 envs each on its own vCPU.
+
+### Why the forward isn't the dominant bottleneck after all
+
+Per-decision wall on x86 (from §49 + this run):
+
+```
+legal_actions      0.31 ms
+encode_all         0.20 ms
+q_collate          0.12 ms
+q_net_forward    ~6.5 ms (K=2-5, dominant)
+argmax+item        0.02 ms
+env_step           0.01 ms
+                  ------
+                  ~7.2 ms total
+```
+
+Forward is ~90% of per-decision wall, but it's already a single torch
+call — additional batching gives only ~20% local win. To meaningfully
+speed up the actor, you'd need either (a) a much faster forward (smaller
+model, GPU offload that beats the §46 contention, hardware change) or
+(b) more parallel processes — not lane consolidation.
+
+### Correct way to use env-lanes
+
+Hold n_actors at the CPU-saturation point and stack lanes ON TOP:
+
+```yaml
+n_actors: 32
+env_lanes_per_actor: 2   # 64 envs total, +10-20% per process from batching
+```
+
+Estimated win at lanes=2 stacked: 5k → ~5.5-6k samp/s (10-20%). Not
+transformational but free. Memory: 64 active games is small.
+
+Higher lanes (4, 8) hit diminishing returns + per-round latency that
+interacts poorly with the throttle EMA. Probably 2 is the sweet spot.
+
+### Decision
+
+Revert config to `n_actors: 32`, `env_lanes_per_actor: 1` for now.
+Implementation stays in tree as a feature flag — useful for future
+larger-model ablations or if the per-decision profile shifts.
+

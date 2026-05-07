@@ -3100,3 +3100,55 @@ future use cases:
 For paper-spec on Modal x86: bare `n_actors=32, env_lanes_per_actor=1`
 is the right default.
 
+
+## 53. n_actors=64 / cpu=64 cost-efficiency check (2026-05-07)
+
+Hypothesis: doubling vCPUs and actors should ~2× actor production. Test:
+
+| run                  | wall | actor rate | dec/s/act | K=2-5 fwd ms | throttle |
+|---|---:|---:|---:|---:|---:|
+| A: 32 actors / cpu=32 | 55s  | 4,951/s    | **170.8** | **6.77**     | 42%      |
+| E: 64 actors / cpu=64 | 50s  | **5,435/s** | 118.5    | 9.46         | 15%      |
+| Δ                    | -9%  | **+10%**   | -31%      | **+40% slower** | -27pp |
+
+### What actually happened
+
+Per-actor rate dropped 31% and per-call forward got **40% slower**. Net
+system throughput barely budged (+10%). Two contributors:
+
+1. **Modal `cpu=64` is hyperthreading**: Modal A10G hosts top out near 32
+   physical cores. Requesting cpu=64 allocates 32 cores × 2 hyperthreads;
+   compute-bound CPU forwards on hyperthread siblings share execution units
+   and typically deliver only 1.1-1.3× of a real second core. The 40%
+   slower per-call forward is consistent with this.
+2. **Memory bandwidth contention**: 64 actor processes all running torch
+   CPU forwards share L2/L3 caches and DRAM bandwidth. Each forward stalls
+   on memory more often.
+
+### Cost analysis
+
+| | $/hr (approx) | samp/s | $/M-samples |
+|---|---:|---:|---:|
+| A: cpu=32 | ~$1.25 | 5,000 | $0.069 |
+| E: cpu=64 | ~$2.50 | 5,400 | $0.129 |
+
+A wins cost-efficiency by ~85%. The extra throughput from cpu=64 doesn't
+come close to justifying the doubled hourly cost.
+
+### Conclusion
+
+**Bare 32 actors on cpu=32 is the sweet spot.** Phase 6 production config:
+
+```yaml
+n_actors: 32
+env_lanes_per_actor: 1
+use_inference_server: false
+compile_actor: false
+target_replay_ratio: 1.0
+max_replay_ratio: 1.5
+```
+
+Wall to match M1's 40M unique samples (replay≤1.5):
+  40M / 5k samp/s = 8000s ≈ 2.2 hours
+
+vs M1's 20.2 hours — **9× wall-clock speedup at equivalent training-data quality**.

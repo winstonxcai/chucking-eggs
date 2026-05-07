@@ -4,7 +4,7 @@
 # Throughput metric is samples/sec (batch-size-independent).
 
 n_actors: 32
-env_lanes_per_actor: 1       # §51/§52: lanes regress in CPU-bound regime; flag stays for future ablations
+env_lanes_per_actor: 1       # §51/§52: lanes regress; §53: cpu=64/n=64 only +10% for 2× cost
 sync_interval_episodes: 20
 actor_push_batch_size: 512
 sample_queue_maxsize: 64

@@ -45,7 +45,7 @@ def _build_decisions(n: int, seed: int = 7) -> list[tuple[int, list[dict]]]:
         steps = 0
         while not env.done and len(decisions) < n:
             p = env.current_player
-            legal = _select_legal(env, p, max_legal=128)
+            legal = _select_legal(env, p)
             encoded = encoder.encode_all(env, p, legal)
             if len(encoded) >= 2:
                 decisions.append((p, encoded))
@@ -186,7 +186,7 @@ def _shared_argmaxes(
     decisions: list[tuple[int, list[dict]]],
     device: str = "cpu",
     num_slots: int = 16,
-    max_actions: int = 320,
+    max_actions: int = 512,
     max_requests: int = 8,
     timeout_ms: float = 50.0,
 ) -> list[int]:
@@ -289,7 +289,7 @@ def test_shared_mem_client_rejects_oversize_K():
         encoder = StateActionEncoder()
         env = GuanDanEnv()
         env.reset(seed=0)
-        legal = _select_legal(env, env.current_player, max_legal=128)
+        legal = _select_legal(env, env.current_player)
         # Force K=9 by replicating any encoded entry
         encoded = encoder.encode_all(env, env.current_player, legal[:1]) * 9
         with pytest.raises(AssertionError, match="exceeds inference_max_actions"):
@@ -309,7 +309,7 @@ def test_shared_mem_actor_timeout_raises():
         client = SharedInferenceClient(actor_id=0, bufs=bufs, timeout_s=0.5, max_actions=128)
         env = GuanDanEnv()
         env.reset(seed=0)
-        legal = _select_legal(env, env.current_player, max_legal=128)
+        legal = _select_legal(env, env.current_player)
         encoded = encoder.encode_all(env, env.current_player, legal)
         with pytest.raises(InferenceTimeoutError):
             client.submit(env.current_player, encoded)

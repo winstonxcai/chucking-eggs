@@ -24,7 +24,7 @@ inference_device: cuda
 inference_batch_max_requests: 32
 inference_batch_max_action_rows: 4096
 inference_batch_timeout_ms: 5.0
-inference_max_actions: 320
+inference_max_actions: 512
 inference_n_slots: 512
 
 # ── Replay-ratio controller (Phase 5) ──
@@ -42,7 +42,7 @@ inference_n_slots: 512
 # Conservative defaults below: target ≈ 1, hard cap at 1.5. Bump
 # max_replay_ratio later in long runs once the policy stabilizes.
 target_replay_ratio: 1.0
-max_replay_ratio: 1.5
+max_replay_ratio: 1.0
 max_throttle_sleep_s: 0.05
 
 # Network (paper spec — same as M1)
@@ -60,7 +60,6 @@ buffer_min_size: 5000
 epsilon_start: 0.1
 epsilon_final: 0.01
 epsilon_decay_episodes: 15000
-max_legal_actions: 320
 use_oracle_others_hand: true
 
 # A10G throughput

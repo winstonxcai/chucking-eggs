@@ -15,7 +15,6 @@ def test_one_episode_returns_team_signed_samples():
         q_nets=q_nets,
         encoder=encoder,
         epsilon=1.0,  # pure random play for fastest termination
-        max_legal_actions=64,
         seed=7,
         device="cpu",
         gamma=1.0,

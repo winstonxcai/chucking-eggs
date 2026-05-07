@@ -57,7 +57,6 @@ class TrainConfig:
 
     use_oracle_others_hand: bool = True
     history_window: int = 20  # informational; encoder uses HISTORY_LEN
-    max_legal_actions: int = 128
 
     device: str = "cpu"
     run_dir: str = ""   # empty → auto-generate timestamped name via resolved_run_dir
@@ -90,7 +89,7 @@ class TrainConfig:
     inference_batch_max_action_rows:    int   = 4096
     inference_batch_timeout_ms:         float = 5.0      # bench §45 sweet spot
     inference_n_slots:                  int   = 512
-    inference_max_actions:              int   = 320      # match max_legal_actions
+    inference_max_actions:              int   = 512      # per-slot buffer capacity; ≥ max observed K post-dedup
     inference_timeout_s:                float = 60.0     # actor-side wait timeout
     inference_weight_refresh_s:         float = 5.0      # disk-based refresh interval
 
@@ -260,7 +259,6 @@ def train(cfg: TrainConfig) -> None:
             q_nets=q_nets,
             encoder=encoder,
             epsilon=eps,
-            max_legal_actions=cfg.max_legal_actions,
             seed=cfg.seed + ep,
             device=cfg.device,
             gamma=cfg.gamma,

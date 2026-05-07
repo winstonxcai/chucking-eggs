@@ -21,9 +21,8 @@ import torch
 from ..cards import ComboType
 from ..combos import Combo
 from ..game import GuanDanEnv
-from ..pvguan.legal_utils import dedup_strategic
-from ..pvguan.rollout import _cap_legal
 from .buffer import collate_encoded
+from .legal_utils import dedup_strategic
 from .encoder import StateActionEncoder
 from .q_network import GuanZeroQNet
 from .returns import TrainSample, compute_mc_returns
@@ -135,14 +134,8 @@ class _ActorProfiler:
         return "\n".join(lines)
 
 
-def _select_legal(env: GuanDanEnv, player: int, max_legal: int) -> list[Combo]:
-    legal = env.legal_moves(player)
-    legal = dedup_strategic(legal)
-    if max_legal and len(legal) > max_legal:
-        keep = _cap_legal(env, player, legal, max_legal)
-        legal = [legal[i] for i in keep]
-    # _cap_legal preserves PASS, but guarantee it here so callers never see
-    # an empty list when responding (leading with empty hand is impossible).
+def _select_legal(env: GuanDanEnv, player: int) -> list[Combo]:
+    legal = dedup_strategic(env.legal_moves(player))
     if not env.is_leading() and not any(m.type == ComboType.PASS for m in legal):
         legal.append(_PASS)
     return legal
@@ -163,7 +156,6 @@ def play_episode(
     q_nets: Mapping[int, GuanZeroQNet] | None,
     encoder: StateActionEncoder,
     epsilon: float,
-    max_legal_actions: int = 128,
     seed: int | None = None,
     device: torch.device | str = "cpu",
     gamma: float = 1.0,
@@ -186,7 +178,7 @@ def play_episode(
     while not env.done:
         p = env.current_player
         with prof.time("legal_actions"):
-            legal = _select_legal(env, p, max_legal_actions)
+            legal = _select_legal(env, p)
         K = len(legal)
         bucket = _k_bucket(K)
         prof.add_count("num_decisions", 1)
@@ -262,19 +254,17 @@ class VectorizedRollout:
 
     def __init__(
         self,
-        num_lanes:         int,
-        q_nets:            Mapping[int, GuanZeroQNet],
-        encoder:           StateActionEncoder,
-        max_legal_actions: int,
-        gamma:             float,
-        device:            torch.device,
-        rng:               random.Random,
-        profiler:          _ActorProfiler | None = None,
+        num_lanes: int,
+        q_nets:    Mapping[int, GuanZeroQNet],
+        encoder:   StateActionEncoder,
+        gamma:     float,
+        device:    torch.device,
+        rng:       random.Random,
+        profiler:  _ActorProfiler | None = None,
     ) -> None:
-        self.q_nets            = q_nets
-        self.encoder           = encoder
-        self.max_legal_actions = max_legal_actions
-        self.gamma             = gamma
+        self.q_nets  = q_nets
+        self.encoder = encoder
+        self.gamma   = gamma
         self.device            = device
         self.rng               = rng
         self.prof              = profiler if profiler is not None else _ActorProfiler(enabled=False)
@@ -319,7 +309,7 @@ class VectorizedRollout:
             env = lane.env
             p = env.current_player
             with prof.time("legal_actions"):
-                legal = _select_legal(env, p, self.max_legal_actions)
+                legal = _select_legal(env, p)
             K = len(legal)
             bucket = _k_bucket(K)
             prof.add_count("num_decisions", 1)
@@ -482,14 +472,13 @@ def actor_loop(
     rollout: VectorizedRollout | None = None
     if use_lanes:
         rollout = VectorizedRollout(
-            num_lanes         = cfg.env_lanes_per_actor,
-            q_nets            = q_nets,
-            encoder           = encoder,
-            max_legal_actions = cfg.max_legal_actions,
-            gamma             = cfg.gamma,
-            device            = torch.device("cpu"),
-            rng               = rng,
-            profiler          = prof,
+            num_lanes = cfg.env_lanes_per_actor,
+            q_nets    = q_nets,
+            encoder   = encoder,
+            gamma     = cfg.gamma,
+            device    = torch.device("cpu"),
+            rng       = rng,
+            profiler  = prof,
         )
 
     def _push_buffered() -> None:
@@ -537,7 +526,6 @@ def actor_loop(
                     q_nets=q_nets,
                     encoder=encoder,
                     epsilon=eps,
-                    max_legal_actions=cfg.max_legal_actions,
                     seed=seed,
                     device="cpu",
                     gamma=cfg.gamma,

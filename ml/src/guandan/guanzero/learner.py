@@ -39,6 +39,7 @@ class Learner:
         lr: float = 1e-4,
         device: torch.device | str = "cpu",
         use_bf16: bool = False,
+        max_grad_norm: float = 10.0,
     ) -> None:
         self.device = torch.device(device)
         self.q_nets = {p: q_nets[p].to(self.device) for p in range(4)}
@@ -47,6 +48,7 @@ class Learner:
             for p in range(4)
         }
         self.use_bf16 = use_bf16 and self.device.type == "cuda"
+        self.max_grad_norm = max_grad_norm
         # One stream per position so CUDA can schedule all 4 forward+backward
         # passes concurrently. Not used on MPS (no multi-stream support).
         self.streams: dict[int, torch.cuda.Stream] | None = (
@@ -111,10 +113,14 @@ class Learner:
                             loss = F.mse_loss(q_pred, targets_d[p])
                     else:
                         loss = F.mse_loss(q_pred, targets_d[p])
-                    self.optims[p].zero_grad(set_to_none=True)
-                    loss.backward()
-                    self.optims[p].step()
                     loss_tensors[p] = loss
+                    if torch.isfinite(loss):
+                        self.optims[p].zero_grad(set_to_none=True)
+                        loss.backward()
+                        torch.nn.utils.clip_grad_norm_(
+                            self.q_nets[p].parameters(), self.max_grad_norm
+                        )
+                        self.optims[p].step()
 
         # --- final stream sync + read losses ---
         with self.prof.time("final_sync"):
@@ -220,6 +226,7 @@ def learner_loop(
     fmt = logging.Formatter("%(asctime)s [%(levelname)-5s] %(message)s",
                             datefmt="%Y-%m-%d %H:%M:%S")
     fh = logging.FileHandler(log_path, mode="w")
+    fh.setLevel(logging.INFO)
     fh.setFormatter(fmt)
     logger.addHandler(fh)
     if os.environ.get("GUANZERO_STREAM_LOGS") == "1":
@@ -249,7 +256,8 @@ def learner_loop(
     for p, net in q_nets.items():
         q_nets[p] = torch.compile(net, mode=compile_mode)
     learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device,
-                      use_bf16=cfg.use_bf16_learner)
+                      use_bf16=cfg.use_bf16_learner,
+                      max_grad_norm=cfg.max_grad_norm)
     buffer  = ReplayBuffer(capacity_per_player=cfg.buffer_capacity_per_player)
 
     version       = 0

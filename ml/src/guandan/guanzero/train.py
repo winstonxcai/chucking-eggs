@@ -285,6 +285,7 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
             "hidden_mlp": 128,
             "n_mlp_layers": 3,
             "buffer_min_size": 50,
+            "batch_size": 64,
             "total_updates_target": 500,
             "checkpoint_every_updates": 100,
             "log_every_updates": 20,

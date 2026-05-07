@@ -127,6 +127,7 @@ class TrainConfig:
     gamma: float = 1.0
     batch_size: int = 512
     lr: float = 1e-4
+    max_grad_norm: float = 10.0
 
     # ── Buffer ──────────────────────────────────────────────
     buffer_capacity_per_player: int = 50_000

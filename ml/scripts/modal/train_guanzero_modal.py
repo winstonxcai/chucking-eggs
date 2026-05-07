@@ -39,7 +39,7 @@ image = (
 
 @app.function(
     image=image,
-    gpu="A10G",
+    gpu="L4",
     cpu=32,
     memory=64 * 1024,
     timeout=3600 * 6,  # 6-hour cap per CLAUDE.md

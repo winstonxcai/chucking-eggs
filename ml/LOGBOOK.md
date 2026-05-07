@@ -3167,3 +3167,41 @@ Wall to match M1's 40M unique samples (replay≤1.5):
   40M / 5k samp/s = 8000s ≈ 2.2 hours
 
 vs M1's 20.2 hours — **9× wall-clock speedup at equivalent training-data quality**.
+
+## 54. L4 vs A10G: L4 wins for paper-spec actor-bottlenecked workload (2026-05-07)
+
+A10G has ~4× the BF16 TFLOPS of L4 ($1.10/hr vs $0.80/hr). Tested whether
+the cheaper GPU costs us throughput. 100-update profiled smokes, identical
+config (cpu=32, n_actors=32, replay≤1.5, no compile, no server, no lanes):
+
+| GPU  | Wall | Fresh   | Actor rate | Cum samp/s | $/hr   | $/M-samples |
+|---|---:|---:|---:|---:|---:|---:|
+| A10G | 55s  | 271,336 | 4,951/s    | 7,471      | $2.37  | $0.132      |
+| L4   | 54s  | 271,057 | **5,029**  | **7,606**  | **$2.06** | **$0.114** |
+
+L4 is **2% faster wall** and **14% cheaper** at the same actor production
+rate. Both runs hit replay_cumulative=1.51 (controller working as designed).
+
+### Why L4 doesn't lose on throughput
+
+The system is **actor-bound** at this scale, not learner-bound:
+- Actor cap: ~5k samp/s (CPU forward bound, 32 cores at ~6.7ms/decision)
+- Learner needs: 5k × 1.5 = 7.5k samp/s consumption to keep replay≤1.5
+- L4 paper-spec batch=4096 forward+backward: comfortably hits this
+
+The A10G's extra compute would only help if we let `max_replay_ratio`
+climb (more updates per fresh sample) or if the learner was the
+bottleneck. Neither holds for our config.
+
+### Even smaller GPUs
+
+T4 is $0.000164/sec = $0.59/hr. Worth testing if L4 holds. But T4 lacks
+BF16 hardware (Turing only does FP16/INT8), which would force us to
+disable `use_bf16_learner` — loss of ~30% learner throughput. Likely
+breaks the actor/learner balance.
+
+### Production decision
+
+Modal launcher updated to `gpu="L4"`. Save ~$0.30/hr ≈ $0.72 per
+40M-sample run, ~$3 per 200k-update run. Worth it for any non-deadline
+production training.

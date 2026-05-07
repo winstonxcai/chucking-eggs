@@ -46,7 +46,7 @@ from typing import Any
 
 from tqdm import tqdm
 
-from .actor import actor_loop
+from .worker import actor_loop
 from .learner import learner_loop
 from .config import TrainConfig
 from .logging_setup import setup_run_logging

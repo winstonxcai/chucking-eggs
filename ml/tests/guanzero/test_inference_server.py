@@ -1,6 +1,6 @@
 """Numerical-equivalence tests for the shared GPU inference server.
 
-The server's chosen action index must match the local-CPU `_argmax_q` path
+The server's chosen action index must match the local-CPU `argmax_q` path
 when given the same q-net weights and the same encoded_list. Phase 1 tests
 the simple in-process path (no subprocess fork) so we can validate the
 batching logic and per-request argmax slicing without IPC complexity.
@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import torch
 
-from guandan.guanzero.actor import _argmax_q, _select_legal
+from guandan.guanzero.actor import argmax_q, select_legal
 from guandan.guanzero.encoder import StateActionEncoder
 from guandan.guanzero.inference_server import (
     InferenceClient,
@@ -45,7 +45,7 @@ def _build_decisions(n: int, seed: int = 7) -> list[tuple[int, list[dict]]]:
         steps = 0
         while not env.done and len(decisions) < n:
             p = env.current_player
-            legal = _select_legal(env, p)
+            legal = select_legal(env, p)
             encoded = encoder.encode_all(env, p, legal)
             if len(encoded) >= 2:
                 decisions.append((p, encoded))
@@ -66,11 +66,11 @@ def _local_argmaxes(
     decisions: list[tuple[int, list[dict]]],
     device: str = "cpu",
 ) -> list[int]:
-    """Reference path — what `actor._argmax_q` would pick for each decision."""
+    """Reference path — what `actor.argmax_q` would pick for each decision."""
     out: list[int] = []
     dev = torch.device(device)
     for seat, encoded in decisions:
-        out.append(_argmax_q(q_nets[seat], encoded, dev))
+        out.append(argmax_q(q_nets[seat], encoded, dev))
     return out
 
 
@@ -131,7 +131,7 @@ def _server_argmaxes(
 
 def test_cpu_equivalence_argmax_matches_local():
     """For matching weights, the server's argmax must equal the local-CPU
-    `_argmax_q` path for every decision. CPU FP is deterministic so this
+    `argmax_q` path for every decision. CPU FP is deterministic so this
     must be exact."""
     torch.manual_seed(0)
     # Tiny net for fast test; equivalence is architecture-independent.
@@ -146,7 +146,7 @@ def test_cpu_equivalence_argmax_matches_local():
     actual   = _server_argmaxes(q_nets, decisions, device="cpu")
 
     assert actual == expected, (
-        f"server argmax diverged from local _argmax_q.\n"
+        f"server argmax diverged from local argmax_q.\n"
         f"  expected={expected}\n"
         f"  actual  ={actual}"
     )
@@ -250,7 +250,7 @@ def test_shared_mem_cpu_equivalence():
     actual   = _shared_argmaxes(q_nets, decisions, device="cpu")
 
     assert actual == expected, (
-        f"shared-mem server diverged from local _argmax_q.\n"
+        f"shared-mem server diverged from local argmax_q.\n"
         f"  expected={expected}\n"
         f"  actual  ={actual}"
     )
@@ -289,7 +289,7 @@ def test_shared_mem_client_rejects_oversize_K():
         encoder = StateActionEncoder()
         env = GuanDanEnv()
         env.reset(seed=0)
-        legal = _select_legal(env, env.current_player)
+        legal = select_legal(env, env.current_player)
         # Force K=9 by replicating any encoded entry
         encoded = encoder.encode_all(env, env.current_player, legal[:1]) * 9
         with pytest.raises(AssertionError, match="exceeds inference_max_actions"):
@@ -309,7 +309,7 @@ def test_shared_mem_actor_timeout_raises():
         client = SharedInferenceClient(actor_id=0, bufs=bufs, timeout_s=0.5, max_actions=128)
         env = GuanDanEnv()
         env.reset(seed=0)
-        legal = _select_legal(env, env.current_player)
+        legal = select_legal(env, env.current_player)
         encoded = encoder.encode_all(env, env.current_player, legal)
         with pytest.raises(InferenceTimeoutError):
             client.submit(env.current_player, encoded)

@@ -47,7 +47,7 @@ def test_publish_and_load_weights():
 
 
 def test_maybe_sync_weights_no_op_when_not_newer():
-    from guandan.guanzero.actor import maybe_sync_weights
+    from guandan.guanzero.worker import maybe_sync_weights
     from guandan.guanzero.learner import publish_weights
     from guandan.guanzero.q_network import init_position_nets
 
@@ -67,7 +67,7 @@ def test_maybe_sync_weights_no_op_when_not_newer():
 
 
 def test_maybe_sync_weights_loads_newer():
-    from guandan.guanzero.actor import maybe_sync_weights
+    from guandan.guanzero.worker import maybe_sync_weights
     from guandan.guanzero.learner import publish_weights
     from guandan.guanzero.q_network import init_position_nets
 
@@ -99,7 +99,7 @@ def test_actor_loop_single_episode():
     """Actor pushes at least one batch to the queue within a short window."""
     import multiprocessing as mp
 
-    from guandan.guanzero.actor import actor_loop
+    from guandan.guanzero.worker import actor_loop
     from guandan.guanzero.learner import publish_weights
     from guandan.guanzero.q_network import init_position_nets
     from guandan.guanzero.config import TrainConfig

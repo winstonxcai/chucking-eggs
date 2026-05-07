@@ -54,7 +54,7 @@ class GuanZeroBot(Agent):
     @torch.no_grad()
     def act(self, env: GuanDanEnv, player: int) -> Combo:
         legal = dedup_strategic(env.legal_moves(player))
-        encoded = [self.encoder.encode(env, a, player, legal) for a in legal]
+        encoded = self.encoder.encode_all(env, player, legal)
         batch = collate_encoded(encoded, device=self.device)
         q = self.q_nets[player](batch)
         return legal[int(q.argmax().item())]

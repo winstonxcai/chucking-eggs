@@ -52,9 +52,6 @@ ENCODE_CHANNEL_KEYS: tuple[str, ...] = tuple(ENCODE_CHANNEL_SHAPES.keys())
 
 # ─── Behavior flags ──────────────────────────────────────
 
-FLAG_DIM = 9
-
-
 def _is_highest_rank(combo: Combo, level_rank: int) -> bool:
     if combo.type != ComboType.TRIPLE:
         return False
@@ -73,7 +70,7 @@ def compute_behavior_flags(
       [3:6] dwarfing    [N/A, doing, refusing]
       [6:9] assisting   [N/A, doing, refusing]
     """
-    flags = np.zeros(FLAG_DIM, dtype=np.float32)
+    flags = np.zeros(9, dtype=np.float32)
     partner = (player + 2) % 4
     opp_left = (player + 1) % 4
     opp_right = (player - 1) % 4
@@ -145,7 +142,7 @@ CARD_ID_DIM = 108
 HISTORY_LEN = 20
 LEVEL_DIM = 13           # ranks 2..A (level rank can only be one of these)
 RANK_BUCKETS = 27        # 0..25 + jokers; one-hot count over 0..26 capped at 26
-BEHAVIOR_DIM = FLAG_DIM  # 9
+BEHAVIOR_DIM = 9
 
 
 def card_to_id(card: Card) -> int:
@@ -322,31 +319,3 @@ class StateActionEncoder:
             result.append(enc)
         return result
 
-    def encode(
-        self,
-        env: GuanDanEnv,
-        action: Combo,
-        player: int,
-        legal_moves: list[Combo] | None = None,
-    ) -> dict[str, np.ndarray]:
-        if legal_moves is None:
-            legal_moves = env.legal_moves(player)
-        state = self._encode_state(env, player)
-        state["behavior"] = compute_behavior_flags(env, player, action, legal_moves)
-        state["candidate_action"] = _multi_hot(action.cards)
-        return state
-
-
-# Module-level convenience: paper-faithful default.
-_DEFAULT = StateActionEncoder(use_oracle_others_hand=True)
-
-
-def encode(
-    env: GuanDanEnv,
-    action: Combo,
-    player: int,
-    legal_moves: list[Combo] | None = None,
-) -> dict[str, np.ndarray]:
-    """Paper-faithful default encoder. For ablations construct your own
-    ``StateActionEncoder(use_oracle_others_hand=False)``."""
-    return _DEFAULT.encode(env, action, player, legal_moves)

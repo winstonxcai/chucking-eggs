@@ -6,7 +6,7 @@ import torch
 
 from guandan.game import GuanDanEnv
 from guandan.guanzero.buffer import collate_encoded
-from guandan.guanzero.encoder import encode
+from guandan.guanzero.encoder import StateActionEncoder
 from guandan.guanzero.q_network import GuanZeroQNet
 
 
@@ -15,7 +15,8 @@ def _build_batch(n: int) -> dict[str, torch.Tensor]:
     env.reset(seed=0)
     p = env.current_player
     legal = env.legal_moves(p)[:n]
-    encoded = [encode(env, a, p, legal) for a in legal]
+    encoder = StateActionEncoder()
+    encoded = encoder.encode_all(env, p, legal)
     return collate_encoded(encoded)
 
 

@@ -13,7 +13,6 @@ from guandan.guanzero.encoder import (
     RANK_BUCKETS,
     StateActionEncoder,
     card_to_id,
-    encode,
     id_to_card,
     static_dim,
 )
@@ -38,7 +37,7 @@ def test_card_id_roundtrip_is_bijective():
 def test_channel_shapes_match_paper():
     env = _fresh_env()
     legal = env.legal_moves(env.current_player)
-    out = encode(env, legal[0], env.current_player, legal)
+    out = StateActionEncoder().encode_all(env, env.current_player, legal)[0]
 
     expected = {
         "own_hand": (CARD_ID_DIM,),
@@ -59,7 +58,7 @@ def test_channel_shapes_match_paper():
 def test_static_dim_matches_actual_concat():
     env = _fresh_env()
     legal = env.legal_moves(env.current_player)
-    out = encode(env, legal[0], env.current_player, legal)
+    out = StateActionEncoder().encode_all(env, env.current_player, legal)[0]
     flat = np.concatenate([
         out["own_hand"], out["others_hand"],
         out["recent_action_each_player"].reshape(-1),
@@ -75,7 +74,7 @@ def test_oracle_off_zeroes_others_hand():
     p = env.current_player
     legal = env.legal_moves(p)
     enc = StateActionEncoder(use_oracle_others_hand=False)
-    out = enc.encode(env, legal[0], p, legal)
+    out = enc.encode_all(env, p, legal)[0]
     assert np.all(out["others_hand"] == 0.0)
     # Other channels still populated
     assert out["own_hand"].sum() > 0
@@ -85,5 +84,5 @@ def test_own_hand_count_matches_initial_deal():
     env = _fresh_env()
     p = env.current_player
     legal = env.legal_moves(p)
-    out = encode(env, legal[0], p, legal)
+    out = StateActionEncoder().encode_all(env, p, legal)[0]
     assert int(out["own_hand"].sum()) == 27  # initial deal

@@ -182,7 +182,7 @@ def test_learner_drains_queue_and_updates():
     env = GuanDanEnv()
     env.reset(seed=7)
     legal = env.legal_moves(env.current_player)
-    dummy_encoded = encoder.encode(env, legal[0], env.current_player, legal)
+    dummy_encoded = encoder.encode_all(env, env.current_player, legal)[0]
 
     # Build a pre-stacked batch message — one sample for each of the 4 players
     # so the learner's per-position warmup gate (all buffers ≥ buffer_min_size) opens.

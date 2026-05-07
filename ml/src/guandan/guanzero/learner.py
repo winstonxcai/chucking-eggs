@@ -324,8 +324,13 @@ def learner_loop(
     session_start_updates = total_updates  # for accurate upd/s on resumed runs
     drained_since_log = 0
     cumulative_drained = 0
+    fresh_samples_total = 0          # exact sample count from drained messages
     last_log_t = t0
     last_log_updates = total_updates
+    last_log_fresh_samples = 0
+    ema_actor_rate = 0.0             # samples/sec, EMA across log intervals
+    n_throttle_sleeps = 0
+    throttle_sleep_total_s = 0.0
     while not stop_event.is_set():
         # 1. Drain sample queue into replay buffer (pre-stacked actor messages)
         drained = 0
@@ -333,11 +338,42 @@ def learner_loop(
             try:
                 msg = sample_queue.get_nowait()
                 buffer.push_stacked(msg["stacked"], msg["players"], msg["returns"])
+                # Exact sample count for replay-ratio bookkeeping.
+                # players is a length-N int8 array; len() == # samples in this push.
+                fresh_samples_total += len(msg["players"])
                 drained += 1
             except Exception:
                 break
         drained_since_log += drained
         cumulative_drained += drained
+
+        # 2a. Replay-ratio controller: throttle the learner if it's running
+        # ahead of actor production. Disabled by default (target_replay_ratio=0).
+        if (
+            cfg.target_replay_ratio > 0
+            and total_updates > session_start_updates
+            and fresh_samples_total > 0
+        ):
+            session_uses = (total_updates - session_start_updates) * cfg.batch_size
+            cum_replay = session_uses / max(fresh_samples_total, 1)
+            if cum_replay > cfg.max_replay_ratio:
+                # Sleep just long enough for actors to produce enough fresh data
+                # to bring cum_replay down to target_replay_ratio. Use the EMA
+                # actor rate (computed at log time) to size the sleep.
+                target_uses = cfg.target_replay_ratio * fresh_samples_total
+                # We want to wait until session_uses == target_uses, but
+                # target_uses depends on future fresh samples. Approximate:
+                # extra_fresh_needed = (session_uses / target_replay_ratio) - fresh_samples_total
+                extra_fresh_needed = (session_uses / cfg.target_replay_ratio) - fresh_samples_total
+                if extra_fresh_needed > 0 and ema_actor_rate > 0:
+                    sleep_s = extra_fresh_needed / ema_actor_rate
+                    sleep_s = min(sleep_s, cfg.max_throttle_sleep_s)
+                    if sleep_s > 0.001:
+                        time.sleep(sleep_s)
+                        n_throttle_sleeps += 1
+                        throttle_sleep_total_s += sleep_s
+                # Re-check: skip the gradient update so next loop drains more
+                continue
 
         # 2. Gradient update when every position's buffer is warm
         if all(buffer.size(p) >= cfg.buffer_min_size for p in range(4)):
@@ -394,20 +430,28 @@ def learner_loop(
                 round(torch.cuda.memory_allocated() / 1e9, 3)
                 if cfg.device == "cuda" and torch.cuda.is_available() else None
             )
-            # Replay ratio = how many times the learner reuses each unique sample.
-            # interval = recent window (matches samp/s freshness),
-            # cumulative = whole-run average.
-            push_bs = cfg.actor_push_batch_size
-            interval_unique = drained_since_log * push_bs
+            # Replay ratio: use EXACT sample counts from drained messages
+            # (was approximated by drained * actor_push_batch_size, which can
+            # lag the actual production by up to one push batch per actor).
+            interval_unique = fresh_samples_total - last_log_fresh_samples
             interval_replay = (
                 (interval_upd * cfg.batch_size) / interval_unique
                 if interval_unique > 0 else float("inf")
             )
-            cum_unique = cumulative_drained * push_bs
+            cum_unique = fresh_samples_total
             cum_replay = (
                 (session_updates * cfg.batch_size) / cum_unique
                 if cum_unique > 0 else float("inf")
             )
+
+            # EMA actor rate (samples/sec). Used by the throttle to size sleeps.
+            # 0.5 weight on this interval keeps the EMA responsive to startup
+            # transients without being too noisy.
+            interval_actor_rate = interval_unique / interval_dt if interval_dt > 0 else 0.0
+            if ema_actor_rate <= 0:
+                ema_actor_rate = interval_actor_rate
+            else:
+                ema_actor_rate = 0.5 * ema_actor_rate + 0.5 * interval_actor_rate
             row = {
                 "updates": total_updates,
                 "version": version,
@@ -422,8 +466,12 @@ def learner_loop(
                 "gpu_mem_gb": gpu_mem_gb,
                 "drained_since_last_log": drained_since_log,
                 "cumulative_drained": cumulative_drained,
+                "fresh_samples_total": fresh_samples_total,
+                "actor_rate_samp_per_sec": round(ema_actor_rate, 1),
                 "replay_interval": round(interval_replay, 2) if interval_replay != float("inf") else None,
                 "replay_cumulative": round(cum_replay, 2) if cum_replay != float("inf") else None,
+                "throttle_sleeps": n_throttle_sleeps,
+                "throttle_sleep_s": round(throttle_sleep_total_s, 2),
             }
             with metrics_path.open("a") as f:
                 f.write(json.dumps(row) + "\n")
@@ -450,6 +498,7 @@ def learner_loop(
             drained_since_log = 0
             last_log_t = now
             last_log_updates = total_updates
+            last_log_fresh_samples = fresh_samples_total
 
     # Final checkpoint on clean shutdown
     if total_updates > 0:

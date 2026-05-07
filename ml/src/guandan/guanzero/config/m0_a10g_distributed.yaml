@@ -5,7 +5,7 @@
 
 n_actors: 32
 sync_interval_episodes: 20
-actor_push_batch_size: 128
+actor_push_batch_size: 512
 sample_queue_maxsize: 64
 max_drain_batches_per_loop: 16
 publish_interval_updates: 200
@@ -13,16 +13,27 @@ checkpoint_every_updates: 5000
 log_every_updates: 10
 updates_per_learner_step: 1
 
-# ── Phase 4 shared-GPU inference (LOGBOOK §45) ──
-# Server alone hits ~51k rows/s with 32 actors at timeout_ms=5. This config
-# also runs a learner on the same A10G — Phase A measures the contention.
-use_inference_server: true
+# ── Shared-GPU inference (LOGBOOK §45, §46) ──
+# Architecture works (Phases 1-4 validated) but regresses paper-spec
+# throughput by ~36% due to IPC + GPU contention exceeding local CPU
+# forward cost at small K. Default OFF for paper-spec; flip to true for
+# larger-model ablations where forward dominates IPC.
+use_inference_server: false
 inference_device: cuda
 inference_batch_max_requests: 32
 inference_batch_max_action_rows: 4096
 inference_batch_timeout_ms: 5.0
 inference_max_actions: 320
 inference_n_slots: 512
+
+# ── Replay-ratio controller (Phase 5) ──
+# Throttles the learner when cum_replay > max_replay_ratio. Hits the eval
+# gap problem head-on: at baseline n_actors=32 we measured replay 12-22x
+# (LOGBOOK §44), but M1's published 200k checkpoint trained at replay 2.5x.
+# This forces the learner to run at the actor production rate.
+target_replay_ratio: 2.5
+max_replay_ratio: 4.0
+max_throttle_sleep_s: 0.05
 
 # Network (paper spec — same as M1)
 hidden_lstm: 256

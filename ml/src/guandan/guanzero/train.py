@@ -13,7 +13,6 @@ import json
 import logging
 import random
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,87 +23,12 @@ from tqdm import tqdm
 from .actor import play_episode
 from .buffer import ReplayBuffer
 from .checkpoint import save_checkpoint
+from .config import TrainConfig
 from .encoder import StateActionEncoder
 from .learner import Learner
 from .logging_setup import setup_run_logging
 from .q_network import init_position_nets
 from .schedules import epsilon_linear
-
-
-@dataclasses.dataclass
-class TrainConfig:
-    seed: int = 0
-    episodes: int = 30_000
-
-    gamma: float = 1.0
-    batch_size: int = 512
-    lr: float = 1e-4
-
-    epsilon_start: float = 0.1
-    epsilon_final: float = 0.01
-    epsilon_decay_episodes: int = 15_000
-
-    learn_every_episodes: int = 4
-    log_every_episodes: int = 100
-    checkpoint_every_episodes: int = 5_000
-
-    buffer_capacity_per_player: int = 50_000
-    buffer_min_size: int = 1_000
-
-    hidden_lstm: int = 256
-    hidden_mlp: int = 1024
-    n_mlp_layers: int = 6
-    dropout: float = 0.0
-
-    use_oracle_others_hand: bool = True
-    history_window: int = 20  # informational; encoder uses HISTORY_LEN
-
-    device: str = "cpu"
-    run_dir: str = ""   # empty → auto-generate timestamped name via resolved_run_dir
-
-    # ── Distributed actor-learner fields ──────────────────
-    n_actors: int = 1
-    sync_interval_episodes: int = 20
-    actor_push_batch_size: int = 512
-    sample_queue_maxsize: int = 64
-    max_drain_batches_per_loop: int = 32
-    publish_interval_updates: int = 100
-    checkpoint_every_updates: int = 5_000
-    total_updates_target: int = 0    # 0 = run until stopped; >0 = stop here
-    log_every_updates: int = 200
-    updates_per_learner_step: int = 1
-
-    # ── A10G / CUDA throughput knobs ──────────────────────
-    use_bf16_learner: bool = False     # BF16 autocast in Learner.update (cuda only)
-    compile_mode: str = "default"      # passes to torch.compile(mode=...)
-    compile_actor: bool = False        # torch.compile actor q-nets (LOGBOOK §50: regresses paper-spec)
-    env_lanes_per_actor: int = 1       # >1 enables VectorizedRollout for batched per-seat fwd
-
-    # ── Shared GPU inference server (Phase 4+) ────────────
-    # When true, actors send inference requests to a shared GPU server instead
-    # of running local CPU q-nets. Server lives in its own subprocess on the
-    # same GPU as the learner.
-    use_inference_server:               bool  = False
-    inference_device:                   str   = "cuda"   # "cpu" for M1 dev/test
-    inference_batch_max_requests:       int   = 32
-    inference_batch_max_action_rows:    int   = 4096
-    inference_batch_timeout_ms:         float = 5.0      # bench §45 sweet spot
-    inference_n_slots:                  int   = 512
-    inference_max_actions:              int   = 512      # per-slot buffer capacity; ≥ max observed K post-dedup
-    inference_timeout_s:                float = 60.0     # actor-side wait timeout
-    inference_weight_refresh_s:         float = 5.0      # disk-based refresh interval
-
-    # ── Replay-ratio controller (Phase 5) ─────────────────
-    target_replay_ratio:                float = 0.0      # 0 = disabled
-    max_replay_ratio:                   float = 4.0
-    max_throttle_sleep_s:               float = 0.05
-
-    @property
-    def resolved_run_dir(self) -> str:
-        if self.run_dir:
-            return self.run_dir
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
-        return f"ml/runs/guanzero_m0_{ts}"
 
 
 

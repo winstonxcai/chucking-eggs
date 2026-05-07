@@ -13,7 +13,7 @@ from guandan.game import GuanDanEnv
 from guandan.guanzero.agent import GuanZeroBot
 from guandan.guanzero.encoder import StateActionEncoder
 from guandan.guanzero.q_network import init_position_nets
-from guandan.guanzero.train import TrainConfig
+from guandan.guanzero.config import TrainConfig
 
 
 def _save_dummy_checkpoint(path: Path) -> None:

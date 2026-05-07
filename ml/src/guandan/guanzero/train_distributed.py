@@ -48,8 +48,8 @@ from tqdm import tqdm
 
 from .actor import actor_loop
 from .learner import learner_loop
+from .config import TrainConfig
 from .logging_setup import setup_run_logging
-from .train import TrainConfig
 
 
 def _wait_for_weights(weight_dir: Path, timeout: float = 30.0) -> None:

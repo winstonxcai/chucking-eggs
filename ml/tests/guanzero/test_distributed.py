@@ -102,7 +102,7 @@ def test_actor_loop_single_episode():
     from guandan.guanzero.actor import actor_loop
     from guandan.guanzero.learner import publish_weights
     from guandan.guanzero.q_network import init_position_nets
-    from guandan.guanzero.train import TrainConfig
+    from guandan.guanzero.config import TrainConfig
 
     cfg = TrainConfig(
         hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2,
@@ -162,7 +162,7 @@ def test_learner_drains_queue_and_updates():
 
     from guandan.guanzero.learner import learner_loop, publish_weights
     from guandan.guanzero.q_network import init_position_nets
-    from guandan.guanzero.train import TrainConfig
+    from guandan.guanzero.config import TrainConfig
 
     cfg = TrainConfig(
         hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2,

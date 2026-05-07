@@ -245,7 +245,7 @@ def learner_loop(
     """
     # Lazy import here — this function runs in a spawned child process where
     # the full guanzero package is re-imported from scratch.
-    from .train import TrainConfig
+    from .config import TrainConfig
 
     cfg = TrainConfig(**{k: v for k, v in cfg_dict.items()
                          if k in {f.name for f in dataclasses.fields(TrainConfig)}})

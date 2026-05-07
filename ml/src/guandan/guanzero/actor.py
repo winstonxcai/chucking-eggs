@@ -323,7 +323,7 @@ def actor_loop(
     initialization and weight syncing entirely.
     """
     # Lazy import — runs in a spawned child; full package re-imported from scratch
-    from .train import TrainConfig
+    from .config import TrainConfig
     from .schedules import epsilon_linear
     from .q_network import init_position_nets
 

@@ -11,9 +11,7 @@ import argparse
 import dataclasses
 import json
 import logging
-import os
 import random
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +26,7 @@ from .buffer import ReplayBuffer
 from .checkpoint import save_checkpoint
 from .encoder import StateActionEncoder
 from .learner import Learner
+from .logging_setup import setup_run_logging
 from .q_network import init_position_nets
 
 
@@ -114,34 +113,6 @@ def _epsilon(ep: int, cfg: TrainConfig) -> float:
     return cfg.epsilon_start + frac * (cfg.epsilon_final - cfg.epsilon_start)
 
 
-def _setup_logging(run_dir: Path) -> tuple[logging.Logger, Path]:
-    """Configure logging.
-
-    File handler — DEBUG level, full timestamp + level prefix.
-                   Gets everything: config block, model summary, per-interval rows.
-    No stream handler — stdout is owned by the tqdm progress bar.
-                        Use ``tqdm.write()`` for any messages alongside the bar.
-    """
-    run_dir.mkdir(parents=True, exist_ok=True)
-    log_path = run_dir / "train.log"
-
-    logger = logging.getLogger("guanzero")
-    logger.handlers.clear()
-    logger.setLevel(logging.DEBUG)
-
-    fmt = logging.Formatter("%(asctime)s [%(levelname)-5s] %(message)s",
-                            datefmt="%Y-%m-%d %H:%M:%S")
-    fh = logging.FileHandler(log_path, mode="w")
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
-    if os.environ.get("GUANZERO_STREAM_LOGS") == "1":
-        sh = logging.StreamHandler(sys.stdout)
-        sh.setLevel(logging.INFO)
-        sh.setFormatter(fmt)
-        logger.addHandler(sh)
-    return logger, log_path
-
 
 def _count_params(net: torch.nn.Module) -> int:
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
@@ -206,7 +177,7 @@ def train(cfg: TrainConfig) -> None:
     torch.manual_seed(cfg.seed)
 
     run_dir = Path(cfg.resolved_run_dir)
-    logger, log_path = _setup_logging(run_dir)
+    logger, log_path = setup_run_logging(run_dir)
     (run_dir / "config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
     metrics_path = run_dir / "metrics.jsonl"
 

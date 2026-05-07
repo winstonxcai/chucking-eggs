@@ -48,7 +48,8 @@ from tqdm import tqdm
 
 from .actor import actor_loop
 from .learner import learner_loop
-from .train import TrainConfig, _setup_logging
+from .logging_setup import setup_run_logging
+from .train import TrainConfig
 
 
 def _wait_for_weights(weight_dir: Path, timeout: float = 30.0) -> None:
@@ -92,7 +93,7 @@ def train_distributed(cfg: TrainConfig, resume_checkpoint: Path | None = None) -
     weight_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
 
-    logger, log_path = _setup_logging(run_dir)
+    logger, log_path = setup_run_logging(run_dir)
     logger.info("train_distributed: %d actors, target %d updates", cfg.n_actors, cfg.total_updates_target)
     if resume_checkpoint:
         logger.info("resuming from checkpoint: %s", resume_checkpoint)

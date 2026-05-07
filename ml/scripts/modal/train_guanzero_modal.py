@@ -1,6 +1,6 @@
 """Modal launcher for GuanZero (M0) faithful persistent actor-learner DMC.
 
-Drives the distributed orchestrator (`guandan.guanzero.train_distributed`) with
+Drives the distributed orchestrator (`guandan.guanzero.train`) with
 a config tuned for **A10G + 32 vCPU**. Steady-state target is ~10x the M1 Pro
 baseline (~2.7 upd/s -> ~27 upd/s).
 
@@ -41,7 +41,7 @@ image = (
     image=image,
     gpu="L4",
     cpu=32,
-    memory=32 * 1024,
+    memory=64 * 1024,
     timeout=3600 * 6,  # 6-hour cap per CLAUDE.md
     volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
     secrets=[modal.Secret.from_name("huggingface-token")],
@@ -77,7 +77,7 @@ def train_remote(
     run_dir = f"{RUN_VOL}/guanzero/{run_name}"
 
     cmd = [
-        "python", "-m", "guandan.guanzero.train_distributed",
+        "python", "-m", "guandan.guanzero.train",
         "--config",  config_path,
         "--updates", str(updates),
         "--device",  device,

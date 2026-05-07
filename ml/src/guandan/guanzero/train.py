@@ -1,8 +1,43 @@
-"""GuanZero M0 training orchestrator.
+"""GuanZero persistent actor-learner DMC orchestrator.
 
-Single-process: alternate between rolling self-play episodes and taking
-gradient steps. Configurable via YAML or CLI flags. Writes
-``ml/runs/<run_name>/{config.json, metrics.jsonl, checkpoints/}``.
+Architecture
+────────────
+
+  ┌────────────────────────────────────────────────────────────────┐
+  │  Main process  (train)                                         │
+  │  Spawns learner + N actors; polls metrics_learner.jsonl (tqdm) │
+  │  Sets stop_event → joins all procs on done / KeyboardInterrupt │
+  └──────────┬─────────────────────────────────────┬──────────────┘
+             │ spawn                               │ spawn ×N
+             ▼                                     ▼
+  ┌─────────────────────────┐     ┌──────────────────────────────┐
+  │  Learner  (GPU/CPU)      │     │  Actor-i  (CPU, no grad)      │
+  │                          │     │                               │
+  │  Q-nets[0..3] compiled   │     │  Q-nets[0..3]  local copy     │
+  │  ReplayBuffer  per-seat  │     │  loop:                        │
+  │  loop:                   │     │    play_episode() → samples   │
+  │    drain queue → buffer  │◄────│    accumulate actor_push_batch│
+  │    MSE update ×4 seats   │     │    queue.put(stacked_msg)     │
+  │    every P updates:      │     │    every K episodes:          │
+  │      publish weights─────┼────►│      read latest.txt          │
+  │      (atomic os.replace) │     │      load weights_{ver}.pt    │
+  │    every C updates:      │     └──────────────────────────────┘
+  │      save checkpoint     │
+  │    every L updates:      │     weight_dir/  (disk or /tmp on Modal)
+  │      append metrics.jsonl│      ├── latest.txt       ← atomic rename
+  └─────────────────────────┘      └── weights_{ver}.pt  ← atomic rename
+
+  Communication:
+    Actors → Learner : mp.Queue (bounded, pre-stacked numpy arrays)
+    Learner → Actors : filesystem poll  (latest.txt + weights_{ver}.pt)
+    Main    → all    : mp.Event  (stop_event)
+    Learner → Main   : metrics_learner.jsonl  (progress polling)
+
+  Environment overrides:
+    GUANZERO_WEIGHT_DIR  — redirect weight publishing to a container-local
+                           path (e.g. /tmp on Modal) to avoid network-volume
+                           I/O during steady-state syncing. Checkpoints stay
+                           in run_dir regardless.
 """
 
 from __future__ import annotations
@@ -10,253 +45,268 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
-import logging
-import random
+import os
 import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import torch
 from tqdm import tqdm
 
-from .actor import play_episode
-from .buffer import ReplayBuffer
-from .checkpoint import save_checkpoint
+from .worker import actor_loop
+from .learner import learner_loop
 from .config import TrainConfig
-from .encoder import StateActionEncoder
-from .learner import Learner
 from .logging_setup import setup_run_logging
-from .q_network import init_seat_nets
-from .schedules import epsilon_linear
+from . import inference_server as _isrv
 
 
+# ─── Process-lifecycle constants ─────────────────────────────
+
+_INITIAL_WEIGHTS_TIMEOUT_S = 60.0
+_WATCHER_POLL_INTERVAL_S   = 2.0
+_ACTOR_JOIN_TIMEOUT_S      = 10.0
+_LEARNER_JOIN_TIMEOUT_S    = 15.0
+_SERVER_JOIN_TIMEOUT_S     = 15.0
 
 
-def _count_params(net: torch.nn.Module) -> int:
-    return sum(p.numel() for p in net.parameters() if p.requires_grad)
+# ─── Helpers ─────────────────────────────────────────────────
 
 
-def _log_header(logger: logging.Logger, cfg: TrainConfig,
-                q_nets: dict, log_path: Path) -> None:
+def _wait_for_weights(weight_dir: Path, timeout: float = _INITIAL_WEIGHTS_TIMEOUT_S) -> None:
+    """Block until the learner publishes initial weights."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if (weight_dir / "latest.txt").exists():
+            return
+        time.sleep(0.2)
+    raise TimeoutError(f"Learner did not publish weights within {timeout}s")
+
+
+def _read_update_count(run_dir: Path) -> int:
+    metrics = run_dir / "metrics_learner.jsonl"
+    if not metrics.exists():
+        return 0
+    last = None
+    with metrics.open() as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                last = line
+    if last is None:
+        return 0
+    try:
+        return json.loads(last).get("updates", 0)
+    except Exception:
+        return 0
+
+
+def _shutdown_processes(
+    procs: list,
+    soft_timeout: float,
+    label: str = "proc",
+) -> None:
+    """join → terminate → join for a list of processes."""
+    for p in procs:
+        if p is None:
+            continue
+        p.join(timeout=soft_timeout)
+        if p.is_alive():
+            tqdm.write(f"  {label} {p.name} did not exit; terminating…")
+            p.terminate()
+            p.join(timeout=3.0)
+        if p.is_alive():
+            tqdm.write(f"  {label} {p.name} still alive after terminate; killing…")
+            p.kill()
+
+
+# ─── Main entry point ────────────────────────────────────────
+
+
+def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
+    import multiprocessing as mp
+
+    run_dir    = Path(cfg.resolved_run_dir)
+    weight_dir_env = os.environ.get("GUANZERO_WEIGHT_DIR")
+    weight_dir = Path(weight_dir_env) if weight_dir_env else run_dir / "weights"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    weight_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
+
+    logger, log_path = setup_run_logging(run_dir)
+    logger.info("train: %d actors, target %d updates", cfg.n_actors, cfg.total_updates_target)
+    if resume_checkpoint:
+        logger.info("resuming from checkpoint: %s", resume_checkpoint)
+
+    ctx          = mp.get_context("spawn")
+    sample_queue = ctx.Queue(maxsize=cfg.sample_queue_maxsize)
+    stop_event   = ctx.Event()
+    cfg_dict     = dataclasses.asdict(cfg)
+
+    learner_proc = ctx.Process(
+        target=learner_loop,
+        args=(cfg_dict, sample_queue, stop_event, weight_dir, run_dir),
+        kwargs={"resume_checkpoint": resume_checkpoint},
+        daemon=True,
+        name="learner",
+    )
+    learner_proc.start()
+
+    tqdm.write(f"  Learner started (pid={learner_proc.pid})")
+    tqdm.write(f"  Waiting for initial weights → {weight_dir}")
+    _wait_for_weights(weight_dir, timeout=_INITIAL_WEIGHTS_TIMEOUT_S)
+    tqdm.write("  Initial weights ready — starting actors")
+
+    # ── Optional inference server ─────────────────────────────
+    inf_bufs = inf_meta = inf_server_proc = None
+    inference_args = None
+    if cfg.inference.enabled:
+        inf_bufs, inf_meta = _isrv.allocate_shared_buffers(
+            num_slots   = cfg.inference.n_slots,
+            max_actions = cfg.inference.max_actions,
+            n_actors    = cfg.n_actors,
+            ctx         = ctx,
+        )
+        inf_server_proc = ctx.Process(
+            target=_isrv.run_server,
+            args=(
+                cfg_dict, inf_meta,
+                inf_bufs.free_slots, inf_bufs.request_queue, inf_bufs.events,
+                stop_event,
+            ),
+            kwargs={
+                "weight_dir":      weight_dir,
+                "server_log_path": str(run_dir / "inference_server.log"),
+            },
+            daemon=True,
+            name="inference_server",
+        )
+        inf_server_proc.start()
+        tqdm.write(f"  Inference server started (pid={inf_server_proc.pid}) "
+                   f"on device={cfg.inference.device}")
+
+        inference_args = {
+            "meta":          inf_meta,
+            "free_slots":    inf_bufs.free_slots,
+            "request_queue": inf_bufs.request_queue,
+            "events":        inf_bufs.events,
+        }
+
+    actor_procs = []
+    for actor_id in range(cfg.n_actors):
+        p = ctx.Process(
+            target=actor_loop,
+            args=(actor_id, cfg_dict, sample_queue, stop_event, weight_dir),
+            kwargs={"inference_args": inference_args, "run_dir": run_dir},
+            daemon=True,
+            name=f"actor-{actor_id}",
+        )
+        p.start()
+        actor_procs.append(p)
+
     sep = "=" * 68
-    params_per = {p: _count_params(q_nets[p]) for p in range(4)}
-    total = sum(params_per.values())
-
-    # File: full config table
-    logger.debug(sep)
-    logger.debug("  GuanZero M0 — Deep Monte Carlo training")
-    logger.debug("  Log → %s", log_path)
-    logger.debug(sep)
-    logger.debug("CONFIG")
-    for field in dataclasses.fields(cfg):
-        logger.debug("  %-32s %s", field.name, getattr(cfg, field.name))
-    logger.debug(sep)
-    logger.debug("  Network: LSTM(108→%d) + MLP(%d layers, %d hidden) | %s params/seat | %s total",
-                 cfg.qnet.hidden_lstm, cfg.qnet.n_mlp_layers, cfg.qnet.hidden_mlp,
-                 f"{params_per[0]:,}", f"{total:,}")
-    logger.debug(sep)
-
-    # Stdout: compact banner (written before tqdm bar appears)
     tqdm.write(sep)
-    tqdm.write(f"  GuanZero M0  |  episodes  |  "
-               f"LSTM {cfg.qnet.hidden_lstm}→MLP {cfg.qnet.n_mlp_layers}×{cfg.qnet.hidden_mlp}  |  "
-               f"{params_per[0]:,} params/seat")
+    if cfg.inference.enabled:
+        tqdm.write(f"  GuanZero  |  {cfg.n_actors} actors + 1 learner + 1 inference server")
+    else:
+        tqdm.write(f"  GuanZero  |  {cfg.n_actors} actors + 1 learner")
     tqdm.write(f"  Log → {log_path}")
     tqdm.write(sep)
 
+    target_updates = cfg.total_updates_target or cfg.checkpoint_every_updates
+    resume_updates = _read_update_count(run_dir)
+    bs = cfg.batch_size
+    bar = tqdm(total=target_updates * bs, initial=resume_updates * bs,
+               desc="learner", unit="samp", unit_scale=True, dynamic_ncols=True)
+    last_count = resume_updates
+    abort_reason: str | None = None
+    try:
+        while True:
+            time.sleep(_WATCHER_POLL_INTERVAL_S)
+            count = _read_update_count(run_dir)
+            delta = min(count - last_count, target_updates - last_count)
+            bar.update(delta * bs)
+            last_count = count
+            if not learner_proc.is_alive():
+                abort_reason = f"Learner exited (code={learner_proc.exitcode})"
+                break
+            # Actor-crash detection: any dead actor is a bug; abort the run
+            for ap in actor_procs:
+                if not ap.is_alive() and ap.exitcode not in (0, None):
+                    abort_reason = f"{ap.name} died (code={ap.exitcode})"
+                    break
+            if abort_reason:
+                break
+            if count >= target_updates:
+                abort_reason = None   # clean stop
+                break
+    except KeyboardInterrupt:
+        tqdm.write("\n  Interrupted — shutting down…")
+    finally:
+        if abort_reason:
+            tqdm.write(f"  Aborting: {abort_reason}")
+        stop_event.set()
+        _shutdown_processes(actor_procs, soft_timeout=_ACTOR_JOIN_TIMEOUT_S, label="actor")
+        _shutdown_processes([learner_proc], soft_timeout=_LEARNER_JOIN_TIMEOUT_S, label="learner")
+        if inf_server_proc is not None:
+            _shutdown_processes([inf_server_proc], soft_timeout=_SERVER_JOIN_TIMEOUT_S, label="server")
+        if inf_bufs is not None:
+            _isrv.release_shared_buffers(inf_bufs, unlink=True)
+        bar.close()
 
-def _fmt_losses(losses: dict[int, float]) -> str:
-    if not losses:
-        return "—"
-    parts = [f"p{p}={v:.4f}" for p, v in sorted(losses.items())]
-    avg = sum(losses.values()) / len(losses)
-    return " ".join(parts) + f"  avg={avg:.4f}"
-
-
-def _fmt_eta(elapsed_s: float, ep: int, total: int) -> str:
-    if ep == 0:
-        return "?"
-    rate = ep / elapsed_s
-    remaining_s = (total - ep) / rate
-    h = int(remaining_s // 3600)
-    m = int((remaining_s % 3600) // 60)
-    s = int(remaining_s % 60)
-    if h:
-        return f"{h}h{m:02d}m"
-    if m:
-        return f"{m}m{s:02d}s"
-    return f"{s}s"
-
-
-
-def train(cfg: TrainConfig) -> None:
-    random.seed(cfg.seed)
-    np.random.seed(cfg.seed)
-    torch.manual_seed(cfg.seed)
-
-    run_dir = Path(cfg.resolved_run_dir)
-    logger, log_path = setup_run_logging(run_dir)
-    (run_dir / "config.json").write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
-    metrics_path = run_dir / "metrics.jsonl"
-
-    encoder = StateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
-    q_nets = init_seat_nets(cfg.qnet)
-    learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device,
-                      use_bf16=cfg.use_bf16_learner)
-    buffer = ReplayBuffer(capacity_per_player=cfg.buffer_capacity_per_player)
-
-    _log_header(logger, cfg, q_nets, log_path)
-    t0 = time.time()
-    last_log_t = t0
-    last_log_ep = 0
-    last_losses: dict[int, float] = {}
-
-    bar = tqdm(
-        range(1, cfg.episodes + 1),
-        desc="training",
-        unit="ep",
-        dynamic_ncols=True,
-        smoothing=0.05,
-    )
-    for ep in bar:
-        eps = epsilon_linear(ep, cfg.epsilon)
-        for net in q_nets.values():
-            net.eval()
-        samples = play_episode(
-            q_nets=q_nets,
-            encoder=encoder,
-            epsilon=eps,
-            seed=cfg.seed + ep,
-            device=cfg.device,
-            gamma=cfg.gamma,
-        )
-        buffer.push(samples)
-
-        if ep % cfg.learn_every_episodes == 0:
-            for net in q_nets.values():
-                net.train()
-            last_losses = learner.update(
-                buffer=buffer,
-                batch_size=cfg.batch_size,
-                min_buffer_size=cfg.buffer_min_size,
-            )
-            # Keep bar postfix current after every learner step
-            if last_losses:
-                avg_loss = sum(last_losses.values()) / len(last_losses)
-                bar.set_postfix(
-                    ε=f"{eps:.3f}",
-                    buf=buffer.total_size(),
-                    loss=f"{avg_loss:.4f}",
-                    refresh=False,
-                )
-
-        if ep % cfg.log_every_episodes == 0:
-            now = time.time()
-            elapsed_total = now - t0
-            interval = now - last_log_t
-            rate = (ep - last_log_ep) / max(interval, 1e-6)
-            eta = _fmt_eta(elapsed_total, ep, cfg.episodes)
-            buf_pp = {p: buffer.size(p) for p in range(4)}
-
-            # Structured row to metrics.jsonl
-            row = {
-                "episode": ep,
-                "epsilon": round(eps, 4),
-                "buffer_total": buffer.total_size(),
-                "buffer_per_player": buf_pp,
-                "loss": {str(p): round(v, 6) for p, v in last_losses.items()},
-                "eps_per_sec": round(rate, 2),
-                "elapsed_s": round(elapsed_total, 1),
-            }
-            with metrics_path.open("a") as f:
-                f.write(json.dumps(row) + "\n")
-
-            # File: full structured line
-            buf_str = "/".join(str(buf_pp[p]) for p in range(4))
-            logger.info(
-                "ep=%d/%d  ε=%.3f  buf=%d (%s)  loss: %s  rate=%.1f ep/s  ETA=%s",
-                ep, cfg.episodes, eps, buffer.total_size(), buf_str,
-                _fmt_losses(last_losses), rate, eta,
-            )
-
-            # Stdout: tqdm.write so the bar doesn't get stomped
-            tqdm.write(
-                f"  ep {ep:>{len(str(cfg.episodes))}}/{cfg.episodes} "
-                f"| ε={eps:.3f} | buf={buffer.total_size()} ({buf_str}) "
-                f"| loss: {_fmt_losses(last_losses)} "
-                f"| {rate:.1f} ep/s | ETA {eta}"
-            )
-
-            last_log_t = now
-            last_log_ep = ep
-
-        if ep % cfg.checkpoint_every_episodes == 0 or ep == cfg.episodes:
-            ckpt = run_dir / "checkpoints" / f"ep_{ep:07d}.pt"
-            save_checkpoint(ckpt, q_nets, cfg, ep)
-            logger.debug("checkpoint saved → %s", ckpt)
-
-    bar.close()
-    final_ckpt = run_dir / "checkpoints" / "final.pt"
-    save_checkpoint(final_ckpt, q_nets, cfg, cfg.episodes)
-    elapsed = time.time() - t0
-    h, m, s = int(elapsed // 3600), int((elapsed % 3600) // 60), int(elapsed % 60)
-    sep = "=" * 68
-    summary = (f"  Done: {cfg.episodes} episodes in "
-               f"{h}h{m:02d}m{s:02d}s  "
-               f"({cfg.episodes / max(elapsed, 1e-6):.1f} ep/s avg)  "
-               f"→ {final_ckpt}")
-    logger.info(sep)
-    logger.info(summary)
-    logger.info(sep)
     tqdm.write(sep)
-    tqdm.write(summary)
+    tqdm.write(f"  Done. Checkpoints → {run_dir / 'checkpoints'}")
     tqdm.write(sep)
 
 
-# ─── CLI ─────────────────────────────────────────────────
+# ─── CLI ─────────────────────────────────────────────────────
 
 
-def _parse_args() -> TrainConfig:
-    p = argparse.ArgumentParser()
+def _parse_args() -> tuple[TrainConfig, Path | None]:
+    p = argparse.ArgumentParser(description="GuanZero persistent actor-learner DMC")
     p.add_argument("--config", type=str, default=None,
                    help="Path to YAML config; CLI flags override.")
-    p.add_argument("--episodes", type=int)
-    p.add_argument("--seed", type=int)
+    p.add_argument("--n-actors", type=int)
+    p.add_argument("--updates", type=int, help="Target learner updates.")
     p.add_argument("--device", type=str)
     p.add_argument("--run-dir", type=str)
+    p.add_argument("--resume", type=str, default=None,
+                   help="Path to checkpoint .pt to warm-start from.")
     p.add_argument("--quick", action="store_true",
-                   help="Smoke run: 100 episodes, tiny network.")
+                   help="Smoke: 2 actors, tiny network, 500 updates.")
     args = p.parse_args()
 
     cfg_dict: dict[str, Any] = {}
     if args.config:
         import yaml
         cfg_dict.update(yaml.safe_load(Path(args.config).read_text()) or {})
-    if args.episodes is not None: cfg_dict["episodes"] = args.episodes
-    if args.seed is not None: cfg_dict["seed"] = args.seed
-    if args.device is not None: cfg_dict["device"] = args.device
-    if args.run_dir is not None: cfg_dict["run_dir"] = args.run_dir
     if args.quick:
         cfg_dict.update({
-            "episodes": 100,
+            "n_actors": 2,
             "hidden_lstm": 64,
             "hidden_mlp": 128,
             "n_mlp_layers": 3,
-            "log_every_episodes": 10,
-            "checkpoint_every_episodes": 50,
             "buffer_min_size": 50,
-            "learn_every_episodes": 2,
+            "total_updates_target": 500,
+            "checkpoint_every_updates": 100,
+            "log_every_updates": 20,
+            "publish_interval_updates": 10,
+            "actor_push_batch_size": 64,
         })
+    if args.n_actors is not None:
+        cfg_dict["n_actors"] = args.n_actors
+    if args.updates is not None:
+        cfg_dict["total_updates_target"] = args.updates
+    if args.device is not None:
+        cfg_dict["device"] = args.device
+    if args.run_dir is not None:
+        cfg_dict["run_dir"] = args.run_dir
 
-    valid = {f.name for f in dataclasses.fields(TrainConfig)}
-    cfg_dict = {k: v for k, v in cfg_dict.items() if k in valid}
-    return TrainConfig(**cfg_dict)
+    resume = Path(args.resume) if args.resume else None
+    return TrainConfig.from_flat_dict(cfg_dict), resume
 
 
 def main() -> None:
-    cfg = _parse_args()
-    train(cfg)
+    cfg, resume = _parse_args()
+    train(cfg, resume_checkpoint=resume)
 
 
 if __name__ == "__main__":

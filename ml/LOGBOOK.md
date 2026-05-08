@@ -3361,6 +3361,29 @@ increases further — production throughput expected ~70–80% of M0.
 Learner forward is also 30% faster with server enabled (7.4ms vs 10.6ms),
 likely because actors no longer compete with the learner for CPU/memory.
 
+### 32-actor bench (production actor count)
+
+Same `--quick --profile --n-actors 32`. M0-no-server run for baseline.
+
+| Config | Actors | samp/s (avg) | vs M0-32a |
+|--------|--------|-------------|-----------|
+| M0, no server | 2 | 436 | — |
+| M1, no server | 2 | 226 | — |
+| M1 + server | 2 | 280 | — |
+| **M0, no server** | **32** | **838** | baseline |
+| **M1 + server** | **32** | **1,157** | **+38%** |
+
+At 32 actors the inference server **inverts** the throughput relationship. At 2
+actors, IPC overhead kept the benefit modest (+24%). At 32 actors, offloading
+the transformer CPU forward frees all 32 actor vCPUs for game simulation and
+that dominates: M1+server is 38% faster than M0 at production actor count.
+
+Note: `--quick` uses batch\_size=64 with target\_replay\_ratio=1.0; the
+learner is throttled by actor pace, so samp/s tracks actor production rate.
+Absolute numbers differ from production (batch\_size=4096) but ratios are valid.
+
+M1 + inference server confirmed. Config locked.
+
 ### Next
 
 Run M1 full production run with `use_inference_server: true` on L4.

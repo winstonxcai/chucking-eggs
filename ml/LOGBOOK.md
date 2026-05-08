@@ -3450,9 +3450,35 @@ The server-loses-to-no-server conclusion still holds (consistent across
 both benches: server ~2,500-2,650, no-server 2,846-5,763). M1 no-server's
 ceiling under good Modal hardware is ~5,800 samp/s, on par with M0.
 
+### 300-update bench — longer-window confirms M1 ≈ 65% of M0
+
+The 100u re-bench's 26-point average was noisy (just 6 steady-state lines
+post-rampup). Re-ran 300u in parallel for a tighter estimate:
+
+| Config | Steady-state samp/s | upd/s | Wall time (300u) | Ratio |
+|--------|--------------------|-------|------------------|-------|
+| M0 no-server | **6,580** | 1.61 | 2:54 | 1.00 |
+| M1 no-server | **4,271** | 1.04 | 4:28 | **0.65** |
+
+26 steady-state data points each (upd 50–300). Buffer-growth ground-truth
+cross-checks both within 0.1% of the reported samp/s. Replay ratio 1.0x
+throughout, queues stable at q=0–6.
+
+**Final M1/M0 ratio across all benches:**
+- Original 100u: 56.6% (M0=5,029 §55, M1=2,846)
+- Re-bench 100u: 120% (anomaly — M1 landed on faster host)
+- **300u (this run): 64.9%** ← longest window, most reliable
+
+So M1 transformer is **~60–65% of M0 LSTM throughput** in normal
+hardware allocations. The 1.93× CPU forward gap from the 2-actor bench
+diluted by ~3× by game-engine work that's identical between architectures.
+
+**Full-run estimates at 20k updates:**
+- M0: 20k / 1.61 / 3600 = **3.45h** ✓
+- M1: 20k / 1.04 / 3600 = **5.35h** ✓ (under 6h budget)
+
 ### Next
 
 Run M1 full production run with `use_inference_server: false` on L4.
-Compare ladder WR vs M0 Phase 6 at equal update budgets. Expect ~100-126%
-of M0 wall-clock per update depending on host allocation; either way well
-under the 6h budget.
+Compare ladder WR vs M0 Phase 6 at equal update budgets. Expect ~5.3h
+wall time at 20k updates.

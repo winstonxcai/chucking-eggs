@@ -48,13 +48,12 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any
 
 from tqdm import tqdm
 
 from .worker import actor_loop
-from .learner import learner_loop
-from .config import TrainConfig
+from .learner import learner_loop, load_latest_weights
+from .config import TrainConfig, load_config_from_cli
 from .logging_setup import setup_run_logging
 from . import inference_server as _isrv
 
@@ -66,6 +65,17 @@ _WATCHER_POLL_INTERVAL_S   = 2.0
 _ACTOR_JOIN_TIMEOUT_S      = 10.0
 _LEARNER_JOIN_TIMEOUT_S    = 15.0
 _SERVER_JOIN_TIMEOUT_S     = 15.0
+
+_QUICK_OVERRIDES = {
+    "n_actors": 2,
+    "buffer_min_size": 50,
+    "batch_size": 64,
+    "total_updates_target": 500,
+    "checkpoint_every_updates": 100,
+    "log_every_updates": 20,
+    "publish_interval_updates": 10,
+    "actor_push_batch_size": 64,
+}
 
 
 # ─── Helpers ─────────────────────────────────────────────────
@@ -153,6 +163,9 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     tqdm.write(f"  Learner started (pid={learner_proc.pid})")
     tqdm.write(f"  Waiting for initial weights → {weight_dir}")
     _wait_for_weights(weight_dir, timeout=_INITIAL_WEIGHTS_TIMEOUT_S)
+    initial_snapshot = load_latest_weights(weight_dir)
+    if initial_snapshot is None:
+        raise RuntimeError(f"Initial weights became unreadable in {weight_dir}")
     tqdm.write("  Initial weights ready — starting actors")
 
     # ── Optional inference server ─────────────────────────────
@@ -173,6 +186,8 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
                 stop_event,
             ),
             kwargs={
+                "initial_state_dicts": initial_snapshot.state_dicts,
+                "initial_version":     initial_snapshot.version,
                 "weight_dir":      weight_dir,
                 "server_log_path": str(run_dir / "inference_server.log"),
             },
@@ -252,6 +267,11 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
             _isrv.release_shared_buffers(inf_bufs, unlink=True)
         bar.close()
 
+    if abort_reason:
+        tqdm.write(sep)
+        tqdm.write(f"  Failed. Check logs in {run_dir}")
+        tqdm.write(sep)
+        raise RuntimeError(abort_reason)
     tqdm.write(sep)
     tqdm.write(f"  Done. Checkpoints → {run_dir / 'checkpoints'}")
     tqdm.write(sep)
@@ -267,6 +287,7 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
     p.add_argument("--n-actors", type=int)
     p.add_argument("--updates", type=int, help="Target learner updates.")
     p.add_argument("--device", type=str)
+    p.add_argument("--seed", type=int)
     p.add_argument("--run-dir", type=str)
     p.add_argument("--resume", type=str, default=None,
                    help="Path to checkpoint .pt to warm-start from.")
@@ -274,35 +295,18 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
                    help="Smoke: 2 actors, tiny network, 500 updates.")
     args = p.parse_args()
 
-    cfg_dict: dict[str, Any] = {}
-    if args.config:
-        import yaml
-        cfg_dict.update(yaml.safe_load(Path(args.config).read_text()) or {})
-    if args.quick:
-        cfg_dict.update({
-            "n_actors": 2,
-            "hidden_lstm": 64,
-            "hidden_mlp": 128,
-            "n_mlp_layers": 3,
-            "buffer_min_size": 50,
-            "batch_size": 64,
-            "total_updates_target": 500,
-            "checkpoint_every_updates": 100,
-            "log_every_updates": 20,
-            "publish_interval_updates": 10,
-            "actor_push_batch_size": 64,
-        })
-    if args.n_actors is not None:
-        cfg_dict["n_actors"] = args.n_actors
-    if args.updates is not None:
-        cfg_dict["total_updates_target"] = args.updates
-    if args.device is not None:
-        cfg_dict["device"] = args.device
-    if args.run_dir is not None:
-        cfg_dict["run_dir"] = args.run_dir
-
     resume = Path(args.resume) if args.resume else None
-    return TrainConfig.from_flat_dict(cfg_dict), resume
+    cfg = load_config_from_cli(
+        args.config,
+        quick=args.quick,
+        quick_overrides=_QUICK_OVERRIDES,
+        n_actors=args.n_actors,
+        total_updates_target=args.updates,
+        device=args.device,
+        seed=args.seed,
+        run_dir=args.run_dir,
+    )
+    return cfg, resume
 
 
 def main() -> None:

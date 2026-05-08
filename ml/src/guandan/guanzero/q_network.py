@@ -1,4 +1,4 @@
-"""GuanZero Q-network: LSTM(history) + flat MLP scorer.
+"""GuanZero Q-network: history encoder + flat MLP scorer.
 
 Input is a batched dict (see ``buffer.collate_encoded``). Output is a 1-D
 Q tensor of shape ``(B,)`` — one Q-value per (state, candidate-action) pair.
@@ -16,8 +16,39 @@ from .config import QNetConfig
 from .encoder import CARD_ID_DIM, HISTORY_LEN, static_dim
 
 
+class _LSTMHistoryEncoder(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int) -> None:
+        super().__init__()
+        self.lstm = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, batch_first=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [B, T, D] → [B, hidden_dim]
+        _, (h_n, _) = self.lstm(x)
+        return h_n.squeeze(0)
+
+
+class _TransformerHistoryEncoder(nn.Module):
+    def __init__(
+        self, input_dim: int, d_model: int, nhead: int, num_layers: int, ff_dim: int, dropout: float
+    ) -> None:
+        super().__init__()
+        self.proj = nn.Linear(input_dim, d_model)
+        self.pos_embed = nn.Embedding(HISTORY_LEN, d_model)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=ff_dim,
+            dropout=dropout, batch_first=True, norm_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers, enable_nested_tensor=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [B, T, D] → [B, d_model]
+        T = x.shape[1]
+        pos = torch.arange(T, device=x.device)
+        h = self.proj(x) + self.pos_embed(pos)  # [B, 20, d_model]
+        h = self.encoder(h)                       # [B, 20, d_model]
+        return h.mean(dim=1)                       # [B, d_model]
+
+
 class GuanZeroQNet(nn.Module):
-    """LSTM history encoder → concat with flat per-step features → MLP scoring head.
+    """History encoder → concat with flat per-step features → MLP scoring head.
 
     Input dict keys are defined by ``encoder.ENCODE_CHANNEL_KEYS``.
     Output shape: ``(B,)`` — one scalar Q-value per row.
@@ -28,11 +59,13 @@ class GuanZeroQNet(nn.Module):
         self.use_oracle_others_hand = cfg.use_oracle_others_hand
         self.hidden_lstm = cfg.hidden_lstm
 
-        self.history_lstm = nn.LSTM(
-            input_size=CARD_ID_DIM,
-            hidden_size=cfg.hidden_lstm,
-            batch_first=True,
-        )
+        if cfg.history_encoder == "transformer":
+            self.history_module: nn.Module = _TransformerHistoryEncoder(
+                CARD_ID_DIM, cfg.hidden_lstm, cfg.transformer_nhead,
+                cfg.transformer_layers, cfg.transformer_ff_dim, cfg.dropout,
+            )
+        else:
+            self.history_module = _LSTMHistoryEncoder(CARD_ID_DIM, cfg.hidden_lstm)
 
         in_dim = static_dim(cfg.use_oracle_others_hand) + cfg.hidden_lstm
         layers: list[nn.Module] = []
@@ -52,8 +85,7 @@ class GuanZeroQNet(nn.Module):
             Q-values of shape ``(B,)``.
         """
         hist = batch["history"]
-        _, (h_n, _) = self.history_lstm(hist)
-        z_hist = h_n.squeeze(0)   # num_layers=1, so h_n is (1, B, hidden); squeeze to (B, hidden)
+        z_hist = self.history_module(hist)  # [B, hidden_lstm]
 
         b = hist.shape[0]
         flat = torch.cat(

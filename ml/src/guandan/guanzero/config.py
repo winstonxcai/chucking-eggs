@@ -28,7 +28,7 @@ from typing import Any
 
 @dataclasses.dataclass(frozen=True)
 class QNetConfig:
-    """Q-network architecture. All five fields must match across every process
+    """Q-network architecture. All fields must match across every process
     that constructs or loads the networks (learner, actors, inference server).
     """
     hidden_lstm: int = 256
@@ -36,6 +36,10 @@ class QNetConfig:
     n_mlp_layers: int = 6
     dropout: float = 0.0
     use_oracle_others_hand: bool = True
+    history_encoder: str = "lstm"       # "lstm" | "transformer"
+    transformer_nhead: int = 4          # heads; hidden_lstm / nhead = dim/head
+    transformer_layers: int = 2
+    transformer_ff_dim: int = 1024      # feedforward dim inside each transformer layer
 
 
 @dataclasses.dataclass(frozen=True)
@@ -178,13 +182,38 @@ class TrainConfig:
         This is the preferred loader in ``GuanZeroBot.load()`` and anywhere a
         checkpoint or YAML ``config`` dict is deserialised.
         """
+        if dataclasses.is_dataclass(d.get("qnet")):
+            d = {
+                **d,
+                "qnet": dataclasses.asdict(d["qnet"]),
+                "epsilon": (
+                    dataclasses.asdict(d["epsilon"])
+                    if dataclasses.is_dataclass(d.get("epsilon"))
+                    else d.get("epsilon")
+                ),
+                "inference": (
+                    dataclasses.asdict(d["inference"])
+                    if dataclasses.is_dataclass(d.get("inference"))
+                    else d.get("inference")
+                ),
+            }
+
         if isinstance(d.get("qnet"), dict):
             # ── Nested form (new checkpoints / round-tripped asdict) ──
             qnet      = QNetConfig(**d["qnet"])
-            epsilon   = (EpsilonConfig(**d["epsilon"])
-                         if isinstance(d.get("epsilon"), dict) else EpsilonConfig())
-            inference = (InferenceConfig(**d["inference"])
-                         if isinstance(d.get("inference"), dict) else InferenceConfig())
+            epsilon_kw: dict[str, Any] = {}
+            inference_kw: dict[str, Any] = {}
+            for k, v in d.items():
+                if k in _EPSILON_FLAT_MAP:
+                    epsilon_kw[_EPSILON_FLAT_MAP[k]] = v
+                elif k in _INFERENCE_FLAT_MAP:
+                    inference_kw[_INFERENCE_FLAT_MAP[k]] = v
+            if isinstance(d.get("epsilon"), dict):
+                epsilon_kw.update(d["epsilon"])
+            if isinstance(d.get("inference"), dict):
+                inference_kw.update(d["inference"])
+            epsilon   = EpsilonConfig(**epsilon_kw)
+            inference = InferenceConfig(**inference_kw)
             skip = {"qnet", "epsilon", "inference"} | _REMOVED_FIELDS
             valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "inference"}
             top = {k: v for k, v in d.items() if k in valid_top and k not in skip}
@@ -228,10 +257,33 @@ def load_config_from_yaml(path: str | Path) -> TrainConfig:
     return TrainConfig.from_flat_dict(raw)
 
 
+def load_config_from_cli(
+    yaml_path: str | Path | None,
+    quick: bool,
+    quick_overrides: dict[str, Any],
+    **cli_overrides: Any,
+) -> TrainConfig:
+    """Load config from YAML plus quick-mode and explicit CLI overrides.
+
+    ``quick_overrides`` is applied after YAML, and explicit CLI values are
+    applied last. ``None`` CLI values are ignored so optional argparse flags do
+    not erase values loaded from the config file.
+    """
+    raw: dict[str, Any] = {}
+    if yaml_path:
+        import yaml
+        raw.update(yaml.safe_load(Path(yaml_path).read_text()) or {})
+    if quick:
+        raw.update(quick_overrides)
+    raw.update({k: v for k, v in cli_overrides.items() if v is not None})
+    return TrainConfig.from_flat_dict(raw)
+
+
 __all__ = [
     "TrainConfig",
     "QNetConfig",
     "EpsilonConfig",
     "InferenceConfig",
     "load_config_from_yaml",
+    "load_config_from_cli",
 ]

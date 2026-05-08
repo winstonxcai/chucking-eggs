@@ -27,7 +27,7 @@ def test_forward_returns_one_q_per_candidate():
     assert torch.isfinite(q).all()
 
 
-def test_gradient_flows_through_lstm_and_mlp():
+def test_gradient_flows_through_history_module_and_mlp():
     net = GuanZeroQNet(QNetConfig(hidden_lstm=32, hidden_mlp=64, n_mlp_layers=2))
     batch = _build_batch(n=4)
     target = torch.zeros(4)
@@ -35,9 +35,29 @@ def test_gradient_flows_through_lstm_and_mlp():
     loss = ((q - target) ** 2).mean()
     loss.backward()
 
-    lstm_grads = [p.grad for p in net.history_lstm.parameters()]
+    hist_grads = [p.grad for p in net.history_module.parameters()]
     mlp_grads = [p.grad for p in net.mlp.parameters()]
-    assert all(g is not None and torch.isfinite(g).all() for g in lstm_grads)
+    assert all(g is not None and torch.isfinite(g).all() for g in hist_grads)
     assert all(g is not None and torch.isfinite(g).all() for g in mlp_grads)
-    assert any(g.abs().sum() > 0 for g in lstm_grads)
+    assert any(g.abs().sum() > 0 for g in hist_grads)
+    assert any(g.abs().sum() > 0 for g in mlp_grads)
+
+
+def test_gradient_flows_through_transformer_and_mlp():
+    net = GuanZeroQNet(QNetConfig(
+        hidden_lstm=32, hidden_mlp=64, n_mlp_layers=2,
+        history_encoder="transformer", transformer_nhead=4,
+        transformer_layers=1, transformer_ff_dim=64,
+    ))
+    batch = _build_batch(n=4)
+    target = torch.zeros(4)
+    q = net(batch)
+    loss = ((q - target) ** 2).mean()
+    loss.backward()
+
+    hist_grads = [p.grad for p in net.history_module.parameters()]
+    mlp_grads = [p.grad for p in net.mlp.parameters()]
+    assert all(g is not None and torch.isfinite(g).all() for g in hist_grads)
+    assert all(g is not None and torch.isfinite(g).all() for g in mlp_grads)
+    assert any(g.abs().sum() > 0 for g in hist_grads)
     assert any(g.abs().sum() > 0 for g in mlp_grads)

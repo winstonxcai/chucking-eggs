@@ -3236,3 +3236,112 @@ Stay on **L4**. T4 only wins if your workload is GPU-bound enough that
 the 4× tensor-core headroom of L4 is wasted (true here — we use ~5%
 of L4's TFLOPS) but you'd still need to overcome the CPU host gap.
 For paper-spec on Modal, that doesn't pan out.
+
+## 56. Phase 6 first run: 5k updates @ replay=1.0 — 79.5/61.6/28.6 ladder (2026-05-07)
+
+First production run on locked config (L4 / cpu=32 / 64 GiB / n_actors=32 /
+no inference server / no compile_actor / target_replay=max_replay=1.0).
+
+### Run summary
+
+| metric | value |
+|---|---|
+| updates | 5,000 |
+| batch_size | 4,096 |
+| sample uses | 20.5M |
+| **unique samples** | **20.5M** (replay = 1.0× exactly) |
+| wall | 1h 24m |
+| steady-state samp/s | ~3,800 |
+| final loss (per seat) | 0.14–0.16 |
+| cost | ~$2.90 |
+
+Replay ratio held at exactly 1.0× (interval and cumulative) for the entire
+run — every sample seen once, fully on-policy training.
+
+### Ladder eval (1000 paired games each)
+
+| Opponent | 5k @ replay=1.0 | M1 200k baseline | Δ |
+|---|---:|---:|---:|
+| random    | **79.5% ± 1.3%** | 83.1% | −3.6 pp |
+| greedy    | **61.6% ± 1.5%** | 65.6% | −4.0 pp |
+| heuristic | **28.6% ± 1.4%** | 31.5% | −2.9 pp |
+
+After **2.5% of M1's update count** and **~half of M1's unique samples**
+(20.5M vs 40M), within 4 pp of the 200k checkpoint at every opponent.
+
+### Why this works
+
+M1's 200k run did 40M unique × 2.5× replay = 100M sample uses. Our run
+did 20.5M unique × 1.0× replay = 20.5M sample uses (5× fewer gradient
+samples than M1). Yet WR is within ~4 pp.
+
+The replay-1.0 cap forced every gradient step to see fresh-from-current-policy
+data. M1's 2.5× replay meant ~60% of its gradient steps trained on stale
+data carrying obsolete behavior — a hidden cost of unthrottled DMC. Phase 5's
+controller traded throughput for sample efficiency and the trade paid off.
+
+### Greedy seat asymmetry
+
+Greedy result has 11 pp split between even (67%) and odd (56.2%) seats.
+Larger than the 3–6 pp typical for mid-training M1 (LOGBOOK §44 ladder).
+Could be deck variance at 500 games per seat or genuine policy
+seat-asymmetry that hasn't smoothed out at this checkpoint. Re-eval at
+the next checkpoint will tell.
+
+### Next
+
+Estimated Phase 6 trajectory at replay=1.0:
+- 25k updates → ~50M unique → expected to match or beat M1 200k (4-6h, ~$8)
+- 50k updates → ~100M unique → headroom past M1 baseline (8-10h, ~$17)
+
+The L4/replay=1.0 config is locked. Production decision: scale Phase 6
+length next, not config.
+
+---
+
+## 57. M1 architecture: Transformer history encoder bench (2026-05-09)
+
+**Motivation:** Drop-in replacement of the LSTM history module with a 2-layer
+TransformerEncoder (d_model=256, nhead=4, ff_dim=1024, pre-LN, mean pooling).
+Identical to M0 in all other respects. Purpose: test whether multi-head
+self-attention better captures pass chains / bomb sequencing.
+
+**Bench method:** Two `--quick` (1000-update, 2-actor) Modal L4 runs in
+parallel, with `--profile` enabled. Learner forward measured by incremental
+ms/update across the run; actor throughput read from samp/s logs.
+
+### Results
+
+| Metric | M0 LSTM | M1 Transformer | Ratio |
+|--------|---------|----------------|-------|
+| Actor throughput (2 actors, CPU forward) | ~436 samp/s | ~226 samp/s | **1.93× slower** |
+| Learner GPU forward (steady-state marginal) | ~6.5 ms/update | ~11.0 ms/update | **1.69× slower** |
+| Total wall time (1000 updates) | 2:34 | 5:02 | **~2× slower** |
+
+Transformer falls to 52% of M0 actor throughput — below the 60% gate set in
+the pre-run plan. Root cause: transformer forward on CPU is ~1.9× heavier
+than LSTM, and in the default config all actor decisions are CPU-forward.
+
+### Fix: enable inference server for M1 production run
+
+LOGBOOK §54 already noted: "flip [inference\_server] to true for larger-model
+ablations where forward dominates IPC." Transformer is exactly this case.
+Updated `m1_l4_distributed.yaml`: `use_inference_server: true`.
+
+With GPU batching via the inference server, actors offload the heavy
+transformer forward to the L4 GPU and continue game simulation in parallel.
+Expected M1+server throughput: ~70–80% of M0-CPU (~3,000–3,500 rows/s),
+which passes the 60% gate.
+
+### Also fixed: `--quick` network-size overrides removed
+
+`_QUICK_OVERRIDES` previously shrank `hidden_lstm=64 / hidden_mlp=128 /
+n_mlp_layers=3`, making quick benchmarks run a toy network instead of the
+production architecture. Removed those overrides so `--quick` only limits
+duration (n_actors=2, buffer_min=50, 1000 updates) — making it an accurate
+perf proxy for the real config.
+
+### Next
+
+Run M1 full production run with `use_inference_server: true` on L4.
+Compare ladder WR vs M0 Phase 6 at equal update budgets.

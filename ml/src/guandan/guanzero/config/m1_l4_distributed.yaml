@@ -14,10 +14,10 @@ log_every_updates: 10
 updates_per_learner_step: 1
 
 # ── Shared-GPU inference ──
-# Transformer forward on CPU (actors) is 1.9x slower than LSTM; enabling the
-# inference server routes actor decisions through the GPU and recovers most of
-# the throughput gap (LOGBOOK §: "flip to true for larger-model ablations").
-use_inference_server: true
+# Disabled despite transformer being 1.9x heavier than LSTM on CPU.
+# Production bench (LOGBOOK §57): server adds ZMQ IPC overhead (~5ms/req)
+# that outweighs GPU savings at batch_size=4096 — no-server 57% vs +server 53% of M0.
+use_inference_server: false
 inference_device: cuda
 inference_batch_max_requests: 32
 inference_batch_max_action_rows: 4096

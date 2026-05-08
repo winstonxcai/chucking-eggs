@@ -3384,7 +3384,45 @@ Absolute numbers differ from production (batch\_size=4096) but ratios are valid.
 
 M1 + inference server confirmed. Config locked.
 
+### Production bench (100 updates, batch_size=4096, 32 actors, no --quick)
+
+The `--quick` bench above used batch_size=64, which throttles the learner and
+makes samp/s track actor rate — but artificially because the learner drains
+the queue almost instantly at 32 actors. With production config
+(batch_size=4096, target_replay_ratio=1.0) the learner is the real bottleneck
+and the throttle correctly limits actor output to match learner consumption.
+
+Two parallel 100-update Modal L4 runs (clean separate app IDs):
+
+| Metric | M0 no-server (§55) | M1 no-server | M1 + server |
+|--------|-------------------|--------------|-------------|
+| Avg samp/s (upd 30–100) | **5,029** | **2,846** | **2,656** |
+| % of M0 | 100% | 57% | 53% |
+| Server rows/s (GPU) | — | — | ~11,300 avg |
+| Server GPU forward | — | — | 15–17ms/batch |
+| Server avg batch | — | — | 31.7 reqs / ~270 rows |
+
+**Surprise**: M1 no-server (57%) beats M1+server (53%). The inference server
+adds ZMQ round-trip overhead (~5ms IPC per request at 1,300 req/s) that
+outweighs GPU forward savings when batch sizes are large (4096) and the
+learner is the binding constraint. At production replay ratio the learner
+consumes ~2,800 samp/s regardless of inference path; the server's GPU
+forward of 15ms is fast, but IPC latency serializes enough actor decisions
+to reduce effective actor concurrency.
+
+The 32-actor `--quick` result (+38% for server) was valid for its setting
+but the bottleneck flipped at production batch size. Conclusion:
+
+**M1 production config = no inference server.**
+`m1_l4_distributed.yaml` updated back to `use_inference_server: false`.
+M1 steady-state throughput: ~2,846 samp/s ≈ 57% of M0.
+
+The 43% throughput penalty is a known cost of the transformer ablation.
+Decision: proceed with full M1 run (57% of M0 is sufficient for a research
+ablation — at 20k updates the run takes ~2× longer than M0 but still under
+6h wall time).
+
 ### Next
 
-Run M1 full production run with `use_inference_server: true` on L4.
+Run M1 full production run with `use_inference_server: false` on L4.
 Compare ladder WR vs M0 Phase 6 at equal update budgets.

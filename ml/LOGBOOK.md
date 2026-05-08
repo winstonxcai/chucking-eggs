@@ -2223,15 +2223,15 @@ dispatch") still holds — but on MPS the same insight is even stronger:
 - only after both are done would legal-action gen / encoding become worth touching
 
 **Recommended order on M1 / MPS actor:**
-1. Single-tensor stacked H2D in `collate_encoded` — should claw back most of the
+1. Single-tensor stacked H2D in the actor row-collation helper — should claw back most of the
    1.6 ms collate cost. Pure engineering, no algorithm change.
 2. Cross-actor inference batching (the bigger structural win, same as on Modal).
 3. Then legal/encode/etc.
 
-### Fifth pass — `collate_encoded` H2D batching (`non_blocking=True`)
+### Fifth pass — actor row-collation H2D batching (`non_blocking=True`)
 
 Microbench `bench_collate.py` (5 variants, MPS, repeats=2000) showed the
-production `collate_encoded` was paying a **per-call MPS sync** on every
+production actor row-collation helper was paying a **per-call MPS sync** on every
 `.to(device)` call — 9 calls per decision = ~1.7 ms regardless of batch size.
 
 | variant            | ms/call (B=5) | µs/sample |
@@ -2248,7 +2248,7 @@ views that don't actually beat the simpler `non_blocking=True`. The 1-line
 change wins both on ergonomics and speed.
 
 **Patch:** [buffer.py:115](ml/src/guandan/guanzero/buffer.py#L115) — add
-`non_blocking=True` to `.to(device)` in `collate_encoded`.
+`non_blocking=True` to `.to(device)` in the actor row-collation helper.
 
 ### Re-run rollout profile after the fix (MPS, 200 ep, eps=0.0)
 
@@ -2324,7 +2324,7 @@ the GPU) while the server's single MPS process keeps the device pinned.
 
 For the *paper-spec network on M1*, the right configuration is the boring
 one: spawn N=4 actor processes each holding their own q_nets on MPS, with
-the `non_blocking=True` H2D fix in `collate_encoded`. Ceiling ~5.8 ep/s.
+the `non_blocking=True` H2D fix in the actor row-collation helper. Ceiling ~5.8 ep/s.
 
 The server architecture only earns its keep when:
 - model size is large enough that per-decision forward is ≫ IPC
@@ -2367,7 +2367,7 @@ until you consider the orchestration:
   around 6–7 upd/s regardless of buffer state.
 - The learner is **CPU-dispatch bound, not GPU-bound**: each MPS op needs a CPU
   thread to dispatch and (currently) a per-`.to(device)` sync per H2D copy in
-  `collate` (the *training* collate function — we only patched `collate_encoded`).
+  `collate` (the *training* collate function — we only patched the actor row-collation helper).
 - M1 has 8 P-cores. Each actor pins `torch.set_num_threads(1)` but its forward
   still saturates a P-core. With N≥4 the learner process is starved of CPU
   cycles to *issue* MPS work, so wall-time per update grows.
@@ -2388,7 +2388,7 @@ chews through them slower.
 
 The two answers diverge because Modal has 4× the CPU and a separate CUDA
 backend that doesn't share CPU dispatch with actors. The non_blocking H2D
-fix in `collate_encoded` doesn't help the learner side (different function:
+fix in the actor row-collation helper doesn't help the learner side (different function:
 `collate`); fixing that on the *training* collate is the next free win on
 either platform.
 
@@ -2852,7 +2852,7 @@ torch.profiler with `record_function` blocks for the logical phases.
 
 ```
 phase                  ms/call    %
-collate_encoded         0.157   2.4%
+row collation           0.157   2.4%
 net(batch) forward      6.234  97.2%   ← dominant
 argmax + .item()        0.022   0.3%
 TOTAL                   6.413  per decision
@@ -2870,7 +2870,7 @@ TOTAL                   6.413  per decision
 
 ```
 phase                  ms/call    %
-collate_encoded         0.183   2.5%
+row collation           0.183   2.5%
 net(batch) forward      7.083  96.6%
 argmax + .item()        0.068   0.9%
 TOTAL                   7.334
@@ -3464,21 +3464,80 @@ post-rampup). Re-ran 300u in parallel for a tighter estimate:
 cross-checks both within 0.1% of the reported samp/s. Replay ratio 1.0x
 throughout, queues stable at q=0–6.
 
-**Final M1/M0 ratio across all benches:**
-- Original 100u: 56.6% (M0=5,029 §55, M1=2,846)
-- Re-bench 100u: 120% (anomaly — M1 landed on faster host)
-- **300u (this run): 64.9%** ← longest window, most reliable
+### 300-update bench v2 — M0 host-variance dominates the ratio
 
-So M1 transformer is **~60–65% of M0 LSTM throughput** in normal
-hardware allocations. The 1.93× CPU forward gap from the 2-actor bench
-diluted by ~3× by game-engine work that's identical between architectures.
+Re-ran the 300u parallel bench. Both jobs landed on similar (slow) L4 hosts
+this time and came in nearly tied:
 
-**Full-run estimates at 20k updates:**
-- M0: 20k / 1.61 / 3600 = **3.45h** ✓
-- M1: 20k / 1.04 / 3600 = **5.35h** ✓ (under 6h budget)
+| Config | v2 mean samp/s | Min / Max | upd/s |
+|--------|---------------|-----------|-------|
+| M0 no-server | **4,252** | 3,561 / 4,740 | 1.04 |
+| M1 no-server | **4,187** | 3,940 / 4,708 | 1.02 |
+| **M1/M0 ratio** | **98.5%** | | |
+
+**M1/M0 ratio across all four benches:**
+| Bench | M0 samp/s | M1 samp/s | M1/M0 |
+|-------|-----------|-----------|-------|
+| 100u original | 5,029 | 2,846 | 57% |
+| 100u re-bench | 4,714 | 5,763 | 122% |
+| 300u v1 | 6,580 | 4,271 | 65% |
+| **300u v2** | **4,252** | **4,187** | **99%** |
+
+**Pattern:** M1 throughput is **host-stable** — clusters around ~4–4.3k
+samp/s in three of four runs. Transformer CPU forward is heavy enough to
+be the limiting factor regardless of host CPU. M0 throughput is
+**host-variable** — ranges 4.2k to 6.6k, because LSTM is light and
+actor throughput tracks host CPU performance.
+
+So the "real" M1 vs M0 architecture cost is **1× to 1.5×**, not the 1.7×
+implied by the original 57% bench. When M0 lands on a fast host it pulls
+ahead by ~1.5×; on a slow host they tie.
+
+**Full-run estimates at 20k updates** (using v2 numbers, slow host case):
+- M0: 20k / 1.04 / 3600 = **5.34h** (worst case)
+- M1: 20k / 1.02 / 3600 = **5.45h** (worst case)
+- Best case M0 (1.61 upd/s): **3.45h**
+
+Both architectures fit comfortably in the 6h budget under any host
+allocation observed.
 
 ### Next
 
 Run M1 full production run with `use_inference_server: false` on L4.
-Compare ladder WR vs M0 Phase 6 at equal update budgets. Expect ~5.3h
-wall time at 20k updates.
+Compare ladder WR vs M0 Phase 6 at equal update budgets.
+
+
+## 58. Same-constraints no-server actor micro-opts (2026-05-09)
+
+Follow-up to §§49-55 after confirming env-lanes, shared inference,
+`torch.compile`, and 64 actors were already rejected for paper-spec Modal L4.
+Implemented only low-risk no-server changes:
+
+- `StateActionEncoder.encode_one(...)` for K=1 and epsilon-random decisions,
+  so actors no longer encode every legal action when only the selected action
+  is stored.
+- `forward_grouped` single-decision fast paths:
+  (1) use `expand` instead of `repeat_interleave` for shared rows, and
+  (2) split the first MLP layer into one shared state/history contribution
+  plus per-action contribution. This is algebraically identical to expanding
+  the full row before the MLP, but avoids repeating the large first-layer
+  state/history matmul for local actor calls.
+- Updated stale rollout/bench scripts to current `collate_grouped_encoded`.
+- Added `bench_guanzero_no_server_modal.py` to summarize L4 fresh actor
+  rate, queue depth, replay ratio, and actor phase profile.
+- Added `check_movegen_backend.py`; local result: `combos._USE_RUST=False`
+  and the `guandan_rs` namespace lacks the movegen functions, so production
+  images should explicitly verify Rust movegen before treating it as active.
+
+Local 20-episode CPU actor profiles, same seed/config as the prior quick check:
+
+| stage | samples/sec | wall | q-forward share | delta vs baseline |
+|---|---:|---:|---:|---:|
+| baseline | 259.7 | 9.84s | ~91.7% | — |
+| `encode_one` + row `expand` | 299.5 | 8.53s | ~90.6% | +15.3% |
+| + split first MLP layer | 352.8 | 7.24s | ~89.6% | +35.9% |
+
+This is a material local win, but Q-forward remains above the 85% stop line.
+**Conclusion unchanged:** under same model, same L4 cpu=32, no server, no
+lanes, no compile, a true 2× actor-generation speedup is still not credible.
+Getting 2× requires changing model, hardware, or inference architecture.

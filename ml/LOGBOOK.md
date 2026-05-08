@@ -3422,7 +3422,37 @@ Decision: proceed with full M1 run (57% of M0 is sufficient for a research
 ablation — at 20k updates the run takes ~2× longer than M0 but still under
 6h wall time).
 
+### Re-bench (3-way parallel, fresh Modal jobs, same 100-update config)
+
+Re-ran all three configs in parallel to confirm the previous numbers. The
+result was striking — M1 no-server **doubled** and is now faster than M0:
+
+| Config | Re-bench samp/s | Prior bench | Δ |
+|--------|----------------|-------------|---|
+| M0 no-server | ~4,714 (1.15 upd/s) | 5,029 (§55) | -6% |
+| **M1 no-server** | **~5,763 (1.45 upd/s)** | 2,846 | **+102%** |
+| M1 + server | ~2,500 (0.61 upd/s) | 2,656 | -6% |
+
+M0 and M1+server are stable across runs (±6%). M1 no-server swung 2×.
+
+**Diagnostic**: M1+server's GPU-bound metrics are nearly identical between
+runs (`forward=15-17ms`, `avg_batch=31.7-31.8`, `~11,300 rows/s`) — the
+GPU is the bottleneck and is host-independent. M0's LSTM CPU forward is
+light and stable. What varies is M1's CPU transformer forward in the actor
+loop, which is sensitive to L4 host CPU allocation.
+
+**Implication**: Modal L4 instances have significant host-CPU variance.
+Single benchmarks can't reliably rank architectures within 2× of each
+other when one architecture is CPU-forward dominated. The original "M1 is
+57% of M0" finding was likely a slow-CPU outlier on that bench day.
+
+The server-loses-to-no-server conclusion still holds (consistent across
+both benches: server ~2,500-2,650, no-server 2,846-5,763). M1 no-server's
+ceiling under good Modal hardware is ~5,800 samp/s, on par with M0.
+
 ### Next
 
 Run M1 full production run with `use_inference_server: false` on L4.
-Compare ladder WR vs M0 Phase 6 at equal update budgets.
+Compare ladder WR vs M0 Phase 6 at equal update budgets. Expect ~100-126%
+of M0 wall-clock per update depending on host allocation; either way well
+under the 6h budget.

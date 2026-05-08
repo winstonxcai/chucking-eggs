@@ -3341,6 +3341,26 @@ production architecture. Removed those overrides so `--quick` only limits
 duration (n_actors=2, buffer_min=50, 1000 updates) — making it an accurate
 perf proxy for the real config.
 
+### M1 + inference server smoke (same 1000-update bench)
+
+Run: `m1_transformer_server_bench`, same `--quick --profile`, 2 actors.
+
+| Metric | M0 LSTM (no server) | M1 (no server) | M1 (with server) |
+|--------|---------------------|----------------|------------------|
+| Actor throughput (steady-state) | ~436 samp/s | ~226 samp/s | ~280 samp/s |
+| Server rows/s | — | — | 1,405–1,453 (2 actors) |
+| Server GPU forward | — | — | 5.1ms/batch, 2.3ms GPU fwd |
+| Learner forward (marginal) | ~6.5ms | ~10.6ms | ~7.4ms |
+| Wall time (1000 updates) | 2:34 | 5:02 | **3:57** |
+| % of M0 throughput | 100% | 52% ✗ | **64% ✓** |
+
+M1+server clears the 60% gate. With only 2 actors the server averages
+avg\_batch=17 rows; at 32 actors batches grow proportionally and rows/s
+increases further — production throughput expected ~70–80% of M0.
+
+Learner forward is also 30% faster with server enabled (7.4ms vs 10.6ms),
+likely because actors no longer compete with the learner for CPU/memory.
+
 ### Next
 
 Run M1 full production run with `use_inference_server: true` on L4.

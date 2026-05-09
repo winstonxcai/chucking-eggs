@@ -3545,15 +3545,15 @@ Getting 2× requires changing model, hardware, or inference architecture.
 
 ## 59. M0 oracle — WR by checkpoint (2026-05-09)
 
-Run: `guanzero_l4_phase6_5k_r10` (M0, oracle, replay=1.0). 200 games each,
+Run: `guanzero_l4_phase6_5k_r10` (M0, oracle, replay=1.0). 1000 games each,
 6 workers, balanced even/odd seat split (combined column reported below).
 
 | Opponent | 5k updates | 10k updates | Δ |
 |----------|-----------:|------------:|---:|
-| random    | 79.5% ± 1.3% | **87.5% ± 2.3%** | +8.0 pp |
-| greedy    | 61.6% ± 1.5% | **79.5% ± 2.9%** | +17.9 pp |
-| heuristic | 28.6% ± 1.4% | **40.0% ± 3.5%** | +11.4 pp |
+| random    | 79.5% ± 1.3% | **89.8% ± 1.0%** | +10.3 pp |
+| greedy    | 61.6% ± 1.5% | **78.1% ± 1.3%** | +16.5 pp |
+| heuristic | 28.6% ± 1.4% | **42.6% ± 1.6%** | +14.0 pp |
 
 5k → 10k extra updates moved all three baselines forward materially.
-Heuristic still wins (60/40), but the gap closed substantially. Strategic
+Heuristic still wins (57/43), but the gap closed substantially. Strategic
 and the harder ladder (jidan, yaoji) are next once heuristic crosses 50%.

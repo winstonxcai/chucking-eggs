@@ -3545,15 +3545,17 @@ Getting 2× requires changing model, hardware, or inference architecture.
 
 ## 59. M0 oracle — WR by checkpoint (2026-05-09)
 
-Run: `guanzero_l4_phase6_5k_r10` (M0, oracle, replay=1.0). 1000 games each,
-6 workers, balanced even/odd seat split (combined column reported below).
+Run: `guanzero_l4_phase6_5k_r10` (M0, oracle, replay=1.0). 500 games each
+for 15k/20k, 1000 games for 5k/10k. 6 workers, balanced even/odd seat split
+(combined column reported below).
 
-| Opponent | 5k updates | 10k updates | Δ |
-|----------|-----------:|------------:|---:|
-| random    | 79.5% ± 1.3% | **89.8% ± 1.0%** | +10.3 pp |
-| greedy    | 61.6% ± 1.5% | **78.1% ± 1.3%** | +16.5 pp |
-| heuristic | 28.6% ± 1.4% | **42.6% ± 1.6%** | +14.0 pp |
+| Opponent  | 5k          | 10k                   | 15k         | 20k         |
+|-----------|-----------:|----------------------:|------------:|------------:|
+| random    | 79.5% ± 1.3% | 89.8% ± 1.0%        | 92.6% ± 1.2% | 92.6% ± 1.2% |
+| greedy    | 61.6% ± 1.5% | 78.1% ± 1.3%        | 82.2% ± 1.7% | 83.0% ± 1.7% |
+| heuristic | 28.6% ± 1.4% | 42.6% ± 1.6%        | 45.8% ± 2.2% | 46.6% ± 2.2% |
 
-5k → 10k extra updates moved all three baselines forward materially.
-Heuristic still wins (57/43), but the gap closed substantially. Strategic
-and the harder ladder (jidan, yaoji) are next once heuristic crosses 50%.
+Steady gains continue but slow: greedy +4.9 pp over 10k→20k (vs +16.5 pp
+for 5k→10k). Random plateauing near ceiling (~93%). Heuristic rising ~1 pp
+per 5k updates post-10k — still winning 53/47 at 20k. Next milestone is
+crossing 50% vs heuristic.

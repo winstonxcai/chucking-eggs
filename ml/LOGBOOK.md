@@ -3541,3 +3541,19 @@ This is a material local win, but Q-forward remains above the 85% stop line.
 **Conclusion unchanged:** under same model, same L4 cpu=32, no server, no
 lanes, no compile, a true 2× actor-generation speedup is still not credible.
 Getting 2× requires changing model, hardware, or inference architecture.
+
+
+## 59. M0 oracle — WR by checkpoint (2026-05-09)
+
+Run: `guanzero_l4_phase6_5k_r10` (M0, oracle, replay=1.0). 200 games each,
+6 workers, balanced even/odd seat split (combined column reported below).
+
+| Opponent | 5k updates | 10k updates | Δ |
+|----------|-----------:|------------:|---:|
+| random    | 79.5% ± 1.3% | **87.5% ± 2.3%** | +8.0 pp |
+| greedy    | 61.6% ± 1.5% | **79.5% ± 2.9%** | +17.9 pp |
+| heuristic | 28.6% ± 1.4% | **40.0% ± 3.5%** | +11.4 pp |
+
+5k → 10k extra updates moved all three baselines forward materially.
+Heuristic still wins (60/40), but the gap closed substantially. Strategic
+and the harder ladder (jidan, yaoji) are next once heuristic crosses 50%.

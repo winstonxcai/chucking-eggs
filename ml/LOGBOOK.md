@@ -3562,6 +3562,28 @@ crossing 50% vs heuristic.
 
 ---
 
+## 61. M1 oracle — WR vs M0 oracle (2026-05-09)
+
+Run: `m1_oracle_l4_10k` (M1 transformer history encoder, oracle, no-server, replay=1.0).
+500 games per opponent per checkpoint, 6 workers.
+
+| Opponent | M0 5k | **M1 5k** | M0 10k | **M1 10k** |
+|----------|------:|----------:|-------:|-----------:|
+| random    | 79.5% | 78.8% | 89.8% | 90.4% |
+| greedy    | 61.6% | 61.2% | 78.1% | 77.6% |
+| heuristic | 28.6% | 26.0% | 42.6% | 38.8% |
+
+All differences within the ±2 pp noise floor — M1 is statistically tied with M0
+at both checkpoints. Combined with M1's ~30% lower CPU throughput (~5.7k vs ~8k
+samp/s on matched hosts, or ~4.3k vs ~5k on slow hosts), the transformer
+history encoder offers no benefit at this scale.
+
+**Verdict:** M0 LSTM wins on cost-efficiency. M1 ablation closed. Future
+architecture work should focus on the role-aware shared trunk (M3) or
+larger network capacity rather than the history encoder type.
+
+---
+
 ## 60. Modal L4 cost (2026-05-09)
 
 Confirmed actual billing rate: **$2.89/hr** for an L4 GPU + 32 vCPU + 64 GB

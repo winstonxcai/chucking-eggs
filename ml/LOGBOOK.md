@@ -3559,3 +3559,22 @@ Steady gains continue but slow: greedy +4.9 pp over 10k→20k (vs +16.5 pp
 for 5k→10k). Random plateauing near ceiling (~93%). Heuristic rising ~1 pp
 per 5k updates post-10k — still winning 53/47 at 20k. Next milestone is
 crossing 50% vs heuristic.
+
+---
+
+## 60. Modal L4 cost (2026-05-09)
+
+Confirmed actual billing rate: **$2.89/hr** for an L4 GPU + 32 vCPU + 64 GB
+RAM function on the `caiw` Modal account.
+
+Reference costs at steady-state throughput (~1 upd/s at batch=4096):
+
+| Run length | Wall time | Cost |
+|-----------|-----------|------|
+| 5k updates | ~1.4h | ~$4.00 |
+| 10k updates | ~2.8h | ~$8.10 |
+| 20k updates | ~5.6h | ~$16.20 |
+| 6h cap (max) | 6.0h | ~$17.34 |
+
+Faster hosts (~2 upd/s, as seen in the 10k–20k M0 resume) halve the wall
+time and cost. Host variance is significant — plan for the slow case.

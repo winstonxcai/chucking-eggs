@@ -55,9 +55,9 @@ gamma: 1.0
 batch_size: 4096
 buffer_capacity_per_player: 100000
 buffer_min_size: 5000
-epsilon_start: 0.1
-epsilon_final: 0.01
-epsilon_decay_updates: 5000
+epsilon_start: 0.05
+epsilon_final: 0.05
+epsilon_decay_updates: 0
 use_oracle_others_hand: false
 
 # L4 throughput

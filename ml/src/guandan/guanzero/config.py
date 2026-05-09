@@ -86,7 +86,8 @@ _EPSILON_FLAT_MAP: dict[str, str] = {
     "epsilon_start":          "start",
     "epsilon_final":          "final",
     "epsilon_decay_updates":  "decay_updates",
-    "epsilon_decay_episodes": "decay_updates",  # backward compat alias
+    "epsilon_decay_episodes": "decay_updates",  # backward compat YAML alias
+    "decay_episodes":         "decay_updates",  # backward compat nested-dict alias (old checkpoints)
 }
 
 # Flat YAML key → InferenceConfig field name
@@ -154,7 +155,8 @@ class TrainConfig:
 
     # ── Distributed actor-learner ────────────────────────────
     n_actors: int = 1
-    sync_interval_episodes: int = 20
+    sync_interval_episodes: int = 20      # how often actors check `latest.txt` for new weights
+    max_version_lag_updates: int = 0      # only reload weights when ≥N updates behind (0 = always)
     actor_push_batch_size: int = 512
     sample_queue_maxsize: int = 64
     max_drain_batches_per_loop: int = 32
@@ -226,7 +228,8 @@ class TrainConfig:
                 elif k in _INFERENCE_FLAT_MAP:
                     inference_kw[_INFERENCE_FLAT_MAP[k]] = v
             if isinstance(d.get("epsilon"), dict):
-                epsilon_kw.update(d["epsilon"])
+                for k, v in d["epsilon"].items():
+                    epsilon_kw[_EPSILON_FLAT_MAP.get(k, k)] = v
             if isinstance(d.get("inference"), dict):
                 inference_kw.update(d["inference"])
             epsilon   = EpsilonConfig(**epsilon_kw)

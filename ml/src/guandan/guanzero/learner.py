@@ -267,7 +267,7 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int, updates: int =
     os.replace(tmp, final)                     # atomic on POSIX + macOS
 
     ver_tmp = weight_dir / "latest.tmp"
-    ver_tmp.write_text(str(version))
+    ver_tmp.write_text(f"{version} {updates}")
     os.replace(ver_tmp, weight_dir / "latest.txt")  # atomic
 
     # Clean up all prior weight files — only the current version is needed.
@@ -299,7 +299,7 @@ def publish_weights_shared(q_net: SharedHeadQNet, weight_dir: Path, version: int
     os.replace(tmp, final)
 
     ver_tmp = weight_dir / "latest.tmp"
-    ver_tmp.write_text(str(version))
+    ver_tmp.write_text(f"{version} {updates}")
     os.replace(ver_tmp, weight_dir / "latest.txt")
 
     for stale in weight_dir.glob("weights_*.pt"):
@@ -309,17 +309,36 @@ def publish_weights_shared(q_net: SharedHeadQNet, weight_dir: Path, version: int
         stale.unlink(missing_ok=True)
 
 
+def read_latest_metadata(weight_dir: Path) -> tuple[int, int] | None:
+    """Cheaply read (version, updates) from ``latest.txt`` without torch.load.
+
+    Returns ``None`` if no published weights yet, or the file is unreadable.
+    Format: ``"<version> <updates>"`` (post-2026-05). Falls back to bare int
+    for backward compatibility with old runs that wrote just the version.
+    """
+    ver_path = weight_dir / "latest.txt"
+    if not ver_path.exists():
+        return None
+    try:
+        parts = ver_path.read_text().strip().split()
+        version = int(parts[0])
+        updates = int(parts[1]) if len(parts) > 1 else 0
+        return version, updates
+    except (ValueError, IndexError):
+        return None
+
+
 def load_latest_weights(weight_dir: Path) -> WeightSnapshot | None:
     """Read the latest published version and state dicts.
 
     Returns ``None`` if weights have not been published yet or the latest
     snapshot is temporarily unreadable during an atomic replacement.
     """
-    ver_path = weight_dir / "latest.txt"
-    if not ver_path.exists():
+    meta = read_latest_metadata(weight_dir)
+    if meta is None:
         return None
+    version, _ = meta
     try:
-        version = int(ver_path.read_text().strip())
         payload = torch.load(
             weight_dir / f"weights_{version}.pt",
             map_location="cpu",
@@ -691,11 +710,16 @@ def _learner_loop_shared(
     logger.info("initial shared weights published (version %d)", version)
 
     t0 = time.time()
+    session_start_updates = total_updates
     drained_since_log = 0
     cumulative_drained = 0
     fresh_samples_total = 0
     last_log_t = t0
     last_log_updates = total_updates
+    last_log_fresh_samples = 0
+    ema_actor_rate = 0.0
+    n_throttle_sleeps = 0
+    throttle_sleep_total_s = 0.0
 
     while not stop_event.is_set():
         drained = 0
@@ -709,6 +733,23 @@ def _learner_loop_shared(
                 break
         drained_since_log += drained
         cumulative_drained += drained
+
+        if (
+            cfg.target_replay_ratio > 0
+            and total_updates > session_start_updates
+            and fresh_samples_total > 0
+        ):
+            session_uses = (total_updates - session_start_updates) * cfg.batch_size
+            cum_replay = session_uses / max(fresh_samples_total, 1)
+            if cum_replay > cfg.max_replay_ratio:
+                extra_fresh_needed = (session_uses / cfg.target_replay_ratio) - fresh_samples_total
+                if extra_fresh_needed > 0 and ema_actor_rate > 0:
+                    sleep_s = min(extra_fresh_needed / ema_actor_rate, cfg.max_throttle_sleep_s)
+                    if sleep_s > 0.001:
+                        time.sleep(sleep_s)
+                        n_throttle_sleeps += 1
+                        throttle_sleep_total_s += sleep_s
+                continue
 
         if min(buffer.size_by_seat().values()) >= max(cfg.buffer_min_size, cfg.batch_size // 4):
             metrics = learner.update(buffer=buffer, batch_size=cfg.batch_size)
@@ -735,6 +776,21 @@ def _learner_loop_shared(
             now = time.time()
             interval_dt = max(1e-6, now - last_log_t)
             interval_upd = total_updates - last_log_updates
+            interval_unique = fresh_samples_total - last_log_fresh_samples
+            interval_replay = (
+                (interval_upd * cfg.batch_size) / interval_unique
+                if interval_unique > 0 else float("inf")
+            )
+            session_updates = total_updates - session_start_updates
+            cum_replay = (
+                (session_updates * cfg.batch_size) / fresh_samples_total
+                if fresh_samples_total > 0 else float("inf")
+            )
+            interval_actor_rate = interval_unique / interval_dt if interval_dt > 0 else 0.0
+            if ema_actor_rate <= 0:
+                ema_actor_rate = interval_actor_rate
+            else:
+                ema_actor_rate = 0.5 * ema_actor_rate + 0.5 * interval_actor_rate
             row = {
                 "updates": total_updates,
                 "version": version,
@@ -748,6 +804,11 @@ def _learner_loop_shared(
                 "drained_since_last_log": drained_since_log,
                 "cumulative_drained": cumulative_drained,
                 "fresh_samples_total": fresh_samples_total,
+                "actor_rate_samp_per_sec": round(ema_actor_rate, 1),
+                "replay_interval": round(interval_replay, 2) if interval_replay != float("inf") else None,
+                "replay_cumulative": round(cum_replay, 2) if cum_replay != float("inf") else None,
+                "throttle_sleeps": n_throttle_sleeps,
+                "throttle_sleep_s": round(throttle_sleep_total_s, 2),
             }
             with metrics_path.open("a") as f:
                 f.write(json.dumps(row) + "\n")
@@ -763,6 +824,7 @@ def _learner_loop_shared(
             drained_since_log = 0
             last_log_t = now
             last_log_updates = total_updates
+            last_log_fresh_samples = fresh_samples_total
 
     if total_updates > 0:
         save_checkpoint_shared(

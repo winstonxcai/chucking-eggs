@@ -2,6 +2,7 @@
 
 n_actors: 32
 sync_interval_episodes: 20
+max_version_lag_updates: 1000   # actors only reload when ≥1000 updates stale (~12 min self-play diversity)
 actor_push_batch_size: 512
 sample_queue_maxsize: 64
 max_drain_batches_per_loop: 16

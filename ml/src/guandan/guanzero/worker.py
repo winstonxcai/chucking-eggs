@@ -25,17 +25,43 @@ def maybe_sync_weights_base(
     q_nets: dict,
     weight_dir: Path,
     local_version: int,
-) -> tuple[int, int]:
-    """Load newer weights if available; return (version, global_updates)."""
-    from .learner import load_latest_weights
+    local_updates: int = 0,
+    max_lag_updates: int = 0,
+) -> tuple[int, int, int]:
+    """Conditionally load newer weights; return (version, local_updates, global_updates).
+
+    Cheap path: reads only ``latest.txt`` to learn the latest published metadata.
+    Expensive ``torch.load`` is skipped when:
+      - the published version is not newer than ``local_version``, or
+      - ``max_lag_updates > 0`` and we are fewer than that many updates behind.
+
+    ``local_updates`` is the update count at which the *currently loaded* policy
+    was published; ``global_updates`` is the latest published count (used by the
+    actor for ε-schedule). They diverge when the lag gate defers a sync.
+    """
+    from .learner import read_latest_metadata, load_latest_weights
+
+    meta = read_latest_metadata(weight_dir)
+    if meta is None:
+        return local_version, local_updates, 0
+    latest_version, latest_updates = meta
+
+    # Already at this version → no work, but report fresh global_updates.
+    if latest_version <= local_version:
+        return local_version, local_updates, latest_updates
+
+    # Lag gate: defer load if not stale enough (skip on first sync where local_version=-1).
+    if max_lag_updates > 0 and local_version >= 0 \
+            and (latest_updates - local_updates) < max_lag_updates:
+        return local_version, local_updates, latest_updates
 
     snapshot = load_latest_weights(weight_dir)
     if snapshot is None or snapshot.version <= local_version:
-        return local_version, snapshot.updates if snapshot else 0
+        return local_version, local_updates, latest_updates
     for p in range(4):
         q_nets[p].load_state_dict(snapshot.state_dicts[p])
         q_nets[p].eval()
-    return snapshot.version, snapshot.updates
+    return snapshot.version, snapshot.updates, snapshot.updates
 
 
 maybe_sync_weights = maybe_sync_weights_base
@@ -45,16 +71,30 @@ def maybe_sync_weights_shared(
     q_net,
     weight_dir: Path,
     local_version: int,
-) -> tuple[int, int]:
-    """Load newer shared-head weights if available; return (version, global_updates)."""
-    from .learner import load_latest_weights
+    local_updates: int = 0,
+    max_lag_updates: int = 0,
+) -> tuple[int, int, int]:
+    """Conditionally load newer shared-head weights; return (version, local_updates, global_updates)."""
+    from .learner import read_latest_metadata, load_latest_weights
+
+    meta = read_latest_metadata(weight_dir)
+    if meta is None:
+        return local_version, local_updates, 0
+    latest_version, latest_updates = meta
+
+    if latest_version <= local_version:
+        return local_version, local_updates, latest_updates
+
+    if max_lag_updates > 0 and local_version >= 0 \
+            and (latest_updates - local_updates) < max_lag_updates:
+        return local_version, local_updates, latest_updates
 
     snapshot = load_latest_weights(weight_dir)
     if snapshot is None or snapshot.version <= local_version:
-        return local_version, snapshot.updates if snapshot else 0
+        return local_version, local_updates, latest_updates
     q_net.load_state_dict(snapshot.state_dicts["shared"])
     q_net.eval()
-    return snapshot.version, snapshot.updates
+    return snapshot.version, snapshot.updates, snapshot.updates
 
 
 def actor_loop(
@@ -108,7 +148,8 @@ def actor_loop(
     weight_dir    = Path(weight_dir)
     run_dir       = Path(run_dir) if run_dir is not None else None
     local_version  = -1
-    global_updates = 0
+    local_updates  = 0   # update count of the policy actor currently holds
+    global_updates = 0   # latest published update count (for ε-schedule)
     episode_count  = 0
     # Pre-stacked accumulator: keep raw encoded dicts and stack at push-time.
     # One pickle of 9 contiguous arrays is ~6× faster to unpickle than 512 dicts
@@ -154,9 +195,13 @@ def actor_loop(
         if q_nets is not None and episode_count % cfg.sync_interval_episodes == 0:
             with prof.time("weight_sync"):
                 if shared_path:
-                    local_version, global_updates = maybe_sync_weights_shared(q_nets, weight_dir, local_version)
+                    local_version, local_updates, global_updates = maybe_sync_weights_shared(
+                        q_nets, weight_dir, local_version, local_updates, cfg.max_version_lag_updates,
+                    )
                 else:
-                    local_version, global_updates = maybe_sync_weights_base(q_nets, weight_dir, local_version)
+                    local_version, local_updates, global_updates = maybe_sync_weights_base(
+                        q_nets, weight_dir, local_version, local_updates, cfg.max_version_lag_updates,
+                    )
 
         eps = epsilon_linear(global_updates, cfg.epsilon)
 

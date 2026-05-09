@@ -79,6 +79,8 @@ _REMOVED_FIELDS: frozenset[str] = frozenset({
     "max_legal_actions",
     "env_lanes_per_actor",
     "compile_actor",
+    "sync_interval_episodes",   # replaced by sync_interval_updates (different semantic, similar magnitude)
+    "max_version_lag_updates",  # consolidated into sync_interval_updates
 })
 
 # Flat YAML key → EpsilonConfig field name
@@ -155,8 +157,7 @@ class TrainConfig:
 
     # ── Distributed actor-learner ────────────────────────────
     n_actors: int = 1
-    sync_interval_episodes: int = 20      # how often actors check `latest.txt` for new weights
-    max_version_lag_updates: int = 0      # only reload weights when ≥N updates behind (0 = always)
+    sync_interval_updates: int = 20       # actor reloads weights when ≥N learner updates behind
     actor_push_batch_size: int = 512
     sample_queue_maxsize: int = 64
     max_drain_batches_per_loop: int = 32

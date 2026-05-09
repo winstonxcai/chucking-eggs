@@ -5,7 +5,7 @@
 # Throughput metric is samples/sec (batch-size-independent).
 
 n_actors: 32
-sync_interval_episodes: 20
+sync_interval_updates: 20
 actor_push_batch_size: 512
 sample_queue_maxsize: 64
 max_drain_batches_per_loop: 16

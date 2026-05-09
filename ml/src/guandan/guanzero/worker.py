@@ -26,18 +26,18 @@ def maybe_sync_weights_base(
     weight_dir: Path,
     local_version: int,
     local_updates: int = 0,
-    max_lag_updates: int = 0,
+    sync_interval_updates: int = 0,
 ) -> tuple[int, int, int]:
     """Conditionally load newer weights; return (version, local_updates, global_updates).
 
     Cheap path: reads only ``latest.txt`` to learn the latest published metadata.
-    Expensive ``torch.load`` is skipped when:
-      - the published version is not newer than ``local_version``, or
-      - ``max_lag_updates > 0`` and we are fewer than that many updates behind.
+    Expensive ``torch.load`` happens only when the actor is at least
+    ``sync_interval_updates`` learner updates behind the latest publish.
+    First sync (``local_version=-1``) always loads regardless of the threshold.
 
     ``local_updates`` is the update count at which the *currently loaded* policy
     was published; ``global_updates`` is the latest published count (used by the
-    actor for ε-schedule). They diverge when the lag gate defers a sync.
+    actor for ε-schedule). They diverge whenever the gate defers a load.
     """
     from .learner import read_latest_metadata, load_latest_weights
 
@@ -50,9 +50,9 @@ def maybe_sync_weights_base(
     if latest_version <= local_version:
         return local_version, local_updates, latest_updates
 
-    # Lag gate: defer load if not stale enough (skip on first sync where local_version=-1).
-    if max_lag_updates > 0 and local_version >= 0 \
-            and (latest_updates - local_updates) < max_lag_updates:
+    # Update-lag gate: defer load until far enough behind (always sync on first call).
+    if local_version >= 0 and sync_interval_updates > 0 \
+            and (latest_updates - local_updates) < sync_interval_updates:
         return local_version, local_updates, latest_updates
 
     snapshot = load_latest_weights(weight_dir)
@@ -72,7 +72,7 @@ def maybe_sync_weights_shared(
     weight_dir: Path,
     local_version: int,
     local_updates: int = 0,
-    max_lag_updates: int = 0,
+    sync_interval_updates: int = 0,
 ) -> tuple[int, int, int]:
     """Conditionally load newer shared-head weights; return (version, local_updates, global_updates)."""
     from .learner import read_latest_metadata, load_latest_weights
@@ -85,8 +85,8 @@ def maybe_sync_weights_shared(
     if latest_version <= local_version:
         return local_version, local_updates, latest_updates
 
-    if max_lag_updates > 0 and local_version >= 0 \
-            and (latest_updates - local_updates) < max_lag_updates:
+    if local_version >= 0 and sync_interval_updates > 0 \
+            and (latest_updates - local_updates) < sync_interval_updates:
         return local_version, local_updates, latest_updates
 
     snapshot = load_latest_weights(weight_dir)
@@ -190,17 +190,17 @@ def actor_loop(
 
     n_inference_timeouts = 0
     while not stop_event.is_set():
-        # Periodic weight sync — only on the local-CPU path; the inference
-        # server handles its own weight refresh.
-        if q_nets is not None and episode_count % cfg.sync_interval_episodes == 0:
+        # Weight sync — cheap metadata read every iteration (~10 bytes from latest.txt);
+        # torch.load only fires when actor is sync_interval_updates+ behind the learner.
+        if q_nets is not None:
             with prof.time("weight_sync"):
                 if shared_path:
                     local_version, local_updates, global_updates = maybe_sync_weights_shared(
-                        q_nets, weight_dir, local_version, local_updates, cfg.max_version_lag_updates,
+                        q_nets, weight_dir, local_version, local_updates, cfg.sync_interval_updates,
                     )
                 else:
                     local_version, local_updates, global_updates = maybe_sync_weights_base(
-                        q_nets, weight_dir, local_version, local_updates, cfg.max_version_lag_updates,
+                        q_nets, weight_dir, local_version, local_updates, cfg.sync_interval_updates,
                     )
 
         eps = epsilon_linear(global_updates, cfg.epsilon)

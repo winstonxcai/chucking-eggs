@@ -3606,7 +3606,7 @@ role-aware shared trunk is the next primary architecture track.
 
 ---
 
-## 62. M3 lag-gated self-play diversity — breaks the strong-bot plateau (2026-05-09)
+## 62. M3 lag-gated self-play — one-shot gain at 20k, regression past it (2026-05-09 → 05-10)
 
 After observing M3 stalled past 5k against strong bots (strategic regressed
 −4.1 pp from 5k→10k while saturating against weak bots), hypothesized the
@@ -3622,57 +3622,50 @@ sync_interval_updates: 1000   # ≈12 min between actor reloads at ~1.4 upd/s
 sync_jitter_updates: 200      # 32 actor thresholds spread across [800, 1200]
 ```
 
-Actors now hold heterogeneous, slightly-stale policies. The buffer mixes
-samples from versions ~800–1200 updates apart, providing implicit population-
-based diversity without any explicit league code.
+Actors hold heterogeneous, slightly-stale policies. The buffer mixes samples
+from versions ~800–1200 updates apart, providing implicit population-based
+diversity without any explicit league code.
 
-**Run:** `guanzero_m3_10k_no_server` resumed from 10k → 20k with the new sync
+**Run:** `guanzero_m3_10k_no_server` resumed from 10k → 35k with the new sync
 gate active. 1000 games per opponent, 8 workers.
 
-| Opponent  | M3 5k | M3 10k | **M3 15k** | **M3 20k** | Δ 10k→20k |
-|-----------|------:|-------:|-----------:|-----------:|----------:|
-| random    | 99.6% | 99.5% | 99.1% | 98.9% | −0.6 |
-| greedy    | 98.0% | 98.5% | 98.5% | 98.8% | +0.3 |
-| heuristic | 87.6% | 88.1% | 88.8% | 87.6% | −0.5 |
-| xingdream | 86.1% | 87.8% | 90.4% | **90.8%** | **+3.0** |
-| strategic | 68.0% | 63.9% | 65.8% | 63.6% | −0.3 |
-| yaoji     | 42.1% | 41.6% | 43.0% | **44.6%** | **+3.0** |
-| jidan     | 45.8% | 44.5% | 48.9% | **51.1%** | **+6.6** |
+| Opponent  | M3 5k | M3 10k | M3 15k | **M3 20k** | M3 25k | M3 30k | M3 35k | Δ 20k→35k |
+|-----------|------:|-------:|-------:|-----------:|-------:|-------:|-------:|----------:|
+| random    | 99.6% | 99.5% | 99.1% | 98.9% | 99.6% | 99.2% | 98.8% | −0.1 |
+| greedy    | 98.0% | 98.5% | 98.5% | 98.8% | 98.2% | 97.4% | 97.5% | −1.3 |
+| heuristic | 87.6% | 88.1% | 88.8% | 87.6% | 89.2% | 86.9% | 85.1% | **−2.5** |
+| xingdream | 86.1% | 87.8% | 90.4% | **90.8%** | 89.3% | 88.7% | 90.3% | −0.5 |
+| strategic | **68.0%** | 63.9% | 65.8% | 63.6% | 65.1% | 63.3% | 60.0% | **−3.6** |
+| yaoji     | 42.1% | 41.6% | 43.0% | **44.6%** | 43.6% | 41.4% | 41.8% | **−2.8** |
+| jidan     | 45.8% | 44.5% | 48.9% | **51.1%** | 50.2% | 48.7% | 47.9% | **−3.2** |
 
-**Headline: jidan crossed 50% for the first time** (44.5 → 51.1). yaoji and
-xingdream both gained +3 pp. Strategic remains the holdout (still oscillating
-around 64–66%), but is no longer regressing.
+**Phase 1 (10k→20k): gain real.** jidan crossed 50% for the first time (+6.6 pp),
+yaoji +3.0, xingdream +3.0. The lag-gate diversity unlocked something.
 
-The hypothesis is confirmed: training past 5k *was* gaining real signal, but
-the ε=0.05 self-play distribution was too narrow for that signal to generalize
-to opponents who play differently. Once the buffer carries policy diversity,
-the network learns more robust Q-values that transfer.
+**Phase 2 (20k→35k): full reversal.** Sustained downward drift on every
+strong bot. strategic dropped to 60% (−3.6 from 20k, lowest since 5k).
+heuristic down 2.5 pp from peak. jidan, yaoji, xingdream all retreated to
+roughly the M3-10k level — wiping out the gains.
 
-**Throughput bonus:** the cheap `latest.txt` metadata read replaced the per-
-sync `torch.load`. Actors now skip the expensive load 99% of the time. Resume
-phase ran at ~2.7 upd/s vs the original 0–10k phase's ~1.4 upd/s — **roughly
-+90% throughput** on the same hardware (partly host variance, partly the
-sync optimization).
+The hypothesis (self-play distribution ceiling) was right about the *cause*
+of the early plateau, but the lag-gate was a one-shot fix, not a sustained
+solution. Mechanism: at 10k, the actors held a wide spread of policy snapshots
+(checkpoints from earlier training). As training continued, all actors
+converged toward the same fixed point, and the [800, 1200] update lag started
+sampling from a much narrower policy distribution. Diversity decayed; over-
+fitting resumed.
 
-**Verdict:** M3 with lag-gated self-play is now the production track. Next:
-push to 30k+ with this config and see whether strategic finally breaks loose,
-and whether jidan/yaoji keep climbing.
+**Throughput bonus (still real):** the cheap `latest.txt` metadata read
+replaced the per-sync `torch.load`. Actors now skip the expensive load 99%
+of the time. Resume phase ran at ~2.7 upd/s vs the original 0–10k phase's
+~1.4 upd/s — **roughly +90% throughput** on the same hardware (partly host
+variance, partly the sync optimization). Wall time for 10k updates: 1.0 hr
+vs 1.6 hr.
+
+**Verdict:** **M3 20k is the production checkpoint.** Training past 20k with
+this config is wasted compute and damages strong-bot WR. The 40k run was
+killed at ~20k after these results came in. Next experiment must change the
+opponent distribution itself, not just the policy lag — true mixed-opponent
+training, league play, or PBT. Update-count alone is not the lever.
 
 ---
-
-## 60. Modal L4 cost (2026-05-09)
-
-Confirmed actual billing rate: **$2.89/hr** for an L4 GPU + 32 vCPU + 64 GB
-RAM function on the `caiw` Modal account.
-
-Reference costs at steady-state throughput (~1 upd/s at batch=4096):
-
-| Run length | Wall time | Cost |
-|-----------|-----------|------|
-| 5k updates | ~1.4h | ~$4.00 |
-| 10k updates | ~2.8h | ~$8.10 |
-| 20k updates | ~5.6h | ~$16.20 |
-| 6h cap (max) | 6.0h | ~$17.34 |
-
-Faster hosts (~2 upd/s, as seen in the 10k–20k M0 resume) halve the wall
-time and cost. Host variance is significant — plan for the slow case.

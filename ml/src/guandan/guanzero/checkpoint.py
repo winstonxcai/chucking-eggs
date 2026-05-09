@@ -21,6 +21,16 @@ def unwrap_compiled(net: torch.nn.Module) -> torch.nn.Module:
     return getattr(net, "_orig_mod", net)
 
 
+def migrate_state_dict(sd: dict) -> dict:
+    """Rename pre-M1 keys so old checkpoints load under the current architecture."""
+    # Pre-M1 used `history_lstm.*`; M1 nests the LSTM under `history_module.lstm.*`.
+    return {
+        k.replace("history_lstm.", "history_module.lstm.", 1)
+        if k.startswith("history_lstm.") else k: v
+        for k, v in sd.items()
+    }
+
+
 def save_checkpoint(
     path: Path,
     q_nets: dict[int, Any],
@@ -64,4 +74,4 @@ class WeightSnapshot:
     state_dicts: dict[int, dict]
 
 
-__all__ = ["save_checkpoint", "load_checkpoint", "unwrap_compiled", "WeightSnapshot"]
+__all__ = ["save_checkpoint", "load_checkpoint", "unwrap_compiled", "migrate_state_dict", "WeightSnapshot"]

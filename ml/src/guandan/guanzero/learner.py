@@ -24,7 +24,7 @@ import torch
 import torch.nn.functional as F
 
 from .buffer import ReplayBuffer
-from .checkpoint import save_checkpoint, unwrap_compiled
+from .checkpoint import WeightSnapshot, migrate_state_dict, save_checkpoint, unwrap_compiled
 from .profiler import PhaseProfiler
 from .q_network import GuanZeroQNet, init_seat_nets
 
@@ -197,14 +197,15 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int) -> None:
         stale.unlink(missing_ok=True)
 
 
-def load_latest_weights(weight_dir: Path) -> tuple[int, dict] | tuple[None, None]:
-    """Read the latest published version + state_dicts.
+def load_latest_weights(weight_dir: Path) -> WeightSnapshot | None:
+    """Read the latest published version and state dicts.
 
-    Returns ``(None, None)`` if weights have not been published yet.
+    Returns ``None`` if weights have not been published yet or the latest
+    snapshot is temporarily unreadable during an atomic replacement.
     """
     ver_path = weight_dir / "latest.txt"
     if not ver_path.exists():
-        return None, None
+        return None
     try:
         version = int(ver_path.read_text().strip())
         payload = torch.load(
@@ -212,9 +213,12 @@ def load_latest_weights(weight_dir: Path) -> tuple[int, dict] | tuple[None, None
             map_location="cpu",
             weights_only=True,
         )
-        return payload["version"], payload["state_dicts"]
+        return WeightSnapshot(
+            version=int(payload["version"]),
+            state_dicts=payload["state_dicts"],
+        )
     except Exception:
-        return None, None
+        return None
 
 
 # ─── Learner process entry-point ──────────────────────────
@@ -280,8 +284,11 @@ def learner_loop(
         # serializes them. "default" + streams gave the best throughput.
         compile_mode = "default"
         logger.info("compile_mode downgraded reduce-overhead→default for multi-stream positions")
-    for p, net in q_nets.items():
-        q_nets[p] = torch.compile(net, mode=compile_mode)
+    if cfg.device == "cuda":
+        for p, net in q_nets.items():
+            q_nets[p] = torch.compile(net, mode=compile_mode)
+    else:
+        logger.info("torch.compile disabled for learner device=%s", cfg.device)
     learner = Learner(q_nets=q_nets, lr=cfg.lr, device=cfg.device,
                       use_bf16=cfg.use_bf16_learner,
                       max_grad_norm=cfg.max_grad_norm)
@@ -297,7 +304,7 @@ def learner_loop(
     if resume_checkpoint is not None:
         ckpt = torch.load(Path(resume_checkpoint), map_location="cpu", weights_only=True)
         for p in range(4):
-            q_nets[p].load_state_dict(ckpt["q_nets"][p])
+            unwrap_compiled(q_nets[p]).load_state_dict(migrate_state_dict(ckpt["q_nets"][p]))
         total_updates = int(ckpt.get("episode", 0))
         version       = total_updates // cfg.publish_interval_updates
         logger.info("resumed from %s  (total_updates=%d)", resume_checkpoint, total_updates)

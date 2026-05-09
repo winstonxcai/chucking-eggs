@@ -16,7 +16,8 @@ import torch
 from ..agents.base import Agent
 from ..combos import Combo
 from ..game import GuanDanEnv
-from .buffer import collate_encoded
+from .buffer import collate_grouped_encoded
+from .checkpoint import migrate_state_dict
 from .config import TrainConfig
 from .encoder import StateActionEncoder
 from .legal_utils import dedup_strategic
@@ -40,7 +41,7 @@ class GuanZeroBot(Agent):
         cfg = TrainConfig.from_flat_dict(ckpt["config"])
         q_nets = init_seat_nets(cfg.qnet)
         for p in range(4):
-            q_nets[p].load_state_dict(ckpt["q_nets"][p])
+            q_nets[p].load_state_dict(migrate_state_dict(ckpt["q_nets"][p]))
         encoder = StateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
         return cls(q_nets=q_nets, encoder=encoder, device=device)
 
@@ -48,8 +49,11 @@ class GuanZeroBot(Agent):
     def act(self, env: GuanDanEnv, player: int) -> Combo:
         legal = dedup_strategic(env.legal_moves(player))
         encoded = self.encoder.encode_all(env, player, legal)
-        batch = collate_encoded(encoded, device=self.device)
-        q = self.q_nets[player](batch)
+        state_batch, action_batch, repeats = collate_grouped_encoded(
+            [encoded],
+            device=self.device,
+        )
+        q = self.q_nets[player].forward_grouped(state_batch, action_batch, repeats)
         return legal[int(q.argmax().item())]
 
 

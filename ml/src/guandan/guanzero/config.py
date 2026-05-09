@@ -47,7 +47,7 @@ class EpsilonConfig:
     """Parameters for the linear epsilon-greedy decay schedule."""
     start: float = 0.1
     final: float = 0.01
-    decay_episodes: int = 15_000
+    decay_updates: int = 5_000
 
 
 @dataclasses.dataclass(frozen=True)
@@ -85,7 +85,8 @@ _REMOVED_FIELDS: frozenset[str] = frozenset({
 _EPSILON_FLAT_MAP: dict[str, str] = {
     "epsilon_start":          "start",
     "epsilon_final":          "final",
-    "epsilon_decay_episodes": "decay_episodes",
+    "epsilon_decay_updates":  "decay_updates",
+    "epsilon_decay_episodes": "decay_updates",  # backward compat alias
 }
 
 # Flat YAML key → InferenceConfig field name
@@ -127,6 +128,7 @@ class TrainConfig:
     inference: InferenceConfig = dataclasses.field(default_factory=InferenceConfig)
 
     # ── Core hypers ─────────────────────────────────────────
+    model_type: str = "seat_nets"
     seed: int = 0
     gamma: float = 1.0
     batch_size: int = 512
@@ -135,7 +137,16 @@ class TrainConfig:
 
     # ── Buffer ──────────────────────────────────────────────
     buffer_capacity_per_player: int = 50_000
+    buffer_capacity: int = 0
     buffer_min_size: int = 1_000
+
+    # ── Shared-head architecture ────────────────────────────
+    shared_head_role_d_model: int = 128
+    shared_head_history_hidden: int = 256
+    shared_head_global_hidden: int = 128
+    shared_head_action_hidden: int = 128
+    shared_head_trunk_hidden: int = 1024
+    shared_head_trunk_layers: int = 4
 
     # ── Runtime ─────────────────────────────────────────────
     device: str = "cpu"
@@ -161,6 +172,12 @@ class TrainConfig:
     target_replay_ratio: float = 0.0   # 0 = disabled
     max_replay_ratio: float = 4.0
     max_throttle_sleep_s: float = 0.05
+
+    def __post_init__(self) -> None:
+        if self.model_type not in ("seat_nets", "shared_heads"):
+            raise ValueError(
+                f"Unknown model_type {self.model_type!r}; expected 'seat_nets' or 'shared_heads'"
+            )
 
     @property
     def resolved_run_dir(self) -> str:
@@ -257,6 +274,21 @@ def load_config_from_yaml(path: str | Path) -> TrainConfig:
     return TrainConfig.from_flat_dict(raw)
 
 
+def shared_head_qnet_config(cfg: TrainConfig):
+    """Assemble SharedHeadQNetConfig from TrainConfig flat fields."""
+    from .q_network import SharedHeadQNetConfig
+
+    return SharedHeadQNetConfig(
+        role_d_model=cfg.shared_head_role_d_model,
+        history_hidden=cfg.shared_head_history_hidden,
+        global_hidden=cfg.shared_head_global_hidden,
+        action_hidden=cfg.shared_head_action_hidden,
+        trunk_hidden=cfg.shared_head_trunk_hidden,
+        trunk_layers=cfg.shared_head_trunk_layers,
+        dropout=cfg.qnet.dropout,
+    )
+
+
 def load_config_from_cli(
     yaml_path: str | Path | None,
     quick: bool,
@@ -284,6 +316,7 @@ __all__ = [
     "QNetConfig",
     "EpsilonConfig",
     "InferenceConfig",
+    "shared_head_qnet_config",
     "load_config_from_yaml",
     "load_config_from_cli",
 ]

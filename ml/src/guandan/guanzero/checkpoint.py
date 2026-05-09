@@ -1,7 +1,7 @@
 """Checkpoint I/O and weight-snapshot utilities.
 
 All code that reads or writes model state to disk lives here. Both the
-training entry point and the learner subprocess use ``save_checkpoint``;
+training entry point and the learner subprocess use ``save_checkpoint_base``;
 actors and the inference server use ``WeightSnapshot`` (via
 ``load_latest_weights`` in learner.py, which returns one of these).
 """
@@ -31,7 +31,7 @@ def migrate_state_dict(sd: dict) -> dict:
     }
 
 
-def save_checkpoint(
+def save_checkpoint_base(
     path: Path,
     q_nets: dict[int, Any],
     cfg: Any,
@@ -54,6 +54,27 @@ def save_checkpoint(
     )
 
 
+save_checkpoint = save_checkpoint_base
+
+
+def save_checkpoint_shared(
+    path: Path,
+    q_net: torch.nn.Module,
+    cfg: Any,
+    episode_or_update: int,
+) -> None:
+    """Save shared-head Q-net state dict + config to ``path``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "episode": episode_or_update,
+            "config": dataclasses.asdict(cfg),
+            "q_net": unwrap_compiled(q_net).state_dict(),
+        },
+        path,
+    )
+
+
 def load_checkpoint(path: Path | str) -> dict:
     """Load and return the raw checkpoint dict from ``path``.
 
@@ -71,7 +92,16 @@ class WeightSnapshot:
     ``maybe_sync_weights``) and the inference server (disk-poll refresh thread).
     """
     version: int
-    state_dicts: dict[int, dict]
+    state_dicts: dict[int | str, dict]
+    updates: int = 0  # learner update count at publish time; used by actors for epsilon decay
 
 
-__all__ = ["save_checkpoint", "load_checkpoint", "unwrap_compiled", "migrate_state_dict", "WeightSnapshot"]
+__all__ = [
+    "save_checkpoint_base",
+    "save_checkpoint",
+    "save_checkpoint_shared",
+    "load_checkpoint",
+    "unwrap_compiled",
+    "migrate_state_dict",
+    "WeightSnapshot",
+]

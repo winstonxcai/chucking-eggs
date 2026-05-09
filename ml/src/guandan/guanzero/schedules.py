@@ -9,11 +9,11 @@ from __future__ import annotations
 from .config import EpsilonConfig
 
 
-def epsilon_linear(episode: int, cfg: EpsilonConfig) -> float:
-    """Linear decay from ``cfg.start`` to ``cfg.final`` over ``cfg.decay_episodes``."""
-    if cfg.decay_episodes <= 0:
+def epsilon_linear(update: int, cfg: EpsilonConfig) -> float:
+    """Linear decay from ``cfg.start`` to ``cfg.final`` over ``cfg.decay_updates`` learner updates."""
+    if cfg.decay_updates <= 0:
         return cfg.final
-    frac = min(1.0, episode / cfg.decay_episodes)
+    frac = min(1.0, update / cfg.decay_updates)
     return cfg.start + frac * (cfg.final - cfg.start)
 
 

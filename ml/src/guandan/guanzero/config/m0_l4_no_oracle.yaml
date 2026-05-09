@@ -1,7 +1,7 @@
 # GuanZero — distributed actor-learner DMC, tuned for Modal L4 + 32 vCPU.
-# L4 at batch=4096 delivers ~2.7× the sample throughput of a local M1 Pro,
-# with paper-spec the system is actor-bound (CPU forward, ~3.8k samp/s).
-# L4 wins over A10G on $/M-samples since GPU is underutilized.
+# Identical to m0_l4_distributed.yaml except use_oracle_others_hand: false —
+# the agent gets no privileged info about which specific cards each opponent
+# holds. Used for ablating the oracle channel against a fair baseline.
 # Throughput metric is samples/sec (batch-size-independent).
 
 n_actors: 32
@@ -58,7 +58,7 @@ buffer_min_size: 5000
 epsilon_start: 0.1
 epsilon_final: 0.01
 epsilon_decay_updates: 5000
-use_oracle_others_hand: true
+use_oracle_others_hand: false
 
 # L4 throughput
 device: cuda

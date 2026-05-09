@@ -23,10 +23,16 @@ from typing import Mapping
 import torch
 import torch.nn.functional as F
 
-from .buffer import ReplayBuffer
-from .checkpoint import WeightSnapshot, migrate_state_dict, save_checkpoint, unwrap_compiled
+from .buffer import ReplayBuffer, RoleAwareReplayBuffer
+from .checkpoint import (
+    WeightSnapshot,
+    migrate_state_dict,
+    save_checkpoint_base,
+    save_checkpoint_shared,
+    unwrap_compiled,
+)
 from .profiler import PhaseProfiler
-from .q_network import GuanZeroQNet, init_seat_nets
+from .q_network import GuanZeroQNet, SharedHeadQNet, init_seat_nets
 
 
 # ─── Learner class (single-process) ──────────────────────
@@ -131,6 +137,80 @@ class Learner:
         return out
 
 
+def _grad_norm_of(module: torch.nn.Module) -> torch.Tensor:
+    total = torch.zeros((), device=next(module.parameters()).device)
+    for p in module.parameters():
+        if p.grad is not None:
+            total = total + p.grad.detach().norm().pow(2)
+    return total.sqrt()
+
+
+class SharedHeadLearner:
+    """Learner for a single SharedHeadQNet with one shared optimizer."""
+
+    def __init__(
+        self,
+        q_net: SharedHeadQNet,
+        lr: float = 1e-4,
+        device: torch.device | str = "cpu",
+        use_bf16: bool = False,
+        max_grad_norm: float = 10.0,
+    ) -> None:
+        self.device = torch.device(device)
+        self.q_net = q_net.to(self.device)
+        self.opt = torch.optim.Adam(self.q_net.parameters(), lr=lr, foreach=True)
+        self.use_bf16 = use_bf16 and self.device.type == "cuda"
+        self.max_grad_norm = max_grad_norm
+
+    def update(
+        self,
+        buffer: RoleAwareReplayBuffer,
+        batch_size: int,
+    ) -> dict[str, float] | None:
+        """One balanced gradient step, or None if any seat is cold."""
+        sizes = buffer.size_by_seat()
+        min_per_seat = batch_size // 4
+        if min(sizes.values()) < min_per_seat:
+            return None
+
+        batch, targets = buffer.sample_batch_balanced(batch_size, self.device)
+        seat_ids = batch["seat_id"].long()
+        self.q_net.train()
+        with torch.autocast(
+            device_type="cuda",
+            dtype=torch.bfloat16,
+            enabled=self.use_bf16,
+        ):
+            preds = self.q_net(batch)
+            loss = F.mse_loss(preds, targets)
+
+        self.opt.zero_grad(set_to_none=True)
+        loss.backward()
+        grad_norm_total = torch.nn.utils.clip_grad_norm_(
+            self.q_net.parameters(),
+            self.max_grad_norm,
+        )
+        self.opt.step()
+
+        with torch.no_grad():
+            metrics: dict[str, float] = {
+                "loss": float(loss.item()),
+                "grad_norm": float(grad_norm_total.item()),
+                "grad_norm_trunk": float(_grad_norm_of(self.q_net.trunk).item()),
+            }
+            for k in range(4):
+                mask = seat_ids == k
+                metrics[f"sample_count_seat_{k}"] = float(mask.sum().item())
+                if mask.any():
+                    seat_preds = preds[mask]
+                    seat_targets = targets[mask]
+                    metrics[f"loss_seat_{k}"] = float(F.mse_loss(seat_preds, seat_targets).item())
+                    metrics[f"q_mean_seat_{k}"] = float(seat_preds.mean().item())
+                    metrics[f"q_std_seat_{k}"] = float(seat_preds.std(unbiased=False).item())
+                metrics[f"grad_norm_head_{k}"] = float(_grad_norm_of(self.q_net.heads[k]).item())
+        return metrics
+
+
 # ─── Metrics row ─────────────────────────────────────────
 
 
@@ -161,7 +241,7 @@ class LearnerMetricsRow:
 # ─── Atomic weight publishing ─────────────────────────────
 
 
-def publish_weights(q_nets: dict, weight_dir: Path, version: int) -> None:
+def publish_weights(q_nets: dict, weight_dir: Path, version: int, updates: int = 0) -> None:
     """Atomically write global Q-net weights to disk.
 
     Actors poll ``weight_dir/latest.txt`` for the current version number,
@@ -175,6 +255,7 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int) -> None:
     torch.save(
         {
             "version": version,
+            "updates": updates,
             "state_dicts": {
                 p: {k: v.detach().cpu()
                     for k, v in unwrap_compiled(q_nets[p]).state_dict().items()}
@@ -190,6 +271,37 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int) -> None:
     os.replace(ver_tmp, weight_dir / "latest.txt")  # atomic
 
     # Clean up all prior weight files — only the current version is needed.
+    for stale in weight_dir.glob("weights_*.pt"):
+        if stale != final:
+            stale.unlink(missing_ok=True)
+    for stale in weight_dir.glob("weights_*.tmp"):
+        stale.unlink(missing_ok=True)
+
+
+def publish_weights_shared(q_net: SharedHeadQNet, weight_dir: Path, version: int, updates: int = 0) -> None:
+    """Atomically write one shared-head Q-net snapshot to disk."""
+    weight_dir.mkdir(parents=True, exist_ok=True)
+    tmp = weight_dir / f"weights_{version}.tmp"
+    final = weight_dir / f"weights_{version}.pt"
+    torch.save(
+        {
+            "version": version,
+            "updates": updates,
+            "state_dicts": {
+                "shared": {
+                    k: v.detach().cpu()
+                    for k, v in unwrap_compiled(q_net).state_dict().items()
+                }
+            },
+        },
+        tmp,
+    )
+    os.replace(tmp, final)
+
+    ver_tmp = weight_dir / "latest.tmp"
+    ver_tmp.write_text(str(version))
+    os.replace(ver_tmp, weight_dir / "latest.txt")
+
     for stale in weight_dir.glob("weights_*.pt"):
         if stale != final:
             stale.unlink(missing_ok=True)
@@ -216,6 +328,7 @@ def load_latest_weights(weight_dir: Path) -> WeightSnapshot | None:
         return WeightSnapshot(
             version=int(payload["version"]),
             state_dicts=payload["state_dicts"],
+            updates=int(payload.get("updates", 0)),
         )
     except Exception:
         return None
@@ -245,6 +358,16 @@ def learner_loop(
     from .config import TrainConfig
 
     cfg = TrainConfig.from_flat_dict(cfg_dict)
+    if cfg.model_type == "shared_heads":
+        _learner_loop_shared(
+            cfg=cfg,
+            sample_queue=sample_queue,
+            stop_event=stop_event,
+            weight_dir=weight_dir,
+            run_dir=run_dir,
+            resume_checkpoint=resume_checkpoint,
+        )
+        return
 
     run_dir    = Path(run_dir)
     weight_dir = Path(weight_dir)
@@ -310,7 +433,7 @@ def learner_loop(
         logger.info("resumed from %s  (total_updates=%d)", resume_checkpoint, total_updates)
 
     # Publish initial weights so actors can start immediately
-    publish_weights(q_nets, weight_dir, version)
+    publish_weights(q_nets, weight_dir, version, updates=total_updates)
     logger.info("initial weights published (version %d)", version)
 
     t0 = time.time()
@@ -388,13 +511,13 @@ def learner_loop(
         # 3. Publish updated weights periodically
         if total_updates % cfg.publish_interval_updates == 0:
             version += 1
-            publish_weights(q_nets, weight_dir, version)
+            publish_weights(q_nets, weight_dir, version, updates=total_updates)
             logger.debug("weights published version=%d", version)
 
         # 4. Checkpoint
         if total_updates % cfg.checkpoint_every_updates == 0:
             ckpt = run_dir / "checkpoints" / f"update_{total_updates:08d}.pt"
-            save_checkpoint(ckpt, q_nets, cfg, total_updates)
+            save_checkpoint_base(ckpt, q_nets, cfg, total_updates)
             logger.info("checkpoint → %s", ckpt)
 
         # 5. Metrics log
@@ -495,17 +618,168 @@ def learner_loop(
 
     # Final checkpoint on clean shutdown
     if total_updates > 0:
-        save_checkpoint(
+        save_checkpoint_base(
             run_dir / "checkpoints" / "final.pt",
             q_nets, cfg, total_updates,
         )
     logger.info("learner stopped after %d updates", total_updates)
 
 
+def _learner_loop_shared(
+    cfg,
+    sample_queue,
+    stop_event,
+    weight_dir: Path,
+    run_dir: Path,
+    resume_checkpoint: Path | None = None,
+) -> None:
+    """Central learner process for role-aware shared-head training."""
+    from .config import shared_head_qnet_config
+
+    if cfg.inference.enabled:
+        raise ValueError(
+            "Inference server not supported for model_type='shared_heads'. "
+            "Set use_inference_server: false in config."
+        )
+
+    run_dir = Path(run_dir)
+    weight_dir = Path(weight_dir)
+    log_path = run_dir / "learner.log"
+    logger = logging.getLogger("guanzero.learner")
+    logger.handlers.clear()
+    logger.setLevel(logging.DEBUG)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)-5s] %(message)s",
+                            datefmt="%Y-%m-%d %H:%M:%S")
+    fh = logging.FileHandler(log_path, mode="a")
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+    if os.environ.get("GUANZERO_STREAM_LOGS") == "1":
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setFormatter(fmt)
+        sh.setLevel(logging.INFO)
+        logger.addHandler(sh)
+
+    q_net = SharedHeadQNet(shared_head_qnet_config(cfg))
+    if cfg.device == "cuda":
+        compile_mode = cfg.compile_mode or "default"
+        q_net = torch.compile(q_net, mode=compile_mode)
+    learner = SharedHeadLearner(
+        q_net=q_net,
+        lr=cfg.lr,
+        device=cfg.device,
+        use_bf16=cfg.use_bf16_learner,
+        max_grad_norm=cfg.max_grad_norm,
+    )
+    capacity = cfg.buffer_capacity or 4 * cfg.buffer_capacity_per_player
+    buffer = RoleAwareReplayBuffer(capacity=capacity)
+
+    version = 0
+    total_updates = 0
+    last_metrics: dict[str, float] = {}
+    metrics_path = run_dir / "metrics_learner.jsonl"
+    last_ticked = -1
+
+    if resume_checkpoint is not None:
+        ckpt = torch.load(Path(resume_checkpoint), map_location="cpu", weights_only=True)
+        unwrap_compiled(q_net).load_state_dict(ckpt["q_net"])
+        total_updates = int(ckpt.get("episode", 0))
+        version = total_updates // cfg.publish_interval_updates
+        logger.info("resumed from %s  (total_updates=%d)", resume_checkpoint, total_updates)
+
+    publish_weights_shared(q_net, weight_dir, version, updates=total_updates)
+    logger.info("initial shared weights published (version %d)", version)
+
+    t0 = time.time()
+    drained_since_log = 0
+    cumulative_drained = 0
+    fresh_samples_total = 0
+    last_log_t = t0
+    last_log_updates = total_updates
+
+    while not stop_event.is_set():
+        drained = 0
+        while drained < cfg.max_drain_batches_per_loop:
+            try:
+                msg = sample_queue.get_nowait()
+                buffer.push_stacked(msg["stacked"], msg["returns"])
+                fresh_samples_total += len(msg["returns"])
+                drained += 1
+            except Exception:
+                break
+        drained_since_log += drained
+        cumulative_drained += drained
+
+        if min(buffer.size_by_seat().values()) >= max(cfg.buffer_min_size, cfg.batch_size // 4):
+            metrics = learner.update(buffer=buffer, batch_size=cfg.batch_size)
+            if metrics is not None:
+                last_metrics = metrics
+                total_updates += 1
+
+        if total_updates == last_ticked or total_updates == 0:
+            if drained == 0:
+                time.sleep(0.001)
+            continue
+        last_ticked = total_updates
+
+        if total_updates % cfg.publish_interval_updates == 0:
+            version += 1
+            publish_weights_shared(q_net, weight_dir, version, updates=total_updates)
+
+        if total_updates % cfg.checkpoint_every_updates == 0:
+            ckpt = run_dir / "checkpoints" / f"update_{total_updates:08d}.pt"
+            save_checkpoint_shared(ckpt, q_net, cfg, total_updates)
+            logger.info("checkpoint → %s", ckpt)
+
+        if total_updates % cfg.log_every_updates == 0:
+            now = time.time()
+            interval_dt = max(1e-6, now - last_log_t)
+            interval_upd = total_updates - last_log_updates
+            row = {
+                "updates": total_updates,
+                "version": version,
+                "buffer_total": buffer.size(),
+                "buffer_per_player": buffer.size_by_seat(),
+                "loss": {k: round(v, 6) for k, v in last_metrics.items()},
+                "elapsed_s": round(now - t0, 1),
+                "upd_per_sec": round(interval_upd / interval_dt, 3),
+                "samples_per_sec": round((interval_upd / interval_dt) * cfg.batch_size, 1),
+                "queue_depth": getattr(sample_queue, "qsize", lambda: -1)(),
+                "drained_since_last_log": drained_since_log,
+                "cumulative_drained": cumulative_drained,
+                "fresh_samples_total": fresh_samples_total,
+            }
+            with metrics_path.open("a") as f:
+                f.write(json.dumps(row) + "\n")
+            logger.info(
+                "updates=%d ver=%d buf=%d loss=%.4f %.2f upd/s drained=%d",
+                total_updates,
+                version,
+                buffer.size(),
+                last_metrics.get("loss", 0.0),
+                interval_upd / interval_dt,
+                drained_since_log,
+            )
+            drained_since_log = 0
+            last_log_t = now
+            last_log_updates = total_updates
+
+    if total_updates > 0:
+        save_checkpoint_shared(
+            run_dir / "checkpoints" / "final.pt",
+            q_net,
+            cfg,
+            total_updates,
+        )
+    logger.info("shared learner stopped after %d updates", total_updates)
+
+
 __all__ = [
     "Learner",
+    "SharedHeadLearner",
     "LearnerMetricsRow",
     "publish_weights",
+    "publish_weights_shared",
     "load_latest_weights",
     "learner_loop",
 ]

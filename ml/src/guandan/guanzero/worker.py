@@ -1,7 +1,7 @@
 """Persistent actor subprocess for distributed actor-learner DMC.
 
 ``actor_loop`` is the target function for spawned actor processes.
-``maybe_sync_weights`` is the non-blocking weight-sync helper.
+``maybe_sync_weights_base`` is the non-blocking weight-sync helper.
 """
 
 from __future__ import annotations
@@ -17,24 +17,44 @@ import torch
 
 from .actor import play_episode
 from .encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
+from .encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
 from .profiler import PhaseProfiler
 
 
-def maybe_sync_weights(
+def maybe_sync_weights_base(
     q_nets: dict,
     weight_dir: Path,
     local_version: int,
-) -> int:
-    """Load newer weights if available; return the effective version number."""
+) -> tuple[int, int]:
+    """Load newer weights if available; return (version, global_updates)."""
     from .learner import load_latest_weights
 
-    new_ver, state_dicts = load_latest_weights(weight_dir)
-    if new_ver is None or new_ver <= local_version:
-        return local_version
+    snapshot = load_latest_weights(weight_dir)
+    if snapshot is None or snapshot.version <= local_version:
+        return local_version, snapshot.updates if snapshot else 0
     for p in range(4):
-        q_nets[p].load_state_dict(state_dicts[p])
+        q_nets[p].load_state_dict(snapshot.state_dicts[p])
         q_nets[p].eval()
-    return new_ver
+    return snapshot.version, snapshot.updates
+
+
+maybe_sync_weights = maybe_sync_weights_base
+
+
+def maybe_sync_weights_shared(
+    q_net,
+    weight_dir: Path,
+    local_version: int,
+) -> tuple[int, int]:
+    """Load newer shared-head weights if available; return (version, global_updates)."""
+    from .learner import load_latest_weights
+
+    snapshot = load_latest_weights(weight_dir)
+    if snapshot is None or snapshot.version <= local_version:
+        return local_version, snapshot.updates if snapshot else 0
+    q_net.load_state_dict(snapshot.state_dicts["shared"])
+    q_net.eval()
+    return snapshot.version, snapshot.updates
 
 
 def actor_loop(
@@ -58,16 +78,27 @@ def actor_loop(
     # Lazy imports — spawned child re-imports the full package from scratch.
     from .config import TrainConfig
     from .schedules import epsilon_linear
+    from .q_network import SharedHeadQNet
     from .q_network import init_seat_nets
+    from .config import shared_head_qnet_config
 
     torch.set_num_threads(1)
 
     cfg = TrainConfig.from_flat_dict(cfg_dict)
+    if cfg.model_type == "shared_heads" and cfg.inference.enabled:
+        raise ValueError("Inference server not supported for model_type='shared_heads'.")
 
-    encoder = StateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
+    shared_path = cfg.model_type == "shared_heads"
+    if shared_path:
+        encoder = RoleAwareStateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
+    else:
+        encoder = StateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
 
     inference_client = _build_inference_client(actor_id, inference_args, cfg) if inference_args else None
-    if inference_client is None:
+    if shared_path:
+        q_nets = SharedHeadQNet(shared_head_qnet_config(cfg))
+        q_nets.eval()
+    elif inference_client is None:
         q_nets = init_seat_nets(cfg.qnet)
         for net in q_nets.values():
             net.eval()
@@ -76,8 +107,9 @@ def actor_loop(
 
     weight_dir    = Path(weight_dir)
     run_dir       = Path(run_dir) if run_dir is not None else None
-    local_version = -1
-    episode_count = 0
+    local_version  = -1
+    global_updates = 0
+    episode_count  = 0
     # Pre-stacked accumulator: keep raw encoded dicts and stack at push-time.
     # One pickle of 9 contiguous arrays is ~6× faster to unpickle than 512 dicts
     # of 9 small arrays each (measured: 3.81 ms → 0.63 ms per push).
@@ -96,14 +128,16 @@ def actor_loop(
         if len(buf_dicts) < cfg.actor_push_batch_size:
             return
         with prof.time("buffer_stack"):
-            stacked = {k: np.stack([d[k] for d in buf_dicts], axis=0) for k in ENCODE_CHANNEL_KEYS}
+            keys = ROLE_ENCODE_CHANNEL_KEYS if shared_path else ENCODE_CHANNEL_KEYS
+            stacked = {k: np.stack([d[k] for d in buf_dicts], axis=0) for k in keys}
             msg = {
                 "actor_id": actor_id,
                 "version":  local_version,
                 "stacked":  stacked,
-                "players":  np.asarray(buf_players, dtype=np.int8),
                 "returns":  np.asarray(buf_returns, dtype=np.float32),
             }
+            if not shared_path:
+                msg["players"] = np.asarray(buf_players, dtype=np.int8)
         with prof.time("queue_put"):
             try:
                 sample_queue.put(msg, timeout=5)
@@ -119,9 +153,12 @@ def actor_loop(
         # server handles its own weight refresh.
         if q_nets is not None and episode_count % cfg.sync_interval_episodes == 0:
             with prof.time("weight_sync"):
-                local_version = maybe_sync_weights(q_nets, weight_dir, local_version)
+                if shared_path:
+                    local_version, global_updates = maybe_sync_weights_shared(q_nets, weight_dir, local_version)
+                else:
+                    local_version, global_updates = maybe_sync_weights_base(q_nets, weight_dir, local_version)
 
-        eps = epsilon_linear(episode_count + actor_id, cfg.epsilon)
+        eps = epsilon_linear(global_updates, cfg.epsilon)
 
         seed = rng.randint(0, 10_000_000)
         try:
@@ -190,4 +227,9 @@ def _build_inference_client(actor_id: int, inference_args: dict, cfg) -> "object
     )
 
 
-__all__ = ["actor_loop", "maybe_sync_weights"]
+__all__ = [
+    "actor_loop",
+    "maybe_sync_weights_base",
+    "maybe_sync_weights",
+    "maybe_sync_weights_shared",
+]

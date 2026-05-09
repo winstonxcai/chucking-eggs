@@ -1,5 +1,5 @@
-# GuanZero M1 — Transformer + shared GPU inference server (bench variant).
-# Identical to m1_l4_no_server.yaml except use_inference_server: true.
+# GuanZero M1 — Transformer, no inference server (throughput bench variant).
+# Identical to m1_l4_distributed.yaml except use_inference_server: false.
 
 n_actors: 32
 sync_interval_episodes: 20
@@ -12,7 +12,7 @@ log_every_updates: 10
 updates_per_learner_step: 1
 
 # ── Shared-GPU inference ──
-use_inference_server: true
+use_inference_server: false
 inference_device: cuda
 inference_batch_max_requests: 32
 inference_batch_max_action_rows: 4096

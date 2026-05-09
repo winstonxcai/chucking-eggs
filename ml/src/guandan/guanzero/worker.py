@@ -159,6 +159,16 @@ def actor_loop(
     buf_returns: list[float] = []
     rng = random.Random(cfg.seed + actor_id * 10_000)
 
+    def _sample_sync_threshold() -> int:
+        """Per-actor sync threshold = sync_interval_updates ± sync_jitter_updates (uniform)."""
+        if cfg.sync_jitter_updates <= 0:
+            return cfg.sync_interval_updates
+        return cfg.sync_interval_updates + rng.randint(
+            -cfg.sync_jitter_updates, cfg.sync_jitter_updates,
+        )
+
+    sync_threshold = _sample_sync_threshold()
+
     profile_enabled = os.environ.get("GUANZERO_ACTOR_PROFILE") == "1"
     prof = PhaseProfiler(enabled=profile_enabled)
     prof_t_start = time.perf_counter()
@@ -191,17 +201,23 @@ def actor_loop(
     n_inference_timeouts = 0
     while not stop_event.is_set():
         # Weight sync — cheap metadata read every iteration (~10 bytes from latest.txt);
-        # torch.load only fires when actor is sync_interval_updates+ behind the learner.
+        # torch.load only fires when actor is sync_threshold+ updates behind the learner.
+        # Each actor's threshold is jittered ± sync_jitter_updates so the 32 actors
+        # don't all reload on the same publish cycle (smoother self-play diversity).
         if q_nets is not None:
+            prev_version = local_version
             with prof.time("weight_sync"):
                 if shared_path:
                     local_version, local_updates, global_updates = maybe_sync_weights_shared(
-                        q_nets, weight_dir, local_version, local_updates, cfg.sync_interval_updates,
+                        q_nets, weight_dir, local_version, local_updates, sync_threshold,
                     )
                 else:
                     local_version, local_updates, global_updates = maybe_sync_weights_base(
-                        q_nets, weight_dir, local_version, local_updates, cfg.sync_interval_updates,
+                        q_nets, weight_dir, local_version, local_updates, sync_threshold,
                     )
+            if local_version > prev_version:
+                # Just synced — draw a fresh threshold so the next reload is independently jittered.
+                sync_threshold = _sample_sync_threshold()
 
         eps = epsilon_linear(global_updates, cfg.epsilon)
 

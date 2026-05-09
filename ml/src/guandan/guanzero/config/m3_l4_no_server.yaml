@@ -1,7 +1,8 @@
 # GuanZero M3 - role-aware shared trunk + 4 heads, no inference server.
 
 n_actors: 32
-sync_interval_updates: 1000   # actors reload only when ≥1000 updates behind (≈12 min self-play diversity)
+sync_interval_updates: 1000   # actors reload when ≥threshold updates behind (≈12 min self-play diversity)
+sync_jitter_updates: 200      # per-actor uniform jitter; thresholds spread across [800, 1200]
 actor_push_batch_size: 512
 sample_queue_maxsize: 64
 max_drain_batches_per_loop: 16
@@ -28,7 +29,7 @@ inference_max_actions: 512
 inference_n_slots: 512
 
 target_replay_ratio: 1.0
-max_replay_ratio: 1.0
+max_replay_ratio: 1.5
 max_throttle_sleep_s: 0.05
 
 lr: 1.0e-4

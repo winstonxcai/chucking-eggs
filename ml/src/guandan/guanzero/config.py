@@ -158,6 +158,7 @@ class TrainConfig:
     # ── Distributed actor-learner ────────────────────────────
     n_actors: int = 1
     sync_interval_updates: int = 20       # actor reloads weights when ≥N learner updates behind
+    sync_jitter_updates: int = 0          # per-actor uniform jitter ±J around the threshold (0 = no jitter)
     actor_push_batch_size: int = 512
     sample_queue_maxsize: int = 64
     max_drain_batches_per_loop: int = 32

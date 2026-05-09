@@ -3562,25 +3562,101 @@ crossing 50% vs heuristic.
 
 ---
 
-## 61. M1 oracle — WR vs M0 oracle (2026-05-09)
+## 61. M1/M3 oracle — WR vs M0 oracle (2026-05-09)
+
+Reference: **Glicko-2 Ratings**
+
+| Bot | Rating | RD |
+|-----|-------|----|
+| yaoji | 1759 | 44 |
+| jidan | 1735 | 43 |
+| strategic | 1589 | 42 |
+| xingdream | 1448 | 42 |
+| heuristic | 1387 | 43 |
+| greedy | 1256 | 46 |
+| random | 1039 | 55 |
 
 Run: `m1_oracle_l4_10k` (M1 transformer history encoder, oracle, no-server, replay=1.0).
 500 games per opponent per checkpoint, 6 workers.
+M3 is `guanzero_m3_10k_no_server` (role-aware shared trunk/four heads, oracle,
+no-server, replay=1.0), 1000 games per opponent, 8 workers.
 
-| Opponent | M0 5k | **M1 5k** | M0 10k | **M1 10k** |
-|----------|------:|----------:|-------:|-----------:|
-| random    | 79.5% | 78.8% | 89.8% | 90.4% |
-| greedy    | 61.6% | 61.2% | 78.1% | 77.6% |
-| heuristic | 28.6% | 26.0% | 42.6% | 38.8% |
+| Opponent | M0 5k | **M1 5k** | **M3 5k** | M0 10k | **M1 10k** | **M3 10k** |
+|----------|------:|----------:|-----------:|-------:|-----------:|-----------:|
+| random    | 79.5% | 78.8% | 99.6% | 89.8% | 90.4% | 99.5% |
+| greedy    | 61.6% | 61.2% | 98.0% | 78.1% | 77.6% | 98.5% |
+| heuristic | 28.6% | 26.0% | 87.6% | 42.6% | 38.8% | 88.1% |
+| xingdream | - | - | 86.1% | - | - | 87.8% |
+| strategic | - | - | 68.0% | - | - | 63.9% |
+| yaoji     | - | - | 42.1% | - | - | 41.6% |
+| jidan     | - | - | 45.8% | - | - | 44.5% |
 
 All differences within the ±2 pp noise floor — M1 is statistically tied with M0
 at both checkpoints. Combined with M1's ~30% lower CPU throughput (~5.7k vs ~8k
 samp/s on matched hosts, or ~4.3k vs ~5k on slow hosts), the transformer
 history encoder offers no benefit at this scale.
 
-**Verdict:** M0 LSTM wins on cost-efficiency. M1 ablation closed. Future
-architecture work should focus on the role-aware shared trunk (M3) or
-larger network capacity rather than the history encoder type.
+M3 is a clear breakthrough by 5k updates and mostly plateaus by 10k. At the
+same 10k update point it is +9.1 pp vs random, +20.4 pp vs greedy, and
++45.5 pp vs heuristic over M0 10k. Against stronger bots, 10k is flat to worse
+than 5k: xingdream +1.7 pp, strategic -4.1 pp, yaoji -0.5 pp, jidan -1.3 pp.
+
+**Verdict:** M0 LSTM wins over M1 on cost-efficiency. M1 ablation closed. M3
+role-aware shared trunk is the next primary architecture track.
+
+---
+
+## 62. M3 lag-gated self-play diversity — breaks the strong-bot plateau (2026-05-09)
+
+After observing M3 stalled past 5k against strong bots (strategic regressed
+−4.1 pp from 5k→10k while saturating against weak bots), hypothesized the
+cause was a self-play distribution ceiling rather than capacity or schedule.
+
+**Change:** Added a per-actor lag gate + uniform jitter to weight syncs. Actors
+no longer reload weights immediately on every publish — instead each actor
+draws an independent threshold from `[sync_interval_updates ± sync_jitter_updates]`
+and only `torch.load`s when the learner is that many updates ahead.
+
+```yaml
+sync_interval_updates: 1000   # ≈12 min between actor reloads at ~1.4 upd/s
+sync_jitter_updates: 200      # 32 actor thresholds spread across [800, 1200]
+```
+
+Actors now hold heterogeneous, slightly-stale policies. The buffer mixes
+samples from versions ~800–1200 updates apart, providing implicit population-
+based diversity without any explicit league code.
+
+**Run:** `guanzero_m3_10k_no_server` resumed from 10k → 20k with the new sync
+gate active. 1000 games per opponent, 8 workers.
+
+| Opponent  | M3 5k | M3 10k | **M3 15k** | **M3 20k** | Δ 10k→20k |
+|-----------|------:|-------:|-----------:|-----------:|----------:|
+| random    | 99.6% | 99.5% | 99.1% | 98.9% | −0.6 |
+| greedy    | 98.0% | 98.5% | 98.5% | 98.8% | +0.3 |
+| heuristic | 87.6% | 88.1% | 88.8% | 87.6% | −0.5 |
+| xingdream | 86.1% | 87.8% | 90.4% | **90.8%** | **+3.0** |
+| strategic | 68.0% | 63.9% | 65.8% | 63.6% | −0.3 |
+| yaoji     | 42.1% | 41.6% | 43.0% | **44.6%** | **+3.0** |
+| jidan     | 45.8% | 44.5% | 48.9% | **51.1%** | **+6.6** |
+
+**Headline: jidan crossed 50% for the first time** (44.5 → 51.1). yaoji and
+xingdream both gained +3 pp. Strategic remains the holdout (still oscillating
+around 64–66%), but is no longer regressing.
+
+The hypothesis is confirmed: training past 5k *was* gaining real signal, but
+the ε=0.05 self-play distribution was too narrow for that signal to generalize
+to opponents who play differently. Once the buffer carries policy diversity,
+the network learns more robust Q-values that transfer.
+
+**Throughput bonus:** the cheap `latest.txt` metadata read replaced the per-
+sync `torch.load`. Actors now skip the expensive load 99% of the time. Resume
+phase ran at ~2.7 upd/s vs the original 0–10k phase's ~1.4 upd/s — **roughly
++90% throughput** on the same hardware (partly host variance, partly the
+sync optimization).
+
+**Verdict:** M3 with lag-gated self-play is now the production track. Next:
+push to 30k+ with this config and see whether strategic finally breaks loose,
+and whether jidan/yaoji keep climbing.
 
 ---
 

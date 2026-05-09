@@ -41,7 +41,7 @@ image = (
     image=image,
     gpu="L4",
     cpu=32,
-    memory=64 * 1024,
+    memory=32 * 1024,   # peak observed ~20 GB; 32 GB leaves headroom
     timeout=3600 * 6,  # 6-hour cap per CLAUDE.md
     volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
     secrets=[modal.Secret.from_name("huggingface-token")],
@@ -105,7 +105,7 @@ def main(
     updates: int = 1000,
     run_name: str = "guanzero_l4_bench",
     seed: int = 0,
-    config_path: str = "/root/ml/src/guandan/guanzero/config/m0_a10g_distributed.yaml",
+    config_path: str = "/root/ml/src/guandan/guanzero/config/m0_l4_distributed.yaml",
     n_actors: int | None = None,
     device: str = "cuda",
     profile: bool = False,

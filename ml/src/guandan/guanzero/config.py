@@ -187,6 +187,10 @@ class TrainConfig:
     # episode samples one element from the pool; only latest-team samples are kept.
     population_pool: tuple[str, ...] = ()
     hard_bot_pool: tuple[str, ...] = ()
+    # Optional weighted sampling over hard_bot_pool. Empty → uniform.
+    # Keys must be a subset of hard_bot_pool; weights must be positive
+    # and are normalized to a probability distribution at load time.
+    hard_bot_sampling: dict = dataclasses.field(default_factory=dict)
     latest_vs_latest_frac: float = 1.0    # fraction of episodes that are pure self-play
     latest_vs_hard_bot_frac: float = 0.0  # fraction of episodes vs hard-bot opponents
 
@@ -218,6 +222,18 @@ class TrainConfig:
             self.population_pool = tuple(self.population_pool)
         if isinstance(self.hard_bot_pool, list):
             self.hard_bot_pool = tuple(self.hard_bot_pool)
+        if self.hard_bot_sampling:
+            unknown = set(self.hard_bot_sampling) - set(self.hard_bot_pool)
+            if unknown:
+                raise ValueError(
+                    f"hard_bot_sampling keys not in hard_bot_pool: {sorted(unknown)}"
+                )
+            if any(w <= 0 for w in self.hard_bot_sampling.values()):
+                raise ValueError(
+                    f"hard_bot_sampling weights must be positive; got {self.hard_bot_sampling}"
+                )
+            total = sum(self.hard_bot_sampling.values())
+            self.hard_bot_sampling = {k: v / total for k, v in self.hard_bot_sampling.items()}
 
     @property
     def resolved_run_dir(self) -> str:

@@ -174,13 +174,23 @@ def actor_loop(
         and bool(cfg.hard_bot_pool)
         and cfg.latest_vs_hard_bot_frac > 0.0
     )
+    hard_bot_weights: list[float] | None = None
     if hard_bot_active:
         from ..agents import make_agent
         for bot_name in cfg.hard_bot_pool:
             hard_bots_pool.append((bot_name, make_agent(bot_name)))
+        if cfg.hard_bot_sampling:
+            # Validation in TrainConfig already normalized weights to sum to 1
+            # and verified all keys are in hard_bot_pool. Bots not listed get 0.
+            hard_bot_weights = [
+                cfg.hard_bot_sampling.get(n, 0.0) for n, _ in hard_bots_pool
+            ]
+        sampling_str = (
+            f"weighted={cfg.hard_bot_sampling}" if cfg.hard_bot_sampling else "uniform"
+        )
         print(
             f"[actor-{actor_id}] loaded {len(hard_bots_pool)} hard-bot opponents: "
-            f"{[n for n, _ in hard_bots_pool]}",
+            f"{[n for n, _ in hard_bots_pool]} ({sampling_str})",
             flush=True,
         )
 
@@ -281,7 +291,12 @@ def actor_loop(
             if u < cfg.latest_vs_latest_frac:
                 mode_counts["self_play"] += 1
             elif u < cfg.latest_vs_latest_frac + cfg.latest_vs_hard_bot_frac:
-                pick = rng.randrange(len(hard_bots_pool))
+                if hard_bot_weights is not None:
+                    pick = rng.choices(
+                        range(len(hard_bots_pool)), weights=hard_bot_weights, k=1
+                    )[0]
+                else:
+                    pick = rng.randrange(len(hard_bots_pool))
                 _, active_hard_bot = hard_bots_pool[pick]
                 hard_bot_pick_counts[pick] += 1
                 if rng.random() < 0.5:

@@ -145,6 +145,30 @@ def actor_loop(
     else:
         q_nets = None
 
+    # ── Checkpoint-population pool (shared-head + non-empty pool only) ──
+    # Each actor preloads every frozen checkpoint once. Per vs-frozen episode
+    # we sample one uniformly and use it for the opponent seats.
+    frozen_nets: list = []
+    population_active = (
+        shared_path
+        and bool(cfg.population_pool)
+        and cfg.latest_vs_latest_frac < 1.0
+    )
+    if population_active:
+        from .checkpoint import load_frozen_shared_qnet
+        qnet_cfg_for_pool = shared_head_qnet_config(cfg)
+        for ckpt_path in cfg.population_pool:
+            frozen_nets.append(load_frozen_shared_qnet(ckpt_path, qnet_cfg_for_pool, device="cpu"))
+        print(
+            f"[actor-{actor_id}] preloaded {len(frozen_nets)} frozen opponents",
+            flush=True,
+        )
+
+    # Per-actor counters for end-of-run summary (printed by every actor).
+    mode_counts = {"self_play": 0, "vs_frozen": 0}
+    frozen_pick_counts = [0] * len(frozen_nets)
+    team_counts = {"latest_even": 0, "latest_odd": 0}
+
     weight_dir    = Path(weight_dir)
     run_dir       = Path(run_dir) if run_dir is not None else None
     local_version  = -1
@@ -221,6 +245,27 @@ def actor_loop(
 
         eps = epsilon_linear(global_updates, cfg.epsilon)
 
+        # ── Per-episode dispatch: self-play vs vs-frozen ──
+        # frozen_seats are the OPPONENT seats (frozen net + epsilon_frozen);
+        # latest controls the complementary pair and is the only contributor
+        # of training samples.
+        use_frozen = bool(frozen_nets) and rng.random() >= cfg.latest_vs_latest_frac
+        frozen_seats: frozenset[int] = frozenset()
+        q_net_frozen_this_ep = None
+        if use_frozen:
+            pick = rng.randrange(len(frozen_nets))
+            q_net_frozen_this_ep = frozen_nets[pick]
+            frozen_pick_counts[pick] += 1
+            if rng.random() < 0.5:
+                frozen_seats = frozenset({1, 3})  # latest controls {0, 2}
+                team_counts["latest_even"] += 1
+            else:
+                frozen_seats = frozenset({0, 2})  # latest controls {1, 3}
+                team_counts["latest_odd"] += 1
+            mode_counts["vs_frozen"] += 1
+        else:
+            mode_counts["self_play"] += 1
+
         seed = rng.randint(0, 10_000_000)
         try:
             samples = play_episode(
@@ -232,6 +277,9 @@ def actor_loop(
                 gamma=cfg.gamma,
                 inference_client=inference_client,
                 profiler=prof,
+                q_nets_frozen=q_net_frozen_this_ep,
+                frozen_seats=frozen_seats,
+                epsilon_frozen=cfg.epsilon.frozen,
             )
         except Exception as e:
             from .inference_server import InferenceTimeoutError
@@ -247,6 +295,10 @@ def actor_loop(
                 continue
             raise
         episode_count += 1
+
+        if frozen_seats:
+            # Drop frozen-team samples — they're opponents, not teachers.
+            samples = [s for s in samples if s.player not in frozen_seats]
 
         for s in samples:
             buf_dicts.append(s.encoded)
@@ -276,6 +328,17 @@ def actor_loop(
             out.write_text(report + "\n")
         except Exception as e:
             print(f"[actor-{actor_id}] failed to write profile: {e}", flush=True)
+
+    # Per-actor population counters — printed by every actor so off-balance
+    # frozen-pool sampling or bad team assignment shows up immediately in logs.
+    print(f"[actor-{actor_id}] episode modes: {mode_counts}", flush=True)
+    if frozen_nets:
+        pool_str = ", ".join(
+            f"{Path(p).stem}={c}"
+            for p, c in zip(cfg.population_pool, frozen_pick_counts)
+        )
+        print(f"[actor-{actor_id}] frozen picks: {pool_str}", flush=True)
+        print(f"[actor-{actor_id}] team assignment: {team_counts}", flush=True)
 
 
 def _build_inference_client(actor_id: int, inference_args: dict, cfg) -> "object":

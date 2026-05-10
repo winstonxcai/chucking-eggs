@@ -84,6 +84,30 @@ def load_checkpoint(path: Path | str) -> dict:
     return torch.load(path, map_location="cpu", weights_only=False)
 
 
+def load_frozen_shared_qnet(
+    path: str | Path,
+    qnet_cfg: Any,
+    device: str | torch.device = "cpu",
+) -> torch.nn.Module:
+    """Build a SharedHeadQNet from ``qnet_cfg`` and load frozen weights from ``path``.
+
+    Returns the network in ``eval()`` mode with all parameters frozen
+    (``requires_grad=False``). Used by actors to instantiate population
+    opponents whose weights never change during the run.
+    """
+    # Local import — q_network depends on torch but not on this module, so
+    # keeping the import lazy avoids any future circular-import surprises.
+    from .q_network import SharedHeadQNet
+
+    net = SharedHeadQNet(qnet_cfg).to(device)
+    ckpt = torch.load(path, map_location=device, weights_only=True)
+    net.load_state_dict(migrate_state_dict(ckpt["q_net"]))
+    net.eval()
+    for p in net.parameters():
+        p.requires_grad_(False)
+    return net
+
+
 @dataclasses.dataclass
 class WeightSnapshot:
     """A versioned snapshot of published Q-net weights.
@@ -101,6 +125,7 @@ __all__ = [
     "save_checkpoint",
     "save_checkpoint_shared",
     "load_checkpoint",
+    "load_frozen_shared_qnet",
     "unwrap_compiled",
     "migrate_state_dict",
     "WeightSnapshot",

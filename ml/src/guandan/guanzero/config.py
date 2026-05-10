@@ -48,6 +48,7 @@ class EpsilonConfig:
     start: float = 0.1
     final: float = 0.01
     decay_updates: int = 5_000
+    frozen: float = 0.0   # epsilon used by seats playing a frozen-checkpoint opponent
 
 
 @dataclasses.dataclass(frozen=True)
@@ -90,6 +91,7 @@ _EPSILON_FLAT_MAP: dict[str, str] = {
     "epsilon_decay_updates":  "decay_updates",
     "epsilon_decay_episodes": "decay_updates",  # backward compat YAML alias
     "decay_episodes":         "decay_updates",  # backward compat nested-dict alias (old checkpoints)
+    "epsilon_frozen":         "frozen",
 }
 
 # Flat YAML key → InferenceConfig field name
@@ -177,11 +179,26 @@ class TrainConfig:
     max_replay_ratio: float = 4.0
     max_throttle_sleep_s: float = 0.05
 
+    # ── Checkpoint-population self-play (M4, shared_heads only) ──
+    # Empty pool → pure self-play (current behavior). When non-empty AND
+    # latest_vs_latest_frac < 1.0, each actor preloads every checkpoint and
+    # samples one per vs-frozen episode; only latest-team samples are kept.
+    population_pool: tuple[str, ...] = ()
+    latest_vs_latest_frac: float = 1.0   # 1.0 = always self-play; 0.5 = half episodes vs frozen
+
     def __post_init__(self) -> None:
         if self.model_type not in ("seat_nets", "shared_heads"):
             raise ValueError(
                 f"Unknown model_type {self.model_type!r}; expected 'seat_nets' or 'shared_heads'"
             )
+        if not 0.0 <= self.latest_vs_latest_frac <= 1.0:
+            raise ValueError(
+                f"latest_vs_latest_frac must be in [0, 1]; got {self.latest_vs_latest_frac}"
+            )
+        # YAML loads tuple-typed fields as list; coerce so the field's declared
+        # type is honoured everywhere downstream.
+        if isinstance(self.population_pool, list):
+            self.population_pool = tuple(self.population_pool)
 
     @property
     def resolved_run_dir(self) -> str:

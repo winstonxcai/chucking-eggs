@@ -179,12 +179,16 @@ class TrainConfig:
     max_replay_ratio: float = 4.0
     max_throttle_sleep_s: float = 0.05
 
-    # ── Checkpoint-population self-play (M4, shared_heads only) ──
-    # Empty pool → pure self-play (current behavior). When non-empty AND
-    # latest_vs_latest_frac < 1.0, each actor preloads every checkpoint and
-    # samples one per vs-frozen episode; only latest-team samples are kept.
+    # ── Mixed-opponent self-play (shared_heads only) ──
+    # Two opponent-pool modes, mutually exclusive:
+    #   1. population_pool: frozen-checkpoint opponents (older snapshots of latest)
+    #   2. hard_bot_pool:   heuristic bots ({"strategic", "yaoji", "jidan", ...})
+    # When the relevant pool is non-empty AND its frac > 0, each vs-opponent
+    # episode samples one element from the pool; only latest-team samples are kept.
     population_pool: tuple[str, ...] = ()
-    latest_vs_latest_frac: float = 1.0   # 1.0 = always self-play; 0.5 = half episodes vs frozen
+    hard_bot_pool: tuple[str, ...] = ()
+    latest_vs_latest_frac: float = 1.0    # fraction of episodes that are pure self-play
+    latest_vs_hard_bot_frac: float = 0.0  # fraction of episodes vs hard-bot opponents
 
     def __post_init__(self) -> None:
         if self.model_type not in ("seat_nets", "shared_heads"):
@@ -195,10 +199,25 @@ class TrainConfig:
             raise ValueError(
                 f"latest_vs_latest_frac must be in [0, 1]; got {self.latest_vs_latest_frac}"
             )
+        if not 0.0 <= self.latest_vs_hard_bot_frac <= 1.0:
+            raise ValueError(
+                f"latest_vs_hard_bot_frac must be in [0, 1]; got {self.latest_vs_hard_bot_frac}"
+            )
+        if self.latest_vs_latest_frac + self.latest_vs_hard_bot_frac > 1.0 + 1e-9:
+            raise ValueError(
+                "latest_vs_latest_frac + latest_vs_hard_bot_frac must be ≤ 1; "
+                f"got {self.latest_vs_latest_frac} + {self.latest_vs_hard_bot_frac}"
+            )
+        if self.population_pool and self.hard_bot_pool:
+            raise ValueError(
+                "population_pool and hard_bot_pool are mutually exclusive — pick one."
+            )
         # YAML loads tuple-typed fields as list; coerce so the field's declared
         # type is honoured everywhere downstream.
         if isinstance(self.population_pool, list):
             self.population_pool = tuple(self.population_pool)
+        if isinstance(self.hard_bot_pool, list):
+            self.hard_bot_pool = tuple(self.hard_bot_pool)
 
     @property
     def resolved_run_dir(self) -> str:

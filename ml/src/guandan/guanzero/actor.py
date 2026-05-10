@@ -114,6 +114,8 @@ def play_episode(
     q_nets_frozen: SharedHeadQNet | None = None,
     frozen_seats: frozenset[int] = frozenset(),
     epsilon_frozen: float = 0.0,
+    hard_bots=None,
+    hard_bot_seats: frozenset[int] = frozenset(),
 ) -> list[TrainSample]:
     """Roll one self-play episode, return per-step MC training samples.
 
@@ -128,8 +130,15 @@ def play_episode(
     - ``epsilon_frozen``: ε for frozen-seat decisions (typically 0.0 so the
       frozen policy plays deterministically, not a noisy version of itself).
 
-    Sample emission is unchanged — callers filter by ``s.player`` if they want
-    to exclude frozen-team rows from the buffer.
+    Optional hard-bot kwargs:
+    - ``hard_bots``: an ``Agent`` instance to act for ``hard_bot_seats``.
+      When set, those seats call ``hard_bots.act(env, p)`` directly and the
+      step is NOT added to the training trajectory (bots are opponents, not
+      teachers — only latest-team seats appear in the returned samples).
+
+    Sample emission is unchanged for frozen-checkpoint seats — callers filter
+    by ``s.player`` to exclude frozen-team rows. Hard-bot seats are filtered
+    here (skip trajectory append) so the worker filter is a no-op for them.
     """
     device = torch.device(device)
     shared_path = isinstance(q_nets, SharedHeadQNet)
@@ -145,6 +154,17 @@ def play_episode(
 
     while not env.done:
         p = env.current_player
+
+        # Hard-bot seats: opponent acts via Agent.act and the step is NOT
+        # recorded. The full game still plays out so terminal rewards remain
+        # well-defined for the latest-team trajectory entries.
+        if hard_bots is not None and p in hard_bot_seats:
+            with prof.time("hard_bot_act"):
+                action = hard_bots.act(env, p)
+            with prof.time("env_step"):
+                env.step(action)
+            continue
+
         # Per-seat routing: frozen seats use q_nets_frozen + epsilon_frozen,
         # latest seats use q_nets + epsilon. Both default to the latest path
         # when no frozen network is supplied.

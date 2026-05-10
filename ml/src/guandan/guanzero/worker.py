@@ -164,9 +164,30 @@ def actor_loop(
             flush=True,
         )
 
+    # ── Hard-bot opponent pool (shared-head + non-empty pool only) ──
+    # Each actor instantiates one copy of every hard bot at startup and
+    # samples one per vs-hard-bot episode. Bots are stateless across episodes
+    # (level_rank fixed) so a single instance per actor is enough.
+    hard_bots_pool: list = []   # list of (name, Agent) pairs
+    hard_bot_active = (
+        shared_path
+        and bool(cfg.hard_bot_pool)
+        and cfg.latest_vs_hard_bot_frac > 0.0
+    )
+    if hard_bot_active:
+        from ..agents import make_agent
+        for bot_name in cfg.hard_bot_pool:
+            hard_bots_pool.append((bot_name, make_agent(bot_name)))
+        print(
+            f"[actor-{actor_id}] loaded {len(hard_bots_pool)} hard-bot opponents: "
+            f"{[n for n, _ in hard_bots_pool]}",
+            flush=True,
+        )
+
     # Per-actor counters for end-of-run summary (printed by every actor).
-    mode_counts = {"self_play": 0, "vs_frozen": 0}
+    mode_counts = {"self_play": 0, "vs_frozen": 0, "vs_hard_bot": 0}
     frozen_pick_counts = [0] * len(frozen_nets)
+    hard_bot_pick_counts = [0] * len(hard_bots_pool)
     team_counts = {"latest_even": 0, "latest_odd": 0}
 
     weight_dir    = Path(weight_dir)
@@ -245,24 +266,49 @@ def actor_loop(
 
         eps = epsilon_linear(global_updates, cfg.epsilon)
 
-        # ── Per-episode dispatch: self-play vs vs-frozen ──
-        # frozen_seats are the OPPONENT seats (frozen net + epsilon_frozen);
-        # latest controls the complementary pair and is the only contributor
-        # of training samples.
-        use_frozen = bool(frozen_nets) and rng.random() >= cfg.latest_vs_latest_frac
+        # ── Per-episode dispatch ──
+        # population_pool and hard_bot_pool are mutually exclusive (validated
+        # in TrainConfig.__post_init__); each branch handles its own RNG draw.
+        # In every case `*_seats` are the OPPONENT seats — latest controls the
+        # complement and is the only contributor of training samples.
         frozen_seats: frozenset[int] = frozenset()
+        hard_bot_seats: frozenset[int] = frozenset()
         q_net_frozen_this_ep = None
-        if use_frozen:
-            pick = rng.randrange(len(frozen_nets))
-            q_net_frozen_this_ep = frozen_nets[pick]
-            frozen_pick_counts[pick] += 1
-            if rng.random() < 0.5:
-                frozen_seats = frozenset({1, 3})  # latest controls {0, 2}
-                team_counts["latest_even"] += 1
+        active_hard_bot = None
+
+        if hard_bots_pool:
+            u = rng.random()
+            if u < cfg.latest_vs_latest_frac:
+                mode_counts["self_play"] += 1
+            elif u < cfg.latest_vs_latest_frac + cfg.latest_vs_hard_bot_frac:
+                pick = rng.randrange(len(hard_bots_pool))
+                _, active_hard_bot = hard_bots_pool[pick]
+                hard_bot_pick_counts[pick] += 1
+                if rng.random() < 0.5:
+                    hard_bot_seats = frozenset({1, 3})  # latest controls {0, 2}
+                    team_counts["latest_even"] += 1
+                else:
+                    hard_bot_seats = frozenset({0, 2})  # latest controls {1, 3}
+                    team_counts["latest_odd"] += 1
+                mode_counts["vs_hard_bot"] += 1
             else:
-                frozen_seats = frozenset({0, 2})  # latest controls {1, 3}
-                team_counts["latest_odd"] += 1
-            mode_counts["vs_frozen"] += 1
+                # leftover probability mass when fracs sum to < 1
+                mode_counts["self_play"] += 1
+        elif frozen_nets:
+            use_frozen = rng.random() >= cfg.latest_vs_latest_frac
+            if use_frozen:
+                pick = rng.randrange(len(frozen_nets))
+                q_net_frozen_this_ep = frozen_nets[pick]
+                frozen_pick_counts[pick] += 1
+                if rng.random() < 0.5:
+                    frozen_seats = frozenset({1, 3})
+                    team_counts["latest_even"] += 1
+                else:
+                    frozen_seats = frozenset({0, 2})
+                    team_counts["latest_odd"] += 1
+                mode_counts["vs_frozen"] += 1
+            else:
+                mode_counts["self_play"] += 1
         else:
             mode_counts["self_play"] += 1
 
@@ -280,6 +326,8 @@ def actor_loop(
                 q_nets_frozen=q_net_frozen_this_ep,
                 frozen_seats=frozen_seats,
                 epsilon_frozen=cfg.epsilon.frozen,
+                hard_bots=active_hard_bot,
+                hard_bot_seats=hard_bot_seats,
             )
         except Exception as e:
             from .inference_server import InferenceTimeoutError
@@ -299,6 +347,8 @@ def actor_loop(
         if frozen_seats:
             # Drop frozen-team samples — they're opponents, not teachers.
             samples = [s for s in samples if s.player not in frozen_seats]
+        # Hard-bot seats never enter the trajectory (skipped in play_episode),
+        # so no filter is needed here for the hard-bot branch.
 
         for s in samples:
             buf_dicts.append(s.encoded)
@@ -329,8 +379,8 @@ def actor_loop(
         except Exception as e:
             print(f"[actor-{actor_id}] failed to write profile: {e}", flush=True)
 
-    # Per-actor population counters — printed by every actor so off-balance
-    # frozen-pool sampling or bad team assignment shows up immediately in logs.
+    # Per-actor opponent-pool counters — printed by every actor so off-balance
+    # pool sampling or skewed team assignment shows up immediately in logs.
     print(f"[actor-{actor_id}] episode modes: {mode_counts}", flush=True)
     if frozen_nets:
         pool_str = ", ".join(
@@ -338,6 +388,12 @@ def actor_loop(
             for p, c in zip(cfg.population_pool, frozen_pick_counts)
         )
         print(f"[actor-{actor_id}] frozen picks: {pool_str}", flush=True)
+        print(f"[actor-{actor_id}] team assignment: {team_counts}", flush=True)
+    if hard_bots_pool:
+        pool_str = ", ".join(
+            f"{n}={c}" for (n, _), c in zip(hard_bots_pool, hard_bot_pick_counts)
+        )
+        print(f"[actor-{actor_id}] hard-bot picks: {pool_str}", flush=True)
         print(f"[actor-{actor_id}] team assignment: {team_counts}", flush=True)
 
 

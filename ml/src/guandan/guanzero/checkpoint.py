@@ -99,9 +99,12 @@ def load_frozen_shared_qnet(
     # keeping the import lazy avoids any future circular-import surprises.
     from .q_network import SharedHeadQNet
 
+    # Note: migrate_state_dict is for the M0→M1 DmcQNet rename only — the
+    # SharedHeadQNet (M3) uses `history_lstm` natively, so its checkpoints
+    # load directly without remapping. See learner.py resume path at L704.
     net = SharedHeadQNet(qnet_cfg).to(device)
     ckpt = torch.load(path, map_location=device, weights_only=True)
-    net.load_state_dict(migrate_state_dict(ckpt["q_net"]))
+    net.load_state_dict(ckpt["q_net"])
     net.eval()
     for p in net.parameters():
         p.requires_grad_(False)

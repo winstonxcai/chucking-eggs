@@ -205,6 +205,7 @@ class TrainConfig:
     fresh_replay: bool = False      # no-op: checkpoints never save buffer state
     latest_vs_latest_frac: float = 1.0    # fraction of episodes that are pure self-play
     latest_vs_hard_bot_frac: float = 0.0  # fraction of episodes vs hard-bot opponents
+    latest_odd_probability: float = 0.5   # fraction of vs-hard-bot episodes with latest on odd team
 
     def __post_init__(self) -> None:
         if self.model_type not in ("seat_nets", "shared_heads"):
@@ -218,6 +219,10 @@ class TrainConfig:
         if not 0.0 <= self.latest_vs_hard_bot_frac <= 1.0:
             raise ValueError(
                 f"latest_vs_hard_bot_frac must be in [0, 1]; got {self.latest_vs_hard_bot_frac}"
+            )
+        if not 0.0 <= self.latest_odd_probability <= 1.0:
+            raise ValueError(
+                f"latest_odd_probability must be in [0, 1]; got {self.latest_odd_probability}"
             )
         if self.latest_vs_latest_frac + self.latest_vs_hard_bot_frac > 1.0 + 1e-9:
             raise ValueError(
@@ -281,10 +286,10 @@ class TrainConfig:
                 k: v / total for k, v in self.hard_bot_pair_sampling.items()
             }
         if self.replay_mix:
-            valid_buckets = {"general", "hard_bot_general", "hard_bot_loss", "yaoji_endgame_coordination_loss"}
-            unknown = set(self.replay_mix) - valid_buckets
+            valid_keys = {"general", "hard_bot_general", "coordination_endgame"}
+            unknown = set(self.replay_mix) - valid_keys
             if unknown:
-                raise ValueError(f"replay_mix has unknown bucket(s): {sorted(unknown)}")
+                raise ValueError(f"replay_mix has unknown key(s): {sorted(unknown)}. Valid: {sorted(valid_keys)}")
             if any(w <= 0 for w in self.replay_mix.values()):
                 raise ValueError(f"replay_mix weights must be positive; got {self.replay_mix}")
             total = sum(self.replay_mix.values())

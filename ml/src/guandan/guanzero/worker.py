@@ -16,7 +16,6 @@ import numpy as np
 import torch
 
 from .actor import play_episode
-from .buffer import BUCKET_IDS
 from .encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from .encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
 from .profiler import PhaseProfiler
@@ -311,12 +310,12 @@ def actor_loop(
                 mode_counts["self_play"] += 1
             elif u < cfg.latest_vs_latest_frac + cfg.latest_vs_hard_bot_frac:
                 # Choose opponent-team seats (latest controls the complement).
-                if rng.random() < 0.5:
-                    seat_a, seat_b = 1, 3
-                    team_counts["latest_even"] += 1
-                else:
-                    seat_a, seat_b = 0, 2
+                if rng.random() < cfg.latest_odd_probability:
+                    seat_a, seat_b = 0, 2  # opp on even → latest on odd
                     team_counts["latest_odd"] += 1
+                else:
+                    seat_a, seat_b = 1, 3  # opp on odd → latest on even
+                    team_counts["latest_even"] += 1
                 hard_bot_seats = frozenset({seat_a, seat_b})
 
                 if pair_names:
@@ -350,12 +349,12 @@ def actor_loop(
                 pick = rng.randrange(len(frozen_nets))
                 q_net_frozen_this_ep = frozen_nets[pick]
                 frozen_pick_counts[pick] += 1
-                if rng.random() < 0.5:
-                    frozen_seats = frozenset({1, 3})
-                    team_counts["latest_even"] += 1
-                else:
-                    frozen_seats = frozenset({0, 2})
+                if rng.random() < cfg.latest_odd_probability:
+                    frozen_seats = frozenset({0, 2})   # opp on even → latest on odd
                     team_counts["latest_odd"] += 1
+                else:
+                    frozen_seats = frozenset({1, 3})   # opp on odd → latest on even
+                    team_counts["latest_even"] += 1
                 mode_counts["vs_frozen"] += 1
             else:
                 mode_counts["self_play"] += 1
@@ -400,22 +399,44 @@ def actor_loop(
         # Hard-bot seats never enter the trajectory (skipped in play_episode),
         # so no filter is needed here for the hard-bot branch.
 
-        if active_hard_bot is not None and samples:
+        # Episode-level info for bucket computation
+        is_hard_bot_ep = active_hard_bot is not None and len(samples) > 0
+        if is_hard_bot_ep:
             latest_won = samples[0].mc_return > 0
-            if latest_won:
-                ep_bucket = BUCKET_IDS["hard_bot_general"]
-            elif active_bot_name == "yaoji":
-                ep_bucket = BUCKET_IDS["yaoji_endgame_coordination_loss"]
-            else:
-                ep_bucket = BUCKET_IDS["hard_bot_loss"]
+            target_bot = active_bot_name in ("yaoji", "jidan")
+            is_coord_episode = (not latest_won) and target_bot
         else:
-            ep_bucket = BUCKET_IDS["general"]
+            is_coord_episode = False
 
-        for s in samples:
+        total = len(samples)
+        for i, s in enumerate(samples):
             buf_dicts.append(s.encoded)
             buf_players.append(s.player)
             buf_returns.append(s.mc_return)
-            buf_buckets.append(ep_bucket)
+
+            if not is_hard_bot_ep:
+                sample_bucket = 0  # general_self_play
+            elif not is_coord_episode:
+                sample_bucket = 1  # hard_bot_general
+            else:
+                # yaoji/jidan loss episode — check per-sample coord state
+                blocks = s.encoded["player_blocks"]
+                # role 0 = self, role 1 = next_opp, role 2 = partner, role 3 = prev_opp
+                self_cards = int(blocks[0, 0:108].sum())
+                partner_cards = int(np.argmax(blocks[2, 324:351]))
+                next_opp_cards = int(np.argmax(blocks[1, 324:351]))
+                prev_opp_cards = int(np.argmax(blocks[3, 324:351]))
+                min_opp_cards = min(next_opp_cards, prev_opp_cards)
+                is_final_third = i >= total * 2 // 3
+                is_coord = (
+                    self_cards <= 5
+                    or partner_cards <= 5
+                    or min_opp_cards <= 5
+                    or is_final_third
+                )
+                sample_bucket = 2 if is_coord else 1
+
+            buf_buckets.append(sample_bucket)
 
         _push_buffered()
 

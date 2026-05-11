@@ -44,8 +44,9 @@ from .encoding.role_encoder import (
 )
 from .returns import TrainSample
 
-BUCKET_NAMES = ["general", "hard_bot_general", "hard_bot_loss", "yaoji_endgame_coordination_loss"]
+BUCKET_NAMES = ["general_self_play", "hard_bot_general", "coordination_endgame"]
 BUCKET_IDS: dict[str, int] = {name: i for i, name in enumerate(BUCKET_NAMES)}
+# 0 = general_self_play, 1 = hard_bot_general, 2 = coordination_endgame
 
 _KEY_SHAPES = ENCODE_CHANNEL_SHAPES
 _KEYS = ENCODE_CHANNEL_KEYS
@@ -307,29 +308,46 @@ class RoleAwareReplayBuffer:
         mix: dict[str, float],
         device: str | torch.device = "cpu",
     ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-        """Sample proportionally from per-bucket sub-populations.
+        """Sample with overlapping inclusion-rule buckets.
 
-        Empty buckets fall back to uniform sampling from all available samples.
-        Total sampled rows == batch_size (rounding applied to last bucket).
+        Mix keys map to inclusion rules over the bucket field:
+          "general"               -> all samples
+          "hard_bot_general"      -> bucket in {1, 2}
+          "coordination_endgame"  -> bucket == 2 (backfill from {1,2} if empty)
+
+        Empty inclusion sets fall back to uniform over all samples.
+        Last mix entry takes the remainder to ensure total == batch_size.
         """
         n = self.size()
         if n < batch_size:
             raise ValueError(f"buffer has {n} samples, need {batch_size}")
         buckets_arr = self.bucket[:n]
 
+        # Precompute index pools for each inclusion rule
+        all_idx = np.arange(n)
+        hbg_idx = np.flatnonzero(buckets_arr >= 1)
+        coord_idx = np.flatnonzero(buckets_arr == 2)
+
+        def _pool_for(key: str) -> np.ndarray:
+            if key == "general":
+                return all_idx
+            if key == "hard_bot_general":
+                return hbg_idx if len(hbg_idx) > 0 else all_idx
+            if key == "coordination_endgame":
+                if len(coord_idx) > 0:
+                    return coord_idx
+                # Backfill from hard_bot_general, not self-play
+                return hbg_idx if len(hbg_idx) > 0 else all_idx
+            raise ValueError(f"Unknown replay_mix key: {key!r}")
+
         idx_parts: list[np.ndarray] = []
         remaining = batch_size
         mix_items = list(mix.items())
-        for i, (bucket_name, frac) in enumerate(mix_items):
-            bucket_id = BUCKET_IDS[bucket_name]
-            # Last bucket takes all remaining to avoid rounding drift
+        for i, (key, frac) in enumerate(mix_items):
             n_draw = remaining if i == len(mix_items) - 1 else max(1, round(batch_size * frac))
             n_draw = min(n_draw, remaining)
-            bucket_idx = np.flatnonzero(buckets_arr == bucket_id)
-            if len(bucket_idx) == 0:
-                # Bucket empty — fall back to uniform over all samples
-                bucket_idx = np.arange(n)
-            idx_parts.append(np.random.choice(bucket_idx, size=n_draw, replace=True))
+            pool = _pool_for(key)
+            idx_parts.append(np.random.choice(pool, size=n_draw, replace=True))
             remaining -= n_draw
             if remaining <= 0:
                 break

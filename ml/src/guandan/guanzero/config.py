@@ -191,6 +191,11 @@ class TrainConfig:
     # Keys must be a subset of hard_bot_pool; weights must be positive
     # and are normalized to a probability distribution at load time.
     hard_bot_sampling: dict = dataclasses.field(default_factory=dict)
+    # Optional pair-sampling over the cross-product of hard_bot_pool. Keys are
+    # "<bot_a>_<bot_b>" alphabetized (e.g. "jidan_yaoji"). Each vs-hard-bot
+    # episode samples one pair and assigns the two bots to the two opponent
+    # seats (random side assignment). Mutually exclusive with hard_bot_sampling.
+    hard_bot_pair_sampling: dict = dataclasses.field(default_factory=dict)
     latest_vs_latest_frac: float = 1.0    # fraction of episodes that are pure self-play
     latest_vs_hard_bot_frac: float = 0.0  # fraction of episodes vs hard-bot opponents
 
@@ -234,6 +239,40 @@ class TrainConfig:
                 )
             total = sum(self.hard_bot_sampling.values())
             self.hard_bot_sampling = {k: v / total for k, v in self.hard_bot_sampling.items()}
+        if self.hard_bot_pair_sampling:
+            if self.hard_bot_sampling:
+                raise ValueError(
+                    "hard_bot_sampling and hard_bot_pair_sampling are mutually exclusive — "
+                    "pick one."
+                )
+            pool_names = set(self.hard_bot_pool)
+            for key in self.hard_bot_pair_sampling:
+                parts = key.split("_")
+                if len(parts) != 2:
+                    raise ValueError(
+                        f"hard_bot_pair_sampling key {key!r} must be '<a>_<b>'"
+                    )
+                a, b = parts
+                if a > b:
+                    raise ValueError(
+                        f"hard_bot_pair_sampling key {key!r} must be alphabetized "
+                        f"(use {b}_{a} instead)"
+                    )
+                unknown = {a, b} - pool_names
+                if unknown:
+                    raise ValueError(
+                        f"hard_bot_pair_sampling key {key!r} references bots "
+                        f"not in hard_bot_pool: {sorted(unknown)}"
+                    )
+            if any(w <= 0 for w in self.hard_bot_pair_sampling.values()):
+                raise ValueError(
+                    f"hard_bot_pair_sampling weights must be positive; "
+                    f"got {self.hard_bot_pair_sampling}"
+                )
+            total = sum(self.hard_bot_pair_sampling.values())
+            self.hard_bot_pair_sampling = {
+                k: v / total for k, v in self.hard_bot_pair_sampling.items()
+            }
 
     @property
     def resolved_run_dir(self) -> str:

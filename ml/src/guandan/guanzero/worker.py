@@ -175,19 +175,32 @@ def actor_loop(
         and cfg.latest_vs_hard_bot_frac > 0.0
     )
     hard_bot_weights: list[float] | None = None
+    hard_bots_by_name: dict = {}
+    pair_names: list[str] = []
+    pair_weights: list[float] = []
     if hard_bot_active:
         from ..agents import make_agent
         for bot_name in cfg.hard_bot_pool:
             hard_bots_pool.append((bot_name, make_agent(bot_name)))
-        if cfg.hard_bot_sampling:
+        hard_bots_by_name = {n: agent for n, agent in hard_bots_pool}
+        if cfg.hard_bot_pair_sampling:
+            # Pair sampling: keys are "<a>_<b>" (alphabetized, validated in
+            # TrainConfig). Two opponent seats get distinct bot instances
+            # (or the same instance for homogeneous pairs).
+            pair_names = list(cfg.hard_bot_pair_sampling.keys())
+            pair_weights = list(cfg.hard_bot_pair_sampling.values())
+        elif cfg.hard_bot_sampling:
             # Validation in TrainConfig already normalized weights to sum to 1
             # and verified all keys are in hard_bot_pool. Bots not listed get 0.
             hard_bot_weights = [
                 cfg.hard_bot_sampling.get(n, 0.0) for n, _ in hard_bots_pool
             ]
-        sampling_str = (
-            f"weighted={cfg.hard_bot_sampling}" if cfg.hard_bot_sampling else "uniform"
-        )
+        if cfg.hard_bot_pair_sampling:
+            sampling_str = f"pair_sampling={cfg.hard_bot_pair_sampling}"
+        elif cfg.hard_bot_sampling:
+            sampling_str = f"weighted={cfg.hard_bot_sampling}"
+        else:
+            sampling_str = "uniform"
         print(
             f"[actor-{actor_id}] loaded {len(hard_bots_pool)} hard-bot opponents: "
             f"{[n for n, _ in hard_bots_pool]} ({sampling_str})",
@@ -198,6 +211,7 @@ def actor_loop(
     mode_counts = {"self_play": 0, "vs_frozen": 0, "vs_hard_bot": 0}
     frozen_pick_counts = [0] * len(frozen_nets)
     hard_bot_pick_counts = [0] * len(hard_bots_pool)
+    pair_pick_counts: dict[str, int] = {k: 0 for k in pair_names}
     team_counts = {"latest_even": 0, "latest_odd": 0}
 
     weight_dir    = Path(weight_dir)
@@ -284,27 +298,42 @@ def actor_loop(
         frozen_seats: frozenset[int] = frozenset()
         hard_bot_seats: frozenset[int] = frozenset()
         q_net_frozen_this_ep = None
-        active_hard_bot = None
+        active_hard_bot = None  # Agent | dict[int, Agent] | None
 
         if hard_bots_pool:
             u = rng.random()
             if u < cfg.latest_vs_latest_frac:
                 mode_counts["self_play"] += 1
             elif u < cfg.latest_vs_latest_frac + cfg.latest_vs_hard_bot_frac:
-                if hard_bot_weights is not None:
-                    pick = rng.choices(
-                        range(len(hard_bots_pool)), weights=hard_bot_weights, k=1
-                    )[0]
-                else:
-                    pick = rng.randrange(len(hard_bots_pool))
-                _, active_hard_bot = hard_bots_pool[pick]
-                hard_bot_pick_counts[pick] += 1
+                # Choose opponent-team seats (latest controls the complement).
                 if rng.random() < 0.5:
-                    hard_bot_seats = frozenset({1, 3})  # latest controls {0, 2}
+                    seat_a, seat_b = 1, 3
                     team_counts["latest_even"] += 1
                 else:
-                    hard_bot_seats = frozenset({0, 2})  # latest controls {1, 3}
+                    seat_a, seat_b = 0, 2
                     team_counts["latest_odd"] += 1
+                hard_bot_seats = frozenset({seat_a, seat_b})
+
+                if pair_names:
+                    # Mixed-pair sampling: draw a pair, assign to two seats.
+                    pair_key = rng.choices(pair_names, weights=pair_weights, k=1)[0]
+                    pair_pick_counts[pair_key] += 1
+                    name_a, name_b = pair_key.split("_")
+                    bot_a = hard_bots_by_name[name_a]
+                    bot_b = hard_bots_by_name[name_b]
+                    if rng.random() < 0.5:
+                        active_hard_bot = {seat_a: bot_a, seat_b: bot_b}
+                    else:
+                        active_hard_bot = {seat_a: bot_b, seat_b: bot_a}
+                else:
+                    if hard_bot_weights is not None:
+                        pick = rng.choices(
+                            range(len(hard_bots_pool)), weights=hard_bot_weights, k=1
+                        )[0]
+                    else:
+                        pick = rng.randrange(len(hard_bots_pool))
+                    _, active_hard_bot = hard_bots_pool[pick]
+                    hard_bot_pick_counts[pick] += 1
                 mode_counts["vs_hard_bot"] += 1
             else:
                 # leftover probability mass when fracs sum to < 1
@@ -405,10 +434,14 @@ def actor_loop(
         print(f"[actor-{actor_id}] frozen picks: {pool_str}", flush=True)
         print(f"[actor-{actor_id}] team assignment: {team_counts}", flush=True)
     if hard_bots_pool:
-        pool_str = ", ".join(
-            f"{n}={c}" for (n, _), c in zip(hard_bots_pool, hard_bot_pick_counts)
-        )
-        print(f"[actor-{actor_id}] hard-bot picks: {pool_str}", flush=True)
+        if pair_names:
+            pool_str = ", ".join(f"{k}={c}" for k, c in pair_pick_counts.items())
+            print(f"[actor-{actor_id}] hard-bot pair picks: {pool_str}", flush=True)
+        else:
+            pool_str = ", ".join(
+                f"{n}={c}" for (n, _), c in zip(hard_bots_pool, hard_bot_pick_counts)
+            )
+            print(f"[actor-{actor_id}] hard-bot picks: {pool_str}", flush=True)
         print(f"[actor-{actor_id}] team assignment: {team_counts}", flush=True)
 
 

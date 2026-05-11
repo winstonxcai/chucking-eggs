@@ -329,3 +329,117 @@ def test_role_random_episode_uses_encode_one_fast_path():
     assert samples
     assert encoder.encode_all_calls == 0
     assert encoder.encode_one_calls == len(samples)
+
+
+# ── Mixed hard-bot pair tests ─────────────────────────────────────────
+
+
+def test_pair_dispatch_assigns_distinct_bots():
+    """dict-mode hard_bots: each seat gets its own bot instance."""
+    real_bot = make_agent("strategic")
+
+    class SpyBot:
+        def __init__(self, tag):
+            self.tag = tag
+            self.players = []
+
+        def act(self, env, player):
+            self.players.append(player)
+            return real_bot.act(env, player)
+
+    spy_a = SpyBot("A")
+    spy_b = SpyBot("B")
+    samples = play_episode(
+        q_nets=_small_shared_net(),
+        encoder=RoleAwareStateActionEncoder(),
+        epsilon=0.0,
+        seed=51,
+        device="cpu",
+        gamma=1.0,
+        hard_bots={1: spy_a, 3: spy_b},
+        hard_bot_seats=frozenset({1, 3}),
+    )
+    assert samples
+    # spy_a only saw p=1; spy_b only saw p=3
+    assert spy_a.players, "spy_a should have been called"
+    assert spy_b.players, "spy_b should have been called"
+    assert set(spy_a.players) == {1}
+    assert set(spy_b.players) == {3}
+
+
+def test_pair_episode_samples_only_latest():
+    """Mixed-pair vs-hard-bot episode still produces only latest-team samples."""
+    samples = play_episode(
+        q_nets=_small_shared_net(),
+        encoder=RoleAwareStateActionEncoder(),
+        epsilon=0.0,
+        seed=52,
+        device="cpu",
+        gamma=1.0,
+        hard_bots={1: make_agent("strategic"), 3: make_agent("yaoji")},
+        hard_bot_seats=frozenset({1, 3}),
+    )
+    assert samples
+    assert {s.player for s in samples} <= {0, 2}
+
+
+def test_pair_legacy_agent_still_works():
+    """Single-Agent hard_bots (legacy mode) behaves as before — both seats use it."""
+    real_bot = make_agent("strategic")
+
+    class SpyBot:
+        def __init__(self):
+            self.players = []
+
+        def act(self, env, player):
+            self.players.append(player)
+            return real_bot.act(env, player)
+
+    spy = SpyBot()
+    samples = play_episode(
+        q_nets=_small_shared_net(),
+        encoder=RoleAwareStateActionEncoder(),
+        epsilon=0.0,
+        seed=53,
+        device="cpu",
+        gamma=1.0,
+        hard_bots=spy,
+        hard_bot_seats=frozenset({1, 3}),
+    )
+    assert samples
+    assert spy.players, "spy bot must have been called"
+    assert set(spy.players) <= {1, 3}
+
+
+def test_pair_sampling_distribution():
+    """Pure-RNG unit test for the worker's pair-sampling arithmetic.
+
+    Replicates the worker.py pair-pick draw (after the vs-hard-bot branch is
+    selected) without touching play_episode or the env. With 10k pair draws
+    each pair's observed fraction must land within ±1.5pp of its weight.
+    """
+    pair_weights = {
+        "jidan_jidan":         0.20,
+        "strategic_strategic": 0.10,
+        "yaoji_yaoji":         0.25,
+        "jidan_strategic":     0.10,
+        "jidan_yaoji":         0.25,
+        "strategic_yaoji":     0.10,
+    }
+    names = list(pair_weights.keys())
+    weights = list(pair_weights.values())
+    rng = random.Random(2027)
+
+    counts = {k: 0 for k in names}
+    n = 10_000
+    for _ in range(n):
+        pick = rng.choices(names, weights=weights, k=1)[0]
+        counts[pick] += 1
+
+    for name in names:
+        observed = counts[name] / n
+        expected = pair_weights[name]
+        assert abs(observed - expected) <= 0.015, (
+            f"pair {name}: observed {observed:.3f} vs expected {expected:.3f} "
+            f"(diff {abs(observed - expected):.3f} > 0.015)"
+        )

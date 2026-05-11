@@ -135,3 +135,63 @@ def test_buffer_capacity_default_for_shared_mode():
     cfg = TrainConfig(model_type="shared_heads", buffer_capacity=0, buffer_capacity_per_player=123)
     capacity = cfg.buffer_capacity or 4 * cfg.buffer_capacity_per_player
     assert capacity == 492
+
+
+# ── hard_bot_pair_sampling validation ─────────────────────────────────
+
+
+def test_pair_sampling_normalizes_to_probability():
+    cfg = TrainConfig(
+        hard_bot_pool=("strategic", "yaoji", "jidan"),
+        hard_bot_pair_sampling={"yaoji_yaoji": 2.0, "jidan_yaoji": 2.0},
+    )
+    # Weights renormalized to sum to 1.0
+    assert sum(cfg.hard_bot_pair_sampling.values()) == 1.0
+    assert cfg.hard_bot_pair_sampling["yaoji_yaoji"] == 0.5
+    assert cfg.hard_bot_pair_sampling["jidan_yaoji"] == 0.5
+
+
+def test_pair_sampling_rejects_unordered_pair_key():
+    import pytest
+    with pytest.raises(ValueError, match="alphabetized"):
+        TrainConfig(
+            hard_bot_pool=("strategic", "yaoji", "jidan"),
+            hard_bot_pair_sampling={"yaoji_jidan": 1.0},   # j > y alphabetically — must be jidan_yaoji
+        )
+
+
+def test_pair_sampling_rejects_unknown_bot():
+    import pytest
+    with pytest.raises(ValueError, match="not in hard_bot_pool"):
+        TrainConfig(
+            hard_bot_pool=("strategic", "yaoji"),
+            hard_bot_pair_sampling={"strategic_unknown": 1.0},
+        )
+
+
+def test_pair_sampling_rejects_malformed_key():
+    import pytest
+    with pytest.raises(ValueError, match="<a>_<b>"):
+        TrainConfig(
+            hard_bot_pool=("strategic", "yaoji"),
+            hard_bot_pair_sampling={"strategic": 1.0},     # missing underscore
+        )
+
+
+def test_pair_sampling_rejects_non_positive_weights():
+    import pytest
+    with pytest.raises(ValueError, match="weights must be positive"):
+        TrainConfig(
+            hard_bot_pool=("strategic", "yaoji"),
+            hard_bot_pair_sampling={"strategic_yaoji": -0.5},
+        )
+
+
+def test_pair_sampling_mutual_exclusion_with_hard_bot_sampling():
+    import pytest
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        TrainConfig(
+            hard_bot_pool=("strategic", "yaoji"),
+            hard_bot_sampling={"yaoji": 1.0},
+            hard_bot_pair_sampling={"strategic_yaoji": 1.0},
+        )

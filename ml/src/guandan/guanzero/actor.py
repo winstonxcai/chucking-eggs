@@ -37,7 +37,7 @@ def select_legal(env: GuanDanEnv, player: int) -> list[Combo]:
     return legal
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def argmax_q(
     net: GuanZeroQNet,
     encoded_list: list[dict],
@@ -49,7 +49,7 @@ def argmax_q(
     return int(q.argmax().item())
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def argmax_q_role(
     net: SharedHeadQNet,
     encoded_list: list[dict],
@@ -75,7 +75,7 @@ def _argmax_with_timing(
             device=device,
         )
     with prof.time(f"q_net_forward_{bucket}"):
-        with torch.no_grad():
+        with torch.inference_mode():
             q_vals = net.forward_grouped(state_batch, action_batch, repeats)
     with prof.time("q_argmax_item"):
         return int(q_vals.argmax().item())
@@ -95,7 +95,7 @@ def _argmax_role_with_timing(
             device=device,
         )
     with prof.time(f"q_net_forward_{bucket}"):
-        with torch.no_grad():
+        with torch.inference_mode():
             q_vals = net.forward_grouped(state_batch, action_batch, repeats)
     with prof.time("q_argmax_item"):
         return int(q_vals.argmax().item())
@@ -131,10 +131,12 @@ def play_episode(
       frozen policy plays deterministically, not a noisy version of itself).
 
     Optional hard-bot kwargs:
-    - ``hard_bots``: an ``Agent`` instance to act for ``hard_bot_seats``.
-      When set, those seats call ``hard_bots.act(env, p)`` directly and the
-      step is NOT added to the training trajectory (bots are opponents, not
-      teachers — only latest-team seats appear in the returned samples).
+    - ``hard_bots``: either a single ``Agent`` instance (same bot on every
+      hard-bot seat) or a ``dict[int, Agent]`` mapping seat → bot (mixed-pair
+      mode, different bots per opponent seat). Hard-bot seats call
+      ``bot.act(env, p)`` and the step is NOT added to the training trajectory
+      (bots are opponents, not teachers — only latest-team seats appear in the
+      returned samples).
 
     Sample emission is unchanged for frozen-checkpoint seats — callers filter
     by ``s.player`` to exclude frozen-team rows. Hard-bot seats are filtered
@@ -159,8 +161,9 @@ def play_episode(
         # recorded. The full game still plays out so terminal rewards remain
         # well-defined for the latest-team trajectory entries.
         if hard_bots is not None and p in hard_bot_seats:
+            bot = hard_bots[p] if isinstance(hard_bots, dict) else hard_bots
             with prof.time("hard_bot_act"):
-                action = hard_bots.act(env, p)
+                action = bot.act(env, p)
             with prof.time("env_step"):
                 env.step(action)
             continue

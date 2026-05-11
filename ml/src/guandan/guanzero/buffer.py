@@ -30,8 +30,22 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from .encoder import ENCODE_CHANNEL_KEYS, ENCODE_CHANNEL_SHAPES
+from .encoder import (
+    ENCODE_ACTION_KEYS,
+    ENCODE_CHANNEL_KEYS,
+    ENCODE_CHANNEL_SHAPES,
+    ENCODE_STATE_KEYS,
+)
+from .encoding.role_encoder import (
+    ROLE_ENCODE_ACTION_KEYS,
+    ROLE_ENCODE_CHANNEL_KEYS,
+    ROLE_ENCODE_CHANNEL_SHAPES,
+    ROLE_ENCODE_STATE_KEYS,
+)
 from .returns import TrainSample
+
+BUCKET_NAMES = ["general", "hard_bot_general", "hard_bot_loss", "yaoji_endgame_coordination_loss"]
+BUCKET_IDS: dict[str, int] = {name: i for i, name in enumerate(BUCKET_NAMES)}
 
 _KEY_SHAPES = ENCODE_CHANNEL_SHAPES
 _KEYS = ENCODE_CHANNEL_KEYS
@@ -82,16 +96,16 @@ class ReplayBuffer:
     # ─── ingest ──────────────────────────────────────────────
 
     def push(self, samples: list[TrainSample]) -> None:
-        """Legacy single-sample path. Routes through push_stacked.
+        """Test/debug single-sample path. Routes through ``push_stacked``.
 
-        Tolerates partial encoded dicts (e.g. test fixtures): keys not present
-        in any sample are left unchanged in the backing store.
+        Encoded samples must contain the full canonical encoder schema. Missing
+        channels raise ``KeyError`` instead of silently leaving stale values in
+        the backing store.
         """
         if not samples:
             return
         encoded = [s.encoded for s in samples]
-        present_keys = [k for k in _KEYS if k in encoded[0]]
-        stacked = {k: np.stack([d[k] for d in encoded], axis=0) for k in present_keys}
+        stacked = {k: np.stack([d[k] for d in encoded], axis=0) for k in _KEYS}
         players = np.asarray([s.player for s in samples], dtype=np.int8)
         returns = np.asarray([s.mc_return for s in samples], dtype=np.float32)
         self.push_stacked(stacked, players, returns)
@@ -179,25 +193,238 @@ class ReplayBuffer:
         return out
 
 
-def collate_encoded(
-    encoded_list: list[dict[str, np.ndarray]],
+class RoleAwareReplayBuffer:
+    """Single circular replay buffer for the shared-head role-aware model."""
+
+    def __init__(self, capacity: int = 200_000) -> None:
+        self.capacity = capacity
+        self.fields: dict[str, np.ndarray] = {}
+        for k, shape in ROLE_ENCODE_CHANNEL_SHAPES.items():
+            dtype = np.int8 if k == "seat_id" else np.uint8
+            self.fields[k] = np.zeros((capacity, *shape), dtype=dtype)
+        self.returns = np.zeros(capacity, dtype=np.float32)
+        self.bucket = np.zeros(capacity, dtype=np.int8)
+        self.ptr = 0
+        self.full = False
+
+    def size(self) -> int:
+        """Total samples currently stored."""
+        return self.capacity if self.full else self.ptr
+
+    def size_by_seat(self) -> dict[int, int]:
+        """Return stored sample counts by absolute seat."""
+        n = self.size()
+        if n == 0:
+            return {p: 0 for p in range(4)}
+        seats = self.fields["seat_id"][:n].astype(np.int64, copy=False)
+        return {p: int(np.sum(seats == p)) for p in range(4)}
+
+    def push_stacked(
+        self,
+        stacked: dict[str, np.ndarray],
+        returns: np.ndarray,
+        buckets: np.ndarray | None = None,
+    ) -> None:
+        """Write a batch of N role-encoded samples."""
+        n = int(len(returns))
+        if n == 0:
+            return
+        buckets_to_write = (
+            buckets.astype(np.int8, copy=False)
+            if buckets is not None
+            else np.zeros(n, dtype=np.int8)
+        )
+        if n >= self.capacity:
+            start = n - self.capacity
+            for k in ROLE_ENCODE_CHANNEL_KEYS:
+                self.fields[k][:] = stacked[k][start:].astype(self.fields[k].dtype, copy=False)
+            self.returns[:] = returns[start:].astype(np.float32, copy=False)
+            self.bucket[:] = buckets_to_write[start:]
+            self.ptr = 0
+            self.full = True
+            return
+
+        start_ptr = self.ptr
+        end = start_ptr + n
+        if end <= self.capacity:
+            dst = slice(start_ptr, end)
+            src = slice(None)
+            for k in ROLE_ENCODE_CHANNEL_KEYS:
+                self.fields[k][dst] = stacked[k][src].astype(self.fields[k].dtype, copy=False)
+            self.returns[dst] = returns[src].astype(np.float32, copy=False)
+            self.bucket[dst] = buckets_to_write[src]
+        else:
+            first = self.capacity - start_ptr
+            second = n - first
+            for k in ROLE_ENCODE_CHANNEL_KEYS:
+                arr = stacked[k].astype(self.fields[k].dtype, copy=False)
+                self.fields[k][start_ptr:] = arr[:first]
+                self.fields[k][:second] = arr[first:]
+            ret = returns.astype(np.float32, copy=False)
+            self.returns[start_ptr:] = ret[:first]
+            self.returns[:second] = ret[first:]
+            self.bucket[start_ptr:] = buckets_to_write[:first]
+            self.bucket[:second] = buckets_to_write[first:]
+        self.ptr = (self.ptr + n) % self.capacity
+        self.full = self.full or end >= self.capacity
+
+    def sample_batch(
+        self,
+        batch_size: int,
+        device: str | torch.device = "cpu",
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        """Uniformly sample a role-aware batch."""
+        n = self.size()
+        if n < batch_size:
+            raise ValueError(f"buffer has {n} samples, need {batch_size}")
+        idx = np.random.randint(0, n, size=batch_size)
+        return self._sample_indices(idx, device)
+
+    def sample_batch_balanced(
+        self,
+        batch_size: int,
+        device: str | torch.device = "cpu",
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        """Stratified sample with approximately equal rows per seat."""
+        n = self.size()
+        seats = self.fields["seat_id"][:n].astype(np.int64, copy=False)
+        counts = [batch_size // 4] * 4
+        for p in range(batch_size % 4):
+            counts[p] += 1
+        idx_parts = []
+        for p, count in enumerate(counts):
+            seat_idx = np.flatnonzero(seats == p)
+            if len(seat_idx) < count:
+                raise ValueError(f"seat {p} has {len(seat_idx)} samples, need {count}")
+            idx_parts.append(np.random.choice(seat_idx, size=count, replace=True))
+        idx = np.concatenate(idx_parts)
+        np.random.shuffle(idx)
+        return self._sample_indices(idx, device)
+
+    def sample_batch_stratified(
+        self,
+        batch_size: int,
+        mix: dict[str, float],
+        device: str | torch.device = "cpu",
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        """Sample proportionally from per-bucket sub-populations.
+
+        Empty buckets fall back to uniform sampling from all available samples.
+        Total sampled rows == batch_size (rounding applied to last bucket).
+        """
+        n = self.size()
+        if n < batch_size:
+            raise ValueError(f"buffer has {n} samples, need {batch_size}")
+        buckets_arr = self.bucket[:n]
+
+        idx_parts: list[np.ndarray] = []
+        remaining = batch_size
+        mix_items = list(mix.items())
+        for i, (bucket_name, frac) in enumerate(mix_items):
+            bucket_id = BUCKET_IDS[bucket_name]
+            # Last bucket takes all remaining to avoid rounding drift
+            n_draw = remaining if i == len(mix_items) - 1 else max(1, round(batch_size * frac))
+            n_draw = min(n_draw, remaining)
+            bucket_idx = np.flatnonzero(buckets_arr == bucket_id)
+            if len(bucket_idx) == 0:
+                # Bucket empty — fall back to uniform over all samples
+                bucket_idx = np.arange(n)
+            idx_parts.append(np.random.choice(bucket_idx, size=n_draw, replace=True))
+            remaining -= n_draw
+            if remaining <= 0:
+                break
+
+        idx = np.concatenate(idx_parts)
+        np.random.shuffle(idx)
+        return self._sample_indices(idx, device)
+
+    def _sample_indices(
+        self,
+        idx: np.ndarray,
+        device: str | torch.device,
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        batch: dict[str, torch.Tensor] = {}
+        for k in ROLE_ENCODE_CHANNEL_KEYS:
+            t = torch.from_numpy(self.fields[k][idx]).to(device, non_blocking=True)
+            batch[k] = t.long() if k == "seat_id" else t.float()
+        targets = torch.from_numpy(self.returns[idx]).to(device, non_blocking=True)
+        return batch, targets
+
+
+def collate_base_encoded(
+    encoded_groups: list[list[dict[str, np.ndarray]]],
     device: str | torch.device = "cpu",
-) -> dict[str, torch.Tensor]:
-    """Collate raw encoded dicts (no MC return). Used by the actor at decision
-    time to score legal actions in a single forward pass — distinct from the
-    learner's replay sampling path.
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+    """Collate decisions as shared state rows plus flattened action rows.
 
-    ``non_blocking=True`` matters on MPS: the default ``.to(device)`` issues a
-    per-call stream sync, which dominates actor wall time on the hot path
-    (~1.7 ms/decision for 9 small H2D copies vs ~0.2 ms when async). The
-    consuming forward pass is on the same stream, so ordering is preserved.
+    ``encoded_groups`` is one list of encoded candidate-action dicts per
+    decision. The returned ``state_batch`` has one row per decision,
+    ``action_batch`` has one row per candidate action, and ``repeats`` maps
+    each state row to its number of action rows.
     """
-    keys = encoded_list[0].keys()
-    batch: dict[str, torch.Tensor] = {}
-    for k in keys:
-        arr = np.stack([e[k] for e in encoded_list], axis=0)
-        batch[k] = torch.from_numpy(arr).to(device, non_blocking=True)
-    return batch
+    if not encoded_groups:
+        raise ValueError("encoded_groups must be non-empty")
+    if any(len(group) == 0 for group in encoded_groups):
+        raise ValueError("encoded_groups cannot contain empty decisions")
+
+    state_batch = {
+        k: torch.from_numpy(np.stack([group[0][k] for group in encoded_groups], axis=0))
+        .to(device, non_blocking=True)
+        for k in ENCODE_STATE_KEYS
+    }
+    flat_actions = [row for group in encoded_groups for row in group]
+    action_batch = {
+        k: torch.from_numpy(np.stack([row[k] for row in flat_actions], axis=0))
+        .to(device, non_blocking=True)
+        for k in ENCODE_ACTION_KEYS
+    }
+    repeats = torch.tensor(
+        [len(group) for group in encoded_groups],
+        dtype=torch.long,
+        device=device,
+    )
+    return state_batch, action_batch, repeats
 
 
-__all__ = ["ReplayBuffer", "collate_encoded", "Batch"]
+collate_grouped_encoded = collate_base_encoded
+
+
+def collate_role_encoded(
+    encoded_groups: list[list[dict[str, np.ndarray]]],
+    device: str | torch.device = "cpu",
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+    """Collate role-encoded decisions for SharedHeadQNet.forward_grouped."""
+    if not encoded_groups:
+        raise ValueError("encoded_groups must be non-empty")
+    if any(len(group) == 0 for group in encoded_groups):
+        raise ValueError("encoded_groups cannot contain empty decisions")
+
+    state_batch = {
+        k: torch.from_numpy(np.stack([group[0][k] for group in encoded_groups], axis=0))
+        .to(device, non_blocking=True)
+        for k in ROLE_ENCODE_STATE_KEYS
+    }
+    flat_actions = [row for group in encoded_groups for row in group]
+    action_batch = {
+        k: torch.from_numpy(np.stack([row[k] for row in flat_actions], axis=0))
+        .to(device, non_blocking=True)
+        for k in ROLE_ENCODE_ACTION_KEYS
+    }
+    repeats = torch.tensor(
+        [len(group) for group in encoded_groups],
+        dtype=torch.long,
+        device=device,
+    )
+    return state_batch, action_batch, repeats
+
+
+__all__ = [
+    "BUCKET_NAMES",
+    "BUCKET_IDS",
+    "ReplayBuffer",
+    "RoleAwareReplayBuffer",
+    "collate_base_encoded",
+    "collate_grouped_encoded",
+    "collate_role_encoded",
+    "Batch",
+]

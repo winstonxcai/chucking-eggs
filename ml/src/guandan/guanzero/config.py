@@ -92,6 +92,7 @@ _EPSILON_FLAT_MAP: dict[str, str] = {
     "epsilon_decay_episodes": "decay_updates",  # backward compat YAML alias
     "decay_episodes":         "decay_updates",  # backward compat nested-dict alias (old checkpoints)
     "epsilon_frozen":         "frozen",
+    "epsilon_bot":            "frozen",
 }
 
 # Flat YAML key → InferenceConfig field name
@@ -196,6 +197,12 @@ class TrainConfig:
     # episode samples one pair and assigns the two bots to the two opponent
     # seats (random side assignment). Mutually exclusive with hard_bot_sampling.
     hard_bot_pair_sampling: dict = dataclasses.field(default_factory=dict)
+    # Stratified replay: sample proportionally from per-bucket sub-populations.
+    # Keys are bucket names; values are weights (normalized at load time).
+    # Empty dict → uniform sampling (default). Accepted but no-op at runtime:
+    replay_mix: dict = dataclasses.field(default_factory=dict)
+    fresh_optimizer: bool = False   # no-op: checkpoints never save optimizer state
+    fresh_replay: bool = False      # no-op: checkpoints never save buffer state
     latest_vs_latest_frac: float = 1.0    # fraction of episodes that are pure self-play
     latest_vs_hard_bot_frac: float = 0.0  # fraction of episodes vs hard-bot opponents
 
@@ -273,6 +280,15 @@ class TrainConfig:
             self.hard_bot_pair_sampling = {
                 k: v / total for k, v in self.hard_bot_pair_sampling.items()
             }
+        if self.replay_mix:
+            valid_buckets = {"general", "hard_bot_general", "hard_bot_loss", "yaoji_endgame_coordination_loss"}
+            unknown = set(self.replay_mix) - valid_buckets
+            if unknown:
+                raise ValueError(f"replay_mix has unknown bucket(s): {sorted(unknown)}")
+            if any(w <= 0 for w in self.replay_mix.values()):
+                raise ValueError(f"replay_mix weights must be positive; got {self.replay_mix}")
+            total = sum(self.replay_mix.values())
+            self.replay_mix = {k: v / total for k, v in self.replay_mix.items()}
 
     @property
     def resolved_run_dir(self) -> str:
@@ -333,6 +349,14 @@ class TrainConfig:
             return cls(qnet=qnet, epsilon=epsilon, inference=inference, **top)
 
         # ── Flat form (YAML files, old checkpoints) ──
+        # epsilon_latest shorthand: sets start/final to the same value and decay to 0
+        if "epsilon_latest" in d:
+            lat = d["epsilon_latest"]
+            d = dict(d)
+            d.setdefault("epsilon_start", lat)
+            d.setdefault("epsilon_final", lat)
+            d.setdefault("epsilon_decay_updates", 0)
+
         qnet_kw:      dict[str, Any] = {}
         epsilon_kw:   dict[str, Any] = {}
         inference_kw: dict[str, Any] = {}

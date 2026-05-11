@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from .actor import play_episode
+from .buffer import BUCKET_IDS
 from .encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from .encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
 from .profiler import PhaseProfiler
@@ -226,6 +227,7 @@ def actor_loop(
     buf_dicts:   list[dict]  = []
     buf_players: list[int]   = []
     buf_returns: list[float] = []
+    buf_buckets: list[int]   = []
     rng = random.Random(cfg.seed + actor_id * 10_000)
 
     def _sample_sync_threshold() -> int:
@@ -244,7 +246,7 @@ def actor_loop(
     snapshot_every_episodes = max(1, cfg.log_every_updates * 10)
 
     def _push_buffered() -> None:
-        nonlocal buf_dicts, buf_players, buf_returns
+        nonlocal buf_dicts, buf_players, buf_returns, buf_buckets
         if len(buf_dicts) < cfg.actor_push_batch_size:
             return
         with prof.time("buffer_stack"):
@@ -255,6 +257,7 @@ def actor_loop(
                 "version":  local_version,
                 "stacked":  stacked,
                 "returns":  np.asarray(buf_returns, dtype=np.float32),
+                "buckets":  np.asarray(buf_buckets, dtype=np.int8),
             }
             if not shared_path:
                 msg["players"] = np.asarray(buf_players, dtype=np.int8)
@@ -266,6 +269,7 @@ def actor_loop(
         buf_dicts.clear()
         buf_players.clear()
         buf_returns.clear()
+        buf_buckets.clear()
 
     n_inference_timeouts = 0
     while not stop_event.is_set():
@@ -299,6 +303,7 @@ def actor_loop(
         hard_bot_seats: frozenset[int] = frozenset()
         q_net_frozen_this_ep = None
         active_hard_bot = None  # Agent | dict[int, Agent] | None
+        active_bot_name: str | None = None
 
         if hard_bots_pool:
             u = rng.random()
@@ -325,6 +330,7 @@ def actor_loop(
                         active_hard_bot = {seat_a: bot_a, seat_b: bot_b}
                     else:
                         active_hard_bot = {seat_a: bot_b, seat_b: bot_a}
+                    active_bot_name = "yaoji" if "yaoji" in pair_key else None
                 else:
                     if hard_bot_weights is not None:
                         pick = rng.choices(
@@ -332,7 +338,7 @@ def actor_loop(
                         )[0]
                     else:
                         pick = rng.randrange(len(hard_bots_pool))
-                    _, active_hard_bot = hard_bots_pool[pick]
+                    active_bot_name, active_hard_bot = hard_bots_pool[pick]
                     hard_bot_pick_counts[pick] += 1
                 mode_counts["vs_hard_bot"] += 1
             else:
@@ -394,10 +400,22 @@ def actor_loop(
         # Hard-bot seats never enter the trajectory (skipped in play_episode),
         # so no filter is needed here for the hard-bot branch.
 
+        if active_hard_bot is not None and samples:
+            latest_won = samples[0].mc_return > 0
+            if latest_won:
+                ep_bucket = BUCKET_IDS["hard_bot_general"]
+            elif active_bot_name == "yaoji":
+                ep_bucket = BUCKET_IDS["yaoji_endgame_coordination_loss"]
+            else:
+                ep_bucket = BUCKET_IDS["hard_bot_loss"]
+        else:
+            ep_bucket = BUCKET_IDS["general"]
+
         for s in samples:
             buf_dicts.append(s.encoded)
             buf_players.append(s.player)
             buf_returns.append(s.mc_return)
+            buf_buckets.append(ep_bucket)
 
         _push_buffered()
 

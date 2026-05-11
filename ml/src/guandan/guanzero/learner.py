@@ -166,6 +166,7 @@ class SharedHeadLearner:
         self,
         buffer: RoleAwareReplayBuffer,
         batch_size: int,
+        replay_mix: dict | None = None,
     ) -> dict[str, float] | None:
         """One balanced gradient step, or None if any seat is cold."""
         sizes = buffer.size_by_seat()
@@ -173,7 +174,10 @@ class SharedHeadLearner:
         if min(sizes.values()) < min_per_seat:
             return None
 
-        batch, targets = buffer.sample_batch_balanced(batch_size, self.device)
+        if replay_mix:
+            batch, targets = buffer.sample_batch_stratified(batch_size, replay_mix, self.device)
+        else:
+            batch, targets = buffer.sample_batch_balanced(batch_size, self.device)
         seat_ids = batch["seat_id"].long()
         self.q_net.train()
         with torch.autocast(
@@ -726,7 +730,7 @@ def _learner_loop_shared(
         while drained < cfg.max_drain_batches_per_loop:
             try:
                 msg = sample_queue.get_nowait()
-                buffer.push_stacked(msg["stacked"], msg["returns"])
+                buffer.push_stacked(msg["stacked"], msg["returns"], msg.get("buckets"))
                 fresh_samples_total += len(msg["returns"])
                 drained += 1
             except Exception:
@@ -752,7 +756,11 @@ def _learner_loop_shared(
                 continue
 
         if min(buffer.size_by_seat().values()) >= max(cfg.buffer_min_size, cfg.batch_size // 4):
-            metrics = learner.update(buffer=buffer, batch_size=cfg.batch_size)
+            metrics = learner.update(
+                buffer=buffer,
+                batch_size=cfg.batch_size,
+                replay_mix=cfg.replay_mix or None,
+            )
             if metrics is not None:
                 last_metrics = metrics
                 total_updates += 1

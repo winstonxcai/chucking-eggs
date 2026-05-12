@@ -111,6 +111,27 @@ def load_frozen_shared_qnet(
     return net
 
 
+def load_frozen_trick_qnet(
+    path: str | Path,
+    qnet_cfg: Any,
+    device: str | torch.device = "cpu",
+) -> torch.nn.Module:
+    """Build a SharedTrickHeadQNet from ``qnet_cfg`` and load frozen weights from ``path``.
+
+    Sibling of ``load_frozen_shared_qnet`` for the ``shared_trick_heads`` model
+    type. Returns the network in ``eval()`` mode with all parameters frozen.
+    """
+    from .q_network import SharedTrickHeadQNet
+
+    net = SharedTrickHeadQNet(qnet_cfg).to(device)
+    ckpt = torch.load(path, map_location=device, weights_only=True)
+    net.load_state_dict(ckpt["q_net"])
+    net.eval()
+    for p in net.parameters():
+        p.requires_grad_(False)
+    return net
+
+
 @dataclasses.dataclass
 class WeightSnapshot:
     """A versioned snapshot of published Q-net weights.
@@ -129,6 +150,7 @@ __all__ = [
     "save_checkpoint_shared",
     "load_checkpoint",
     "load_frozen_shared_qnet",
+    "load_frozen_trick_qnet",
     "unwrap_compiled",
     "migrate_state_dict",
     "WeightSnapshot",

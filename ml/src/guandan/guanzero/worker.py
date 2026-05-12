@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from .actor import play_episode
-from .encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
+from .encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from .encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
 from .profiler import PhaseProfiler
 
@@ -125,18 +125,29 @@ def actor_loop(
     torch.set_num_threads(1)
 
     cfg = TrainConfig.from_flat_dict(cfg_dict)
-    if cfg.model_type == "shared_heads" and cfg.inference.enabled:
-        raise ValueError("Inference server not supported for model_type='shared_heads'.")
+    if cfg.model_type in ("shared_heads", "shared_trick_heads") and cfg.inference.enabled:
+        raise ValueError(
+            f"Inference server not supported for model_type={cfg.model_type!r}."
+        )
 
-    shared_path = cfg.model_type == "shared_heads"
+    shared_path = cfg.model_type in ("shared_heads", "shared_trick_heads")
+    trick_path = cfg.model_type == "shared_trick_heads"
     if shared_path:
-        encoder = RoleAwareStateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
+        encoder = RoleAwareStateActionEncoder(
+            is_partner_visible=cfg.qnet.is_partner_visible,
+            head_scheme="trick_relative" if trick_path else "absolute_seat",
+        )
     else:
-        encoder = StateActionEncoder(use_oracle_others_hand=cfg.qnet.use_oracle_others_hand)
+        encoder = StateActionEncoder(is_partner_visible=cfg.qnet.is_partner_visible)
 
     inference_client = _build_inference_client(actor_id, inference_args, cfg) if inference_args else None
     if shared_path:
-        q_nets = SharedHeadQNet(shared_head_qnet_config(cfg))
+        if trick_path:
+            from .q_network import SharedTrickHeadQNet
+            from .config import shared_trick_head_qnet_config
+            q_nets = SharedTrickHeadQNet(shared_trick_head_qnet_config(cfg))
+        else:
+            q_nets = SharedHeadQNet(shared_head_qnet_config(cfg))
         q_nets.eval()
     elif inference_client is None:
         q_nets = init_seat_nets(cfg.qnet)
@@ -155,10 +166,16 @@ def actor_loop(
         and cfg.latest_vs_latest_frac < 1.0
     )
     if population_active:
-        from .checkpoint import load_frozen_shared_qnet
-        qnet_cfg_for_pool = shared_head_qnet_config(cfg)
-        for ckpt_path in cfg.population_pool:
-            frozen_nets.append(load_frozen_shared_qnet(ckpt_path, qnet_cfg_for_pool, device="cpu"))
+        if trick_path:
+            from .checkpoint import load_frozen_trick_qnet
+            qnet_cfg_for_pool = shared_trick_head_qnet_config(cfg)
+            for ckpt_path in cfg.population_pool:
+                frozen_nets.append(load_frozen_trick_qnet(ckpt_path, qnet_cfg_for_pool, device="cpu"))
+        else:
+            from .checkpoint import load_frozen_shared_qnet
+            qnet_cfg_for_pool = shared_head_qnet_config(cfg)
+            for ckpt_path in cfg.population_pool:
+                frozen_nets.append(load_frozen_shared_qnet(ckpt_path, qnet_cfg_for_pool, device="cpu"))
         print(
             f"[actor-{actor_id}] preloaded {len(frozen_nets)} frozen opponents",
             flush=True,
@@ -249,7 +266,13 @@ def actor_loop(
         if len(buf_dicts) < cfg.actor_push_batch_size:
             return
         with prof.time("buffer_stack"):
-            keys = ROLE_ENCODE_CHANNEL_KEYS if shared_path else ENCODE_CHANNEL_KEYS
+            # Use the encoder's own channel_keys for the shared-head path so
+            # both absolute_seat (seat_id) and trick_relative (trick_head_id)
+            # schemas stack the right fields.
+            if shared_path:
+                keys = encoder.channel_keys
+            else:
+                keys = ENCODE_CHANNEL_KEYS
             stacked = {k: np.stack([d[k] for d in buf_dicts], axis=0) for k in keys}
             msg = {
                 "actor_id": actor_id,
@@ -419,13 +442,15 @@ def actor_loop(
             elif not is_coord_episode:
                 sample_bucket = 1  # hard_bot_general
             else:
-                # yaoji/jidan loss episode — check per-sample coord state
+                # yaoji/jidan loss episode — check per-sample coord state.
+                # player_blocks layout (243 dims per role):
+                #   [0:108] played, [108:216] last_action, [216:243] count one-hot.
+                # role 0 = self, role 1 = next_opp, role 2 = partner, role 3 = prev_opp.
                 blocks = s.encoded["player_blocks"]
-                # role 0 = self, role 1 = next_opp, role 2 = partner, role 3 = prev_opp
-                self_cards = int(blocks[0, 0:108].sum())
-                partner_cards = int(np.argmax(blocks[2, 324:351]))
-                next_opp_cards = int(np.argmax(blocks[1, 324:351]))
-                prev_opp_cards = int(np.argmax(blocks[3, 324:351]))
+                self_cards = int(s.encoded["own_hand"].sum())
+                partner_cards = int(np.argmax(blocks[2, 216:243]))
+                next_opp_cards = int(np.argmax(blocks[1, 216:243]))
+                prev_opp_cards = int(np.argmax(blocks[3, 216:243]))
                 min_opp_cards = min(next_opp_cards, prev_opp_cards)
                 is_final_third = i >= total * 2 // 3
                 is_coord = (

@@ -400,6 +400,53 @@ class RoleAwareReplayBuffer:
         np.random.shuffle(idx)
         return self._sample_indices(idx, device, return_tags=return_tags)
 
+    def sample_batch_balanced_k1_capped(
+        self,
+        batch_size: int,
+        max_k1_frac: float,
+        device: str | torch.device = "cpu",
+        *,
+        return_tags: bool = False,
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor] | tuple[
+        dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor]
+    ]:
+        """Like sample_batch_balanced but caps K=1 samples at ``max_k1_frac``.
+
+        K=1 portion: uniform from samples with ``num_legal_actions == 1``.
+        K>1 portion: per-head balanced over samples with K>1.
+        If the K=1 pool is empty, the K>1 portion absorbs the full batch.
+        """
+        n = self.size()
+        k1_mask = self.num_legal_actions[:n] == 1
+        n_k1_target = round(batch_size * max_k1_frac)
+        n_free_target = batch_size - n_k1_target
+
+        k1_idx_all = np.flatnonzero(k1_mask)
+        if len(k1_idx_all) == 0 or n_k1_target == 0:
+            n_free_target = batch_size
+            k1_part = np.empty(0, dtype=np.int64)
+        else:
+            k1_part = np.random.choice(k1_idx_all, size=n_k1_target, replace=True)
+
+        free_mask = ~k1_mask
+        ids = self.fields[self.head_field][:n].astype(np.int64, copy=False)
+        counts = [n_free_target // 4] * 4
+        for p in range(n_free_target % 4):
+            counts[p] += 1
+        free_parts: list[np.ndarray] = []
+        for p, count in enumerate(counts):
+            head_free = np.flatnonzero(free_mask & (ids == p))
+            if len(head_free) < count:
+                raise ValueError(
+                    f"head {p} has {len(head_free)} K>1 samples; need {count} "
+                    f"(K=1 cap={max_k1_frac})"
+                )
+            free_parts.append(np.random.choice(head_free, size=count, replace=True))
+
+        idx = np.concatenate([k1_part, *free_parts])
+        np.random.shuffle(idx)
+        return self._sample_indices(idx, device, return_tags=return_tags)
+
     def sample_batch_stratified(
         self,
         batch_size: int,

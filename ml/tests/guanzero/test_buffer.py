@@ -282,3 +282,26 @@ def test_buffer_roundtrips_all_tags():
     assert set(out_tags.keys()) == set(tags.keys())
     for name in tags:
         assert out_tags[name].shape[0] == n
+
+
+def test_k1_capped_sampler_hits_target_fraction():
+    """sample_batch_balanced_k1_capped should produce batches with ~max_k1_frac K=1 samples."""
+    buf = RoleAwareReplayBuffer(capacity=400, head_scheme="trick_relative")
+    n = 400
+    stacked = _trick_stacked(n)
+    returns = np.zeros(n, dtype=np.float32)
+    # First quarter are K=1, rest are K>1. Both groups span all 4 head buckets
+    # (head_id = i % 4), so per-head balanced K>1 sampling has data in every head.
+    num_legal = np.array([1 if i < n // 4 else 5 for i in range(n)], dtype=np.int16)
+    tags = {"num_legal_actions": num_legal}
+    buf.push_stacked(stacked, returns, tags=tags)
+
+    batch_size = 200
+    batch, _targets, out_tags = buf.sample_batch_balanced_k1_capped(
+        batch_size, max_k1_frac=0.05, return_tags=True,
+    )
+    k1_count = int((out_tags["num_legal_actions"] == 1).sum().item())
+    expected = round(batch_size * 0.05)
+    assert k1_count == expected, f"expected {expected} K=1 samples, got {k1_count}"
+    free_count = batch_size - k1_count
+    assert int((out_tags["num_legal_actions"] > 1).sum().item()) == free_count

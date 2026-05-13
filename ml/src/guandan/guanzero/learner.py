@@ -322,6 +322,7 @@ class SharedHeadLearner:
         buffer: RoleAwareReplayBuffer,
         batch_size: int,
         replay_mix: dict | None = None,
+        max_forced_k1_replay_frac: float = 1.0,
     ) -> dict | None:
         """One balanced gradient step, or None if any head bucket is cold."""
         sizes = buffer.size_by_seat()
@@ -329,7 +330,11 @@ class SharedHeadLearner:
         if min(sizes.values()) < min_per_seat:
             return None
 
-        if replay_mix:
+        if max_forced_k1_replay_frac < 1.0:
+            batch, targets, tags = buffer.sample_batch_balanced_k1_capped(
+                batch_size, max_forced_k1_replay_frac, self.device, return_tags=True,
+            )
+        elif replay_mix:
             batch, targets, tags = buffer.sample_batch_stratified(
                 batch_size, replay_mix, self.device, return_tags=True,
             )
@@ -943,6 +948,7 @@ def _learner_loop_shared(
                 buffer=buffer,
                 batch_size=cfg.batch_size,
                 replay_mix=cfg.replay_mix or None,
+                max_forced_k1_replay_frac=cfg.max_forced_k1_replay_frac,
             )
             if metrics is not None:
                 last_metrics = metrics

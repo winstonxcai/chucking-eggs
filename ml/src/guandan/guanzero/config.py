@@ -210,6 +210,10 @@ class TrainConfig:
     # Keys are bucket names; values are weights (normalized at load time).
     # Empty dict → uniform sampling (default). Accepted but no-op at runtime:
     replay_mix: dict = dataclasses.field(default_factory=dict)
+    # Cap K=1 (forced-move) samples at this fraction of each batch. 1.0 = no
+    # cap (sample uniformly across all samples in the buffer). E.g. 0.05 means
+    # 5% of every batch is K=1, 95% is K>1 (real decisions).
+    max_forced_k1_replay_frac: float = 1.0
     fresh_optimizer: bool = False   # no-op: checkpoints never save optimizer state
     fresh_replay: bool = False      # no-op: checkpoints never save buffer state
     latest_vs_latest_frac: float = 1.0    # fraction of episodes that are pure self-play
@@ -307,6 +311,11 @@ class TrainConfig:
                 raise ValueError(f"replay_mix weights must be positive; got {self.replay_mix}")
             total = sum(self.replay_mix.values())
             self.replay_mix = {k: v / total for k, v in self.replay_mix.items()}
+        if not 0.0 <= self.max_forced_k1_replay_frac <= 1.0:
+            raise ValueError(
+                f"max_forced_k1_replay_frac must be in [0, 1]; "
+                f"got {self.max_forced_k1_replay_frac}"
+            )
 
     @property
     def resolved_run_dir(self) -> str:

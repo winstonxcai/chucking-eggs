@@ -22,10 +22,20 @@ import numpy as np
 TERMINAL_REWARD_SCALE = 3.0
 
 
-class TrajectoryStep(TypedDict):
+class TrajectoryStep(TypedDict, total=False):
     """One timestep produced by the actor rollout, before MC return is assigned."""
     player: int
     encoded: dict[str, np.ndarray]
+    # Per-sample diagnostic tags computed at decision time in play_episode.
+    phase_self: int
+    trick_role: int
+    phase_partner: int
+    action_type: int
+    is_pass: int
+    is_bomb: int
+    num_legal_actions: int
+    q_gap: float
+    chosen_by_epsilon: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -33,6 +43,21 @@ class TrainSample:
     player: int
     encoded: dict[str, np.ndarray]
     mc_return: float
+    # Per-sample tags (carried from TrajectoryStep):
+    phase_self: int = 0
+    trick_role: int = 0
+    phase_partner: int = 0
+    action_type: int = 0
+    is_pass: int = 0
+    is_bomb: int = 0
+    num_legal_actions: int = 0
+    q_gap: float = float("nan")
+    chosen_by_epsilon: int = 0
+    # Per-episode / per-player tags (broadcast in compute_mc_returns):
+    episode_mode: int = 0
+    opponent_id: int = 0
+    latest_team: int = 0
+    terminal_reward: float = 0.0
 
 
 def normalize_terminal_rewards(rewards: Mapping[int, float]) -> dict[int, float]:
@@ -43,16 +68,20 @@ def compute_mc_returns(
     trajectory: list[TrajectoryStep],
     terminal_rewards: Mapping[int, float],
     gamma: float = 1.0,
+    *,
+    episode_mode: int = 0,
+    opponent_id: int = 0,
+    latest_team: int = 0,
 ) -> list[TrainSample]:
     """Compute G_t per (player, timestep).
 
-    ``trajectory`` is a list of ``{"player": int, "encoded": dict}`` ordered
-    by play time. ``terminal_rewards`` is the engine output; it gets
-    normalized to [-1, 1] internally.
+    ``trajectory`` is a list of step dicts ordered by play time.
+    ``terminal_rewards`` is the engine output; it gets normalized to
+    [-1, 1] for ``mc_return`` but the raw value is also carried on each
+    sample as ``terminal_reward`` for diagnostic bucketing.
 
-    Per-player accumulation walks each player's own subsequence backward.
-    With gamma=1.0 (paper default for sparse terminal reward) every step
-    on a given player's trajectory takes their normalized terminal reward.
+    The three episode-level kwargs (episode_mode, opponent_id, latest_team)
+    are broadcast verbatim to every emitted sample.
     """
     norm = normalize_terminal_rewards(terminal_rewards)
 
@@ -63,19 +92,34 @@ def compute_mc_returns(
     returns = [0.0] * len(trajectory)
     for p, idxs in by_player.items():
         terminal = norm[p]
-        g = terminal  # last step on p's trajectory carries the full reward
+        g = terminal
         for i in reversed(idxs):
             returns[i] = g
-            g = gamma * g  # zero intermediate rewards in DMC
+            g = gamma * g
 
-    return [
-        TrainSample(
-            player=trajectory[i]["player"],
-            encoded=trajectory[i]["encoded"],
+    out: list[TrainSample] = []
+    for i in range(len(trajectory)):
+        step = trajectory[i]
+        p = step["player"]
+        out.append(TrainSample(
+            player=p,
+            encoded=step["encoded"],
             mc_return=returns[i],
-        )
-        for i in range(len(trajectory))
-    ]
+            phase_self=int(step.get("phase_self", 0)),
+            trick_role=int(step.get("trick_role", 0)),
+            phase_partner=int(step.get("phase_partner", 0)),
+            action_type=int(step.get("action_type", 0)),
+            is_pass=int(step.get("is_pass", 0)),
+            is_bomb=int(step.get("is_bomb", 0)),
+            num_legal_actions=int(step.get("num_legal_actions", 0)),
+            q_gap=float(step.get("q_gap", float("nan"))),
+            chosen_by_epsilon=int(step.get("chosen_by_epsilon", 0)),
+            episode_mode=int(episode_mode),
+            opponent_id=int(opponent_id),
+            latest_team=int(latest_team),
+            terminal_reward=float(terminal_rewards[p]),
+        ))
+    return out
 
 
 __all__ = [

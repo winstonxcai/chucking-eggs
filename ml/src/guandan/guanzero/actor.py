@@ -14,15 +14,37 @@ from ..cards import ComboType
 from ..combos import Combo
 from ..game import GuanDanEnv
 from .buffer import collate_base_encoded, collate_role_encoded
-from .encoder import StateActionEncoder
+from .encoding.base_encoder import StateActionEncoder
 from .encoding.role_encoder import RoleAwareStateActionEncoder
 from .legal_utils import dedup_strategic
 from .profiler import PhaseProfiler, _k_bucket
-from .q_network import GuanZeroQNet, SharedHeadQNet
+from .q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet
 from .returns import TrainSample, compute_mc_returns
 
 
 _PASS = Combo(ComboType.PASS, 0, [])
+
+
+def _phase(hand_size: int) -> int:
+    if hand_size >= 20:
+        return 0
+    if hand_size >= 10:
+        return 1
+    return 2
+
+
+def _phase_with_out(env: GuanDanEnv, seat: int) -> int:
+    if env.is_out[seat]:
+        return 3
+    return _phase(len(env.hands[seat]))
+
+
+def _trick_role(env: GuanDanEnv, partner_seat: int) -> int:
+    if env.is_leading():
+        return 0
+    if env.is_out[partner_seat]:
+        return 2
+    return 1
 
 
 def select_legal(env: GuanDanEnv, player: int) -> list[Combo]:
@@ -67,8 +89,11 @@ def _argmax_with_timing(
     device: torch.device,
     prof: PhaseProfiler,
     bucket: str,
-) -> int:
-    """Instrumented greedy action selection used inside play_episode."""
+) -> tuple[int, float]:
+    """Instrumented greedy action selection used inside play_episode.
+
+    Returns (argmax_index, q_gap) where q_gap = q_max - q_second.
+    """
     with prof.time("q_collate"):
         state_batch, action_batch, repeats = collate_base_encoded(
             [encoded_list],
@@ -78,7 +103,13 @@ def _argmax_with_timing(
         with torch.inference_mode():
             q_vals = net.forward_grouped(state_batch, action_batch, repeats)
     with prof.time("q_argmax_item"):
-        return int(q_vals.argmax().item())
+        q_flat = q_vals.view(-1)
+        if q_flat.numel() >= 2:
+            top2 = torch.topk(q_flat, 2, largest=True).values
+            q_gap = float(top2[0].item() - top2[1].item())
+        else:
+            q_gap = float("nan")
+        return int(q_flat.argmax().item()), q_gap
 
 
 def _argmax_role_with_timing(
@@ -87,7 +118,7 @@ def _argmax_role_with_timing(
     device: torch.device,
     prof: PhaseProfiler,
     bucket: str,
-) -> int:
+) -> tuple[int, float]:
     """Instrumented greedy action selection for the shared-head path."""
     with prof.time("q_collate"):
         state_batch, action_batch, repeats = collate_role_encoded(
@@ -98,11 +129,17 @@ def _argmax_role_with_timing(
         with torch.inference_mode():
             q_vals = net.forward_grouped(state_batch, action_batch, repeats)
     with prof.time("q_argmax_item"):
-        return int(q_vals.argmax().item())
+        q_flat = q_vals.view(-1)
+        if q_flat.numel() >= 2:
+            top2 = torch.topk(q_flat, 2, largest=True).values
+            q_gap = float(top2[0].item() - top2[1].item())
+        else:
+            q_gap = float("nan")
+        return int(q_flat.argmax().item()), q_gap
 
 
 def play_episode(
-    q_nets: Mapping[int, GuanZeroQNet] | SharedHeadQNet | None,
+    q_nets: Mapping[int, GuanZeroQNet] | SharedHeadQNet | SharedTrickHeadQNet | None,
     encoder: StateActionEncoder | RoleAwareStateActionEncoder,
     epsilon: float,
     seed: int | None = None,
@@ -111,11 +148,14 @@ def play_episode(
     inference_client=None,
     profiler: PhaseProfiler | None = None,
     *,
-    q_nets_frozen: SharedHeadQNet | None = None,
+    q_nets_frozen: SharedHeadQNet | SharedTrickHeadQNet | None = None,
     frozen_seats: frozenset[int] = frozenset(),
     epsilon_frozen: float = 0.0,
     hard_bots=None,
     hard_bot_seats: frozenset[int] = frozenset(),
+    episode_mode: int = 0,
+    opponent_id: int = 0,
+    latest_team: int = 0,
 ) -> list[TrainSample]:
     """Roll one self-play episode, return per-step MC training samples.
 
@@ -143,9 +183,11 @@ def play_episode(
     here (skip trajectory append) so the worker filter is a no-op for them.
     """
     device = torch.device(device)
-    shared_path = isinstance(q_nets, SharedHeadQNet)
+    shared_path = isinstance(q_nets, (SharedHeadQNet, SharedTrickHeadQNet))
     if shared_path and inference_client is not None:
-        raise ValueError("Inference server is not supported for SharedHeadQNet.")
+        raise ValueError(
+            "Inference server is not supported for shared-head Q-networks."
+        )
     if q_nets_frozen is not None and not shared_path:
         raise ValueError("q_nets_frozen is only supported on the shared-head path.")
     env = GuanDanEnv()
@@ -183,6 +225,8 @@ def play_episode(
         # Per-K-bucket decision counts — totals sum to num_decisions.
         prof.add_count(f"decisions_{bucket}", 1)
 
+        q_gap_for_this_step = float("nan")
+        chosen_by_epsilon_flag = 0
         if K == 1:
             idx = 0
             prof.add_count("shortcut_K1", 1)
@@ -190,6 +234,7 @@ def play_episode(
                 encoded = encoder.encode_one(env, p, legal[idx], legal)
         elif random.random() < eps_p:
             idx = random.randrange(K)
+            chosen_by_epsilon_flag = 1
             prof.add_count("epsilon_random", 1)
             with prof.time("encode_selected"):
                 encoded = encoder.encode_one(env, p, legal[idx], legal)
@@ -204,19 +249,44 @@ def play_episode(
                 encoded_list = encoder.encode_all(env, p, legal)
             if shared_path:
                 acting_net = q_nets_frozen if on_frozen else q_nets
-                idx = _argmax_role_with_timing(acting_net, encoded_list, device, prof, bucket)
+                idx, q_gap_for_this_step = _argmax_role_with_timing(
+                    acting_net, encoded_list, device, prof, bucket,
+                )
             else:
                 assert q_nets is not None
-                idx = _argmax_with_timing(q_nets[p], encoded_list, device, prof, bucket)
+                idx, q_gap_for_this_step = _argmax_with_timing(
+                    q_nets[p], encoded_list, device, prof, bucket,
+                )
             encoded = encoded_list[idx]
 
-        trajectory.append({"player": p, "encoded": encoded})
+        partner = (p + 2) % 4
+        action_type = int(legal[idx].type)
+        trajectory.append({
+            "player":             p,
+            "encoded":            encoded,
+            "phase_self":         _phase(len(env.hands[p])),
+            "trick_role":         _trick_role(env, partner),
+            "phase_partner":      _phase_with_out(env, partner),
+            "action_type":        action_type,
+            "is_pass":            int(action_type == 0),
+            "is_bomb":            int(action_type >= int(ComboType.BOMB_4)),
+            "num_legal_actions":  K,
+            "q_gap":              q_gap_for_this_step,
+            "chosen_by_epsilon":  chosen_by_epsilon_flag,
+        })
         with prof.time("env_step"):
             env.step(legal[idx])
 
     rewards = env.get_rewards()
     with prof.time("mc_returns"):
-        return compute_mc_returns(trajectory, rewards, gamma=gamma)
+        return compute_mc_returns(
+            trajectory,
+            rewards,
+            gamma=gamma,
+            episode_mode=episode_mode,
+            opponent_id=opponent_id,
+            latest_team=latest_team,
+        )
 
 
 __all__ = ["play_episode", "select_legal", "argmax_q", "argmax_q_role"]

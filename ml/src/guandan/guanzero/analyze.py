@@ -206,6 +206,123 @@ def plot(run_dir: Path, out_path: Path) -> None:
     print(f"wrote {out_path}  ({len(m.updates)} rows, final avg loss {final_avg:.4f})")
 
 
+def _load_phase_rows(metrics_path: Path) -> list[dict]:
+    rows: list[dict] = []
+    for line in metrics_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(r.get("phase"), dict) and r["phase"]:
+            rows.append(r)
+    return rows
+
+
+def _grid_loss_frac(phase: dict, prefix: str, n_cells: int) -> tuple[np.ndarray, np.ndarray]:
+    losses = np.full(n_cells, np.nan, dtype=np.float64)
+    fracs = np.zeros(n_cells, dtype=np.float64)
+    for c in range(n_cells):
+        loss = phase.get(f"{prefix}_{c}_loss")
+        frac = phase.get(f"{prefix}_{c}_frac", 0.0)
+        if loss is not None:
+            losses[c] = float(loss)
+        fracs[c] = float(frac or 0.0)
+    return losses, fracs
+
+
+def _stacked_grad_share(phase_rows: list[dict], prefix: str, n_cells: int) -> np.ndarray:
+    """Compute per-row gradient-share (loss * frac) per cell. NaN losses → 0."""
+    out = np.zeros((len(phase_rows), n_cells), dtype=np.float64)
+    for i, r in enumerate(phase_rows):
+        phase = r["phase"]
+        losses, fracs = _grid_loss_frac(phase, prefix, n_cells)
+        losses = np.where(np.isnan(losses), 0.0, losses)
+        out[i] = losses * fracs
+    return out
+
+
+def _panel_stacked(ax, updates, share, labels, title):
+    n_cells = share.shape[1]
+    cmap = plt.get_cmap("viridis", n_cells)
+    colors = [cmap(i) for i in range(n_cells)]
+    ax.stackplot(updates, share.T, labels=labels, colors=colors, alpha=0.85)
+    ax.set_title(title, fontsize=10)
+    ax.set_xlabel("updates")
+    ax.set_ylabel("loss × frac")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="upper right", fontsize=6, ncol=2)
+
+
+def plot_phase_analysis(run_dir: Path, out_path: Path) -> None:
+    metrics_path = run_dir / "metrics_learner.jsonl"
+    if not metrics_path.exists():
+        raise FileNotFoundError(f"no metrics file at {metrics_path}")
+    phase_rows = _load_phase_rows(metrics_path)
+    if not phase_rows:
+        print(f"no phase sub-dicts in {metrics_path}; skipping phase_analysis.png")
+        return
+
+    updates = np.asarray([r["updates"] for r in phase_rows], dtype=np.int64)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+
+    # Panel 1: phase_role 3x3 (phase_self × trick_role)
+    share = _stacked_grad_share(phase_rows, "phase_role", 9)
+    labels = [f"phase{a}_role{b}" for a in range(3) for b in range(3)]
+    _panel_stacked(axes[0, 0], updates, share, labels, "phase × trick_role")
+
+    # Panel 2: phase_pair 3x4 (phase_self × phase_partner)
+    share = _stacked_grad_share(phase_rows, "phase_pair", 12)
+    labels = [f"phase{a}_part{b}" for a in range(3) for b in range(4)]
+    _panel_stacked(axes[0, 1], updates, share, labels, "phase × phase_partner")
+
+    # Panel 3: source_phase 3x3 (episode_mode × phase_self)
+    share = _stacked_grad_share(phase_rows, "source_phase", 9)
+    labels = [f"src{a}_phase{b}" for a in range(3) for b in range(3)]
+    _panel_stacked(axes[0, 2], updates, share, labels, "episode_mode × phase")
+
+    # Panel 4: opp_phase 6x3 (opp_id-in-top × phase_self)
+    share = _stacked_grad_share(phase_rows, "opp_phase", 18)
+    labels = [f"opp{a}_phase{b}" for a in range(6) for b in range(3)]
+    _panel_stacked(axes[1, 0], updates, share, labels, "opponent × phase")
+
+    # Panel 5: action_phase 6x3
+    share = _stacked_grad_share(phase_rows, "action_phase", 18)
+    labels = [f"act{a}_phase{b}" for a in range(6) for b in range(3)]
+    _panel_stacked(axes[1, 1], updates, share, labels, "action_class × phase")
+
+    # Panel 6: marginal bars at final row
+    last = phase_rows[-1]["phase"]
+    ax = axes[1, 2]
+    marginals = [
+        ("epsilon", 2), ("is_pass", 2), ("is_bomb", 2),
+        ("k_bucket", 4), ("q_gap", 4), ("team", 2), ("reward", 4),
+    ]
+    bar_labels: list[str] = []
+    bar_vals: list[float] = []
+    for prefix, n in marginals:
+        for c in range(n):
+            v = last.get(f"{prefix}_{c}_loss")
+            bar_labels.append(f"{prefix}{c}")
+            bar_vals.append(float(v) if v is not None else float("nan"))
+    xs = np.arange(len(bar_vals))
+    ax.bar(xs, bar_vals, color="#4daf4a")
+    ax.set_xticks(xs)
+    ax.set_xticklabels(bar_labels, rotation=90, fontsize=6)
+    ax.set_title("marginal losses (final row)", fontsize=10)
+    ax.set_ylabel("loss")
+    ax.grid(True, alpha=0.3, axis="y")
+
+    fig.suptitle(f"{run_dir.name} · phase diagnostics ({len(phase_rows)} rows)")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=110)
+    plt.close(fig)
+    print(f"wrote {out_path}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run", required=True, type=Path,
@@ -216,6 +333,11 @@ def main() -> None:
 
     out_path = args.out or (args.run / "analysis.png")
     plot(args.run, out_path)
+    phase_out = args.run / "phase_analysis.png"
+    try:
+        plot_phase_analysis(args.run, phase_out)
+    except FileNotFoundError:
+        pass
 
 
 if __name__ == "__main__":

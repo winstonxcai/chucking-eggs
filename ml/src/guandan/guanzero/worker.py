@@ -19,6 +19,14 @@ from .actor import play_episode
 from .encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from .encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
 from .profiler import PhaseProfiler
+from .sample_tags import (
+    EPISODE_MODE_SELF_PLAY,
+    EPISODE_MODE_VS_CHECKPOINT,
+    EPISODE_MODE_VS_HARD_BOT,
+    OPPONENT_BY_NAME,
+    OPPONENT_CHECKPOINT_BASE,
+    OPPONENT_NONE,
+)
 
 
 def maybe_sync_weights_base(
@@ -244,6 +252,19 @@ def actor_loop(
     buf_players: list[int]   = []
     buf_returns: list[float] = []
     buf_buckets: list[int]   = []
+    buf_phase_self:        list[int]   = []
+    buf_trick_role:        list[int]   = []
+    buf_phase_partner:     list[int]   = []
+    buf_action_type:       list[int]   = []
+    buf_is_pass:           list[int]   = []
+    buf_is_bomb:           list[int]   = []
+    buf_num_legal:         list[int]   = []
+    buf_q_gap:             list[float] = []
+    buf_chosen_by_epsilon: list[int]   = []
+    buf_episode_mode:      list[int]   = []
+    buf_opponent_id:       list[int]   = []
+    buf_latest_team:       list[int]   = []
+    buf_terminal_reward:   list[float] = []
     rng = random.Random(cfg.seed + actor_id * 10_000)
 
     def _sample_sync_threshold() -> int:
@@ -262,24 +283,33 @@ def actor_loop(
     snapshot_every_episodes = max(1, cfg.log_every_updates * 10)
 
     def _push_buffered() -> None:
-        nonlocal buf_dicts, buf_players, buf_returns, buf_buckets
         if len(buf_dicts) < cfg.actor_push_batch_size:
             return
         with prof.time("buffer_stack"):
-            # Use the encoder's own channel_keys for the shared-head path so
-            # both absolute_seat (seat_id) and trick_relative (trick_head_id)
-            # schemas stack the right fields.
             if shared_path:
                 keys = encoder.channel_keys
             else:
                 keys = ENCODE_CHANNEL_KEYS
             stacked = {k: np.stack([d[k] for d in buf_dicts], axis=0) for k in keys}
             msg = {
-                "actor_id": actor_id,
-                "version":  local_version,
-                "stacked":  stacked,
-                "returns":  np.asarray(buf_returns, dtype=np.float32),
-                "buckets":  np.asarray(buf_buckets, dtype=np.int8),
+                "actor_id":          actor_id,
+                "version":           local_version,
+                "stacked":           stacked,
+                "returns":           np.asarray(buf_returns, dtype=np.float32),
+                "buckets":           np.asarray(buf_buckets, dtype=np.int8),
+                "phase_self":        np.asarray(buf_phase_self,        dtype=np.int8),
+                "trick_role":        np.asarray(buf_trick_role,        dtype=np.int8),
+                "phase_partner":     np.asarray(buf_phase_partner,     dtype=np.int8),
+                "action_type":       np.asarray(buf_action_type,       dtype=np.int8),
+                "is_pass":           np.asarray(buf_is_pass,           dtype=np.int8),
+                "is_bomb":           np.asarray(buf_is_bomb,           dtype=np.int8),
+                "num_legal_actions": np.asarray(buf_num_legal,         dtype=np.int16),
+                "q_gap":             np.asarray(buf_q_gap,             dtype=np.float32),
+                "chosen_by_epsilon": np.asarray(buf_chosen_by_epsilon, dtype=np.int8),
+                "episode_mode":      np.asarray(buf_episode_mode,      dtype=np.int8),
+                "opponent_id":       np.asarray(buf_opponent_id,       dtype=np.int8),
+                "latest_team":       np.asarray(buf_latest_team,       dtype=np.int8),
+                "terminal_reward":   np.asarray(buf_terminal_reward,   dtype=np.float32),
             }
             if not shared_path:
                 msg["players"] = np.asarray(buf_players, dtype=np.int8)
@@ -292,6 +322,19 @@ def actor_loop(
         buf_players.clear()
         buf_returns.clear()
         buf_buckets.clear()
+        buf_phase_self.clear()
+        buf_trick_role.clear()
+        buf_phase_partner.clear()
+        buf_action_type.clear()
+        buf_is_pass.clear()
+        buf_is_bomb.clear()
+        buf_num_legal.clear()
+        buf_q_gap.clear()
+        buf_chosen_by_epsilon.clear()
+        buf_episode_mode.clear()
+        buf_opponent_id.clear()
+        buf_latest_team.clear()
+        buf_terminal_reward.clear()
 
     n_inference_timeouts = 0
     while not stop_event.is_set():
@@ -326,6 +369,9 @@ def actor_loop(
         q_net_frozen_this_ep = None
         active_hard_bot = None  # Agent | dict[int, Agent] | None
         active_bot_name: str | None = None
+        episode_mode = EPISODE_MODE_SELF_PLAY
+        opponent_id = OPPONENT_NONE
+        latest_team = 0
 
         if hard_bots_pool:
             u = rng.random()
@@ -336,13 +382,14 @@ def actor_loop(
                 if rng.random() < cfg.latest_odd_probability:
                     seat_a, seat_b = 0, 2  # opp on even → latest on odd
                     team_counts["latest_odd"] += 1
+                    latest_team = 1
                 else:
                     seat_a, seat_b = 1, 3  # opp on odd → latest on even
                     team_counts["latest_even"] += 1
+                    latest_team = 0
                 hard_bot_seats = frozenset({seat_a, seat_b})
 
                 if pair_names:
-                    # Mixed-pair sampling: draw a pair, assign to two seats.
                     pair_key = rng.choices(pair_names, weights=pair_weights, k=1)[0]
                     pair_pick_counts[pair_key] += 1
                     name_a, name_b = pair_key.split("_")
@@ -352,7 +399,8 @@ def actor_loop(
                         active_hard_bot = {seat_a: bot_a, seat_b: bot_b}
                     else:
                         active_hard_bot = {seat_a: bot_b, seat_b: bot_a}
-                    active_bot_name = "yaoji" if "yaoji" in pair_key else None
+                    active_bot_name = "yaoji" if "yaoji" in pair_key else name_a
+                    opponent_id = OPPONENT_BY_NAME.get(active_bot_name, OPPONENT_NONE)
                 else:
                     if hard_bot_weights is not None:
                         pick = rng.choices(
@@ -362,9 +410,10 @@ def actor_loop(
                         pick = rng.randrange(len(hard_bots_pool))
                     active_bot_name, active_hard_bot = hard_bots_pool[pick]
                     hard_bot_pick_counts[pick] += 1
+                    opponent_id = OPPONENT_BY_NAME.get(active_bot_name, OPPONENT_NONE)
+                episode_mode = EPISODE_MODE_VS_HARD_BOT
                 mode_counts["vs_hard_bot"] += 1
             else:
-                # leftover probability mass when fracs sum to < 1
                 mode_counts["self_play"] += 1
         elif frozen_nets:
             use_frozen = rng.random() >= cfg.latest_vs_latest_frac
@@ -375,9 +424,13 @@ def actor_loop(
                 if rng.random() < cfg.latest_odd_probability:
                     frozen_seats = frozenset({0, 2})   # opp on even → latest on odd
                     team_counts["latest_odd"] += 1
+                    latest_team = 1
                 else:
                     frozen_seats = frozenset({1, 3})   # opp on odd → latest on even
                     team_counts["latest_even"] += 1
+                    latest_team = 0
+                episode_mode = EPISODE_MODE_VS_CHECKPOINT
+                opponent_id = OPPONENT_CHECKPOINT_BASE + pick
                 mode_counts["vs_frozen"] += 1
             else:
                 mode_counts["self_play"] += 1
@@ -400,6 +453,9 @@ def actor_loop(
                 epsilon_frozen=cfg.epsilon.frozen,
                 hard_bots=active_hard_bot,
                 hard_bot_seats=hard_bot_seats,
+                episode_mode=episode_mode,
+                opponent_id=opponent_id,
+                latest_team=latest_team,
             )
         except Exception as e:
             from .inference_server import InferenceTimeoutError
@@ -436,6 +492,19 @@ def actor_loop(
             buf_dicts.append(s.encoded)
             buf_players.append(s.player)
             buf_returns.append(s.mc_return)
+            buf_phase_self.append(s.phase_self)
+            buf_trick_role.append(s.trick_role)
+            buf_phase_partner.append(s.phase_partner)
+            buf_action_type.append(s.action_type)
+            buf_is_pass.append(s.is_pass)
+            buf_is_bomb.append(s.is_bomb)
+            buf_num_legal.append(s.num_legal_actions)
+            buf_q_gap.append(s.q_gap)
+            buf_chosen_by_epsilon.append(s.chosen_by_epsilon)
+            buf_episode_mode.append(s.episode_mode)
+            buf_opponent_id.append(s.opponent_id)
+            buf_latest_team.append(s.latest_team)
+            buf_terminal_reward.append(s.terminal_reward)
 
             if not is_hard_bot_ep:
                 sample_bucket = 0  # general_self_play

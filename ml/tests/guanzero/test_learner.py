@@ -45,10 +45,33 @@ def _role_stacked(n: int) -> dict[str, np.ndarray]:
     return stacked
 
 
-def _role_buffer(n: int = 32) -> RoleAwareReplayBuffer:
+def _role_buffer(n: int = 32, tags: dict | None = None) -> RoleAwareReplayBuffer:
     buf = RoleAwareReplayBuffer(capacity=n)
-    buf.push_stacked(_role_stacked(n), np.linspace(-1.0, 1.0, n, dtype=np.float32))
+    buf.push_stacked(
+        _role_stacked(n),
+        np.linspace(-1.0, 1.0, n, dtype=np.float32),
+        tags=tags,
+    )
     return buf
+
+
+def _full_tags(n: int) -> dict:
+    """Build a tag dict that exercises every grid + marginal cell at least once."""
+    return {
+        "phase_self":        np.asarray([i % 3 for i in range(n)], dtype=np.int8),
+        "trick_role":        np.asarray([i % 3 for i in range(n)], dtype=np.int8),
+        "phase_partner":     np.asarray([i % 4 for i in range(n)], dtype=np.int8),
+        "action_type":       np.asarray([i % 17 for i in range(n)], dtype=np.int8),
+        "is_pass":           np.asarray([i % 2 for i in range(n)], dtype=np.int8),
+        "is_bomb":           np.asarray([(i + 1) % 2 for i in range(n)], dtype=np.int8),
+        "num_legal_actions": np.asarray([(i % 25) + 1 for i in range(n)], dtype=np.int16),
+        "q_gap":             np.asarray([np.nan if i % 4 == 0 else (i % 10) * 0.05 for i in range(n)], dtype=np.float32),
+        "chosen_by_epsilon": np.asarray([i % 2 for i in range(n)], dtype=np.int8),
+        "episode_mode":      np.asarray([i % 3 for i in range(n)], dtype=np.int8),
+        "opponent_id":       np.asarray([i % 6 for i in range(n)], dtype=np.int8),
+        "latest_team":       np.asarray([i % 2 for i in range(n)], dtype=np.int8),
+        "terminal_reward":   np.asarray([float((i % 7) - 3) for i in range(n)], dtype=np.float32),
+    }
 
 
 def test_publish_and_load_weights():
@@ -128,3 +151,72 @@ def test_publish_weights_shared_roundtrip_and_sync():
         assert global_updates == 0
         for key, value in q_net.state_dict().items():
             assert torch.equal(value, actor_net.state_dict()[key])
+
+
+def test_per_bucket_loss_emitted_all_grids():
+    torch.manual_seed(2)
+    net = SharedHeadQNet(_small_shared_cfg())
+    learner = SharedHeadLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
+    n = 512
+    buf = _role_buffer(n, tags=_full_tags(n))
+
+    metrics = learner.update(buf, batch_size=128)
+
+    assert metrics is not None
+    # All five grids: phase_role(9), phase_pair(12), source_phase(9), opp_phase(18), action_phase(18)
+    for prefix, n_cells in [
+        ("phase_role", 9), ("phase_pair", 12), ("source_phase", 9),
+        ("opp_phase", 18), ("action_phase", 18),
+    ]:
+        for c in range(n_cells):
+            assert f"{prefix}_{c}_n" in metrics
+            assert f"{prefix}_{c}_frac" in metrics
+            assert f"{prefix}_{c}_loss" in metrics
+    # All seven marginals
+    for prefix, n_cells in [
+        ("epsilon", 2), ("is_pass", 2), ("is_bomb", 2),
+        ("k_bucket", 4), ("q_gap", 4), ("team", 2), ("reward", 4),
+    ]:
+        for c in range(n_cells):
+            assert f"{prefix}_{c}_n" in metrics
+            assert f"{prefix}_{c}_frac" in metrics
+            assert f"{prefix}_{c}_loss" in metrics
+
+
+def test_sparse_cell_emits_null_loss():
+    torch.manual_seed(3)
+    net = SharedHeadQNet(_small_shared_cfg())
+    learner = SharedHeadLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
+    n = 64
+    tags = _full_tags(n)
+    # Force every sample to land in the same phase_role cell (a=0, b=0); other
+    # cells will be empty so their loss must be None.
+    tags["phase_self"][:] = 0
+    tags["trick_role"][:] = 0
+    buf = _role_buffer(n, tags=tags)
+
+    metrics = learner.update(buf, batch_size=32)
+    assert metrics is not None
+    # Cell 0 (a=0, b=0) is populated; cells 1..8 are empty → None loss.
+    assert metrics["phase_role_0_n"] > 0
+    for c in range(1, 9):
+        assert metrics[f"phase_role_{c}_n"] == 0
+        assert metrics[f"phase_role_{c}_loss"] is None
+
+
+def test_q_gap_nan_handled():
+    torch.manual_seed(4)
+    net = SharedHeadQNet(_small_shared_cfg())
+    learner = SharedHeadLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
+    n = 128
+    tags = _full_tags(n)
+    # Set every q_gap to NaN; should land them all in bucket 0 without crashing.
+    tags["q_gap"][:] = np.nan
+    buf = _role_buffer(n, tags=tags)
+
+    metrics = learner.update(buf, batch_size=64)
+    assert metrics is not None
+    assert metrics["q_gap_0_n"] > 0
+    # Other q_gap buckets should be empty.
+    for c in range(1, 4):
+        assert metrics[f"q_gap_{c}_n"] == 0

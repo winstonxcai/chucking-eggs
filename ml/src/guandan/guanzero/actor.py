@@ -228,10 +228,10 @@ def play_episode(
         q_gap_for_this_step = float("nan")
         chosen_by_epsilon_flag = 0
         if K == 1:
+            idx = 0
             prof.add_count("shortcut_K1", 1)
-            with prof.time("env_step"):
-                env.step(legal[0])
-            continue
+            with prof.time("encode_selected"):
+                encoded = encoder.encode_one(env, p, legal[idx], legal)
         elif random.random() < eps_p:
             idx = random.randrange(K)
             chosen_by_epsilon_flag = 1

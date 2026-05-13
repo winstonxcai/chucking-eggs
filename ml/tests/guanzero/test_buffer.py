@@ -255,6 +255,7 @@ def test_buffer_roundtrips_all_tags():
         "action_type":       np.asarray([i % 17 for i in range(n)], dtype=np.int8),
         "is_pass":           np.asarray([i % 2 for i in range(n)], dtype=np.int8),
         "is_bomb":           np.asarray([(i + 1) % 2 for i in range(n)], dtype=np.int8),
+        "bomb_available":    np.asarray([i % 2 for i in range(n)], dtype=np.int8),
         "num_legal_actions": np.asarray([i + 1 for i in range(n)], dtype=np.int16),
         "q_gap":             np.asarray([np.nan if i == 0 else i * 0.01 for i in range(n)], dtype=np.float32),
         "chosen_by_epsilon": np.asarray([i % 2 for i in range(n)], dtype=np.int8),

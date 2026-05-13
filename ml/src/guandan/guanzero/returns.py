@@ -33,6 +33,7 @@ class TrajectoryStep(TypedDict, total=False):
     action_type: int
     is_pass: int
     is_bomb: int
+    bomb_available: int
     num_legal_actions: int
     q_gap: float
     chosen_by_epsilon: int
@@ -50,6 +51,7 @@ class TrainSample:
     action_type: int = 0
     is_pass: int = 0
     is_bomb: int = 0
+    bomb_available: int = 0
     num_legal_actions: int = 0
     q_gap: float = float("nan")
     chosen_by_epsilon: int = 0
@@ -111,6 +113,7 @@ def compute_mc_returns(
             action_type=int(step.get("action_type", 0)),
             is_pass=int(step.get("is_pass", 0)),
             is_bomb=int(step.get("is_bomb", 0)),
+            bomb_available=int(step.get("bomb_available", 0)),
             num_legal_actions=int(step.get("num_legal_actions", 0)),
             q_gap=float(step.get("q_gap", float("nan"))),
             chosen_by_epsilon=int(step.get("chosen_by_epsilon", 0)),

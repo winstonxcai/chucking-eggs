@@ -1,16 +1,20 @@
 # GuanZero M3 v3 League — checkpoint population self-play, trick-relative heads.
 #
 # Branches from guanzero_trick_head_10k at update 5000. 50% of episodes pit the
-# latest policy against a frozen v3 snapshot (2.5k or 5k), creating a widening
-# skill gap vs pure latest-vs-latest. Architecture identical to m3_trick_head_l4.
+# latest policy against a frozen v3 snapshot (2.5k or 5k). Architecture identical
+# to m3_trick_head_l4.
 #
-# Launch:
+# v1 launch (5k → 10k):
 #   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
 #     --config-path /root/ml/src/guandan/guanzero/config/m3_trick_head_league_l4.yaml \
-#     --updates 10000 \
-#     --run-name guanzero_trick_head_league \
-#     --resume /runs/guanzero/guanzero_trick_head_10k/checkpoints/update_00005000.pt \
-#     --seed 0
+#     --updates 10000 --run-name guanzero_trick_head_league \
+#     --resume /runs/guanzero/guanzero_trick_head_10k/checkpoints/update_00005000.pt --seed 0
+#
+# v1 extension (10k → 15k, same pool):
+#   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
+#     --config-path /root/ml/src/guandan/guanzero/config/m3_trick_head_league_l4.yaml \
+#     --updates 15000 --run-name guanzero_trick_head_league_v1ext \
+#     --resume /runs/guanzero/guanzero_trick_head_league/checkpoints/update_00010000.pt --seed 0
 
 n_actors: 32
 sync_interval_updates: 500
@@ -51,14 +55,20 @@ buffer_capacity: 400000
 buffer_capacity_per_player: 100000
 buffer_min_size: 32768
 
-epsilon_start: 0.10
-epsilon_final: 0.03
-epsilon_decay_updates: 50000
+epsilon_start: 0.02
+epsilon_final: 0.02
+epsilon_decay_updates: 5000
 epsilon_frozen: 0.00
 is_partner_visible: true
 
 latest_vs_latest_frac: 0.50
 latest_vs_hard_bot_frac: 0.0
+
+replay_mix:
+  general: 0.55
+  pivotal_qgap: 0.25
+  partner_active_coordination: 0.15
+  bomb_decision: 0.05
 
 population_pool:
   - /runs/guanzero/guanzero_trick_head_10k/checkpoints/update_00002500.pt

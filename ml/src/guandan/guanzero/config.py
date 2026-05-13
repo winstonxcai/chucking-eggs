@@ -35,7 +35,7 @@ class QNetConfig:
     hidden_mlp: int = 1024
     n_mlp_layers: int = 6
     dropout: float = 0.0
-    use_oracle_others_hand: bool = True
+    is_partner_visible: bool = True
     history_encoder: str = "lstm"       # "lstm" | "transformer"
     transformer_nhead: int = 4          # heads; hidden_lstm / nhead = dim/head
     transformer_layers: int = 2
@@ -111,6 +111,15 @@ _INFERENCE_FLAT_MAP: dict[str, str] = {
 _QNET_FIELDS: frozenset[str] = frozenset(
     f.name for f in dataclasses.fields(QNetConfig)
 )
+
+# Renamed QNetConfig fields. Old key → new key. Values from old checkpoints/yaml
+# are preserved when the new field accepts the same value. is_partner_visible
+# changed semantics from "all opponents + partner visible" to "partner only",
+# so old True maps to new True (closer in spirit than False) and old checkpoints
+# will eval with the new partner-only inputs (accepted distribution shift).
+_QNET_RENAMED_FIELDS: dict[str, str] = {
+    "use_oracle_others_hand": "is_partner_visible",
+}
 
 
 # ─── TrainConfig ─────────────────────────────────────────────
@@ -208,9 +217,10 @@ class TrainConfig:
     latest_odd_probability: float = 0.5   # fraction of vs-hard-bot episodes with latest on odd team
 
     def __post_init__(self) -> None:
-        if self.model_type not in ("seat_nets", "shared_heads"):
+        if self.model_type not in ("seat_nets", "shared_heads", "shared_trick_heads"):
             raise ValueError(
-                f"Unknown model_type {self.model_type!r}; expected 'seat_nets' or 'shared_heads'"
+                f"Unknown model_type {self.model_type!r}; expected "
+                f"'seat_nets', 'shared_heads', or 'shared_trick_heads'"
             )
         if not 0.0 <= self.latest_vs_latest_frac <= 1.0:
             raise ValueError(
@@ -286,7 +296,10 @@ class TrainConfig:
                 k: v / total for k, v in self.hard_bot_pair_sampling.items()
             }
         if self.replay_mix:
-            valid_keys = {"general", "hard_bot_general", "coordination_endgame"}
+            valid_keys = {
+                "general", "hard_bot_general", "coordination_endgame",
+                "pivotal_qgap", "partner_active_coordination", "bomb_decision",
+            }
             unknown = set(self.replay_mix) - valid_keys
             if unknown:
                 raise ValueError(f"replay_mix has unknown key(s): {sorted(unknown)}. Valid: {sorted(valid_keys)}")
@@ -333,7 +346,12 @@ class TrainConfig:
 
         if isinstance(d.get("qnet"), dict):
             # ── Nested form (new checkpoints / round-tripped asdict) ──
-            qnet      = QNetConfig(**d["qnet"])
+            qnet_d = {
+                _QNET_RENAMED_FIELDS.get(k, k): v
+                for k, v in d["qnet"].items()
+                if _QNET_RENAMED_FIELDS.get(k, k) in _QNET_FIELDS
+            }
+            qnet      = QNetConfig(**qnet_d)
             epsilon_kw: dict[str, Any] = {}
             inference_kw: dict[str, Any] = {}
             for k, v in d.items():
@@ -371,7 +389,9 @@ class TrainConfig:
         for k, v in d.items():
             if k in _REMOVED_FIELDS:
                 continue
-            if k in _QNET_FIELDS:
+            if k in _QNET_RENAMED_FIELDS:
+                qnet_kw[_QNET_RENAMED_FIELDS[k]] = v
+            elif k in _QNET_FIELDS:
                 qnet_kw[k] = v
             elif k in _EPSILON_FLAT_MAP:
                 epsilon_kw[_EPSILON_FLAT_MAP[k]] = v
@@ -414,6 +434,25 @@ def shared_head_qnet_config(cfg: TrainConfig):
     )
 
 
+def shared_trick_head_qnet_config(cfg: TrainConfig):
+    """Assemble SharedTrickHeadQNetConfig from TrainConfig flat fields.
+
+    The hyperparameter set is identical to shared_heads; only the routing /
+    embedding structure differs (no seat_emb, wider player_blocks).
+    """
+    from .q_network import SharedTrickHeadQNetConfig
+
+    return SharedTrickHeadQNetConfig(
+        role_d_model=cfg.shared_head_role_d_model,
+        history_hidden=cfg.shared_head_history_hidden,
+        global_hidden=cfg.shared_head_global_hidden,
+        action_hidden=cfg.shared_head_action_hidden,
+        trunk_hidden=cfg.shared_head_trunk_hidden,
+        trunk_layers=cfg.shared_head_trunk_layers,
+        dropout=cfg.qnet.dropout,
+    )
+
+
 def load_config_from_cli(
     yaml_path: str | Path | None,
     quick: bool,
@@ -442,6 +481,7 @@ __all__ = [
     "EpsilonConfig",
     "InferenceConfig",
     "shared_head_qnet_config",
+    "shared_trick_head_qnet_config",
     "load_config_from_yaml",
     "load_config_from_cli",
 ]

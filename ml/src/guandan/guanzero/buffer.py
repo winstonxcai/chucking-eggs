@@ -242,6 +242,7 @@ class RoleAwareReplayBuffer:
         self.action_type       = np.zeros(capacity, dtype=np.int8)
         self.is_pass           = np.zeros(capacity, dtype=np.int8)
         self.is_bomb           = np.zeros(capacity, dtype=np.int8)
+        self.bomb_available    = np.zeros(capacity, dtype=np.int8)
         self.num_legal_actions = np.zeros(capacity, dtype=np.int16)
         self.q_gap             = np.full(capacity, np.nan, dtype=np.float32)
         self.chosen_by_epsilon = np.zeros(capacity, dtype=np.int8)
@@ -277,6 +278,7 @@ class RoleAwareReplayBuffer:
         ("action_type",       np.int8),
         ("is_pass",           np.int8),
         ("is_bomb",           np.int8),
+        ("bomb_available",    np.int8),
         ("num_legal_actions", np.int16),
         ("q_gap",             np.float32),
         ("chosen_by_epsilon", np.int8),
@@ -427,6 +429,12 @@ class RoleAwareReplayBuffer:
         all_idx = np.arange(n)
         hbg_idx = np.flatnonzero(buckets_arr >= 1)
         coord_idx = np.flatnonzero(buckets_arr == 2)
+        q_gap_arr = self.q_gap[:n]
+        pivotal_idx = np.flatnonzero(~np.isnan(q_gap_arr) & (q_gap_arr < 0.05))
+        partner_coord_idx = np.flatnonzero(self.trick_role[:n] == 1)
+        bomb_idx = np.flatnonzero(
+            (self.is_bomb[:n] == 1) | (self.bomb_available[:n] == 1)
+        )
 
         def _pool_for(key: str) -> np.ndarray:
             if key == "general":
@@ -436,8 +444,13 @@ class RoleAwareReplayBuffer:
             if key == "coordination_endgame":
                 if len(coord_idx) > 0:
                     return coord_idx
-                # Backfill from hard_bot_general, not self-play
                 return hbg_idx if len(hbg_idx) > 0 else all_idx
+            if key == "pivotal_qgap":
+                return pivotal_idx if len(pivotal_idx) > 0 else all_idx
+            if key == "partner_active_coordination":
+                return partner_coord_idx if len(partner_coord_idx) > 0 else all_idx
+            if key == "bomb_decision":
+                return bomb_idx if len(bomb_idx) > 0 else all_idx
             raise ValueError(f"Unknown replay_mix key: {key!r}")
 
         idx_parts: list[np.ndarray] = []

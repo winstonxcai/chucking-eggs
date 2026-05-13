@@ -270,6 +270,7 @@ def play_episode(
             "action_type":        action_type,
             "is_pass":            int(action_type == 0),
             "is_bomb":            int(action_type >= int(ComboType.BOMB_4)),
+            "bomb_available":     int(any(m.type >= ComboType.BOMB_4 for m in legal)),
             "num_legal_actions":  K,
             "q_gap":              q_gap_for_this_step,
             "chosen_by_epsilon":  chosen_by_epsilon_flag,

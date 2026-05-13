@@ -258,6 +258,7 @@ def actor_loop(
     buf_action_type:       list[int]   = []
     buf_is_pass:           list[int]   = []
     buf_is_bomb:           list[int]   = []
+    buf_bomb_available:    list[int]   = []
     buf_num_legal:         list[int]   = []
     buf_q_gap:             list[float] = []
     buf_chosen_by_epsilon: list[int]   = []
@@ -303,6 +304,7 @@ def actor_loop(
                 "action_type":       np.asarray(buf_action_type,       dtype=np.int8),
                 "is_pass":           np.asarray(buf_is_pass,           dtype=np.int8),
                 "is_bomb":           np.asarray(buf_is_bomb,           dtype=np.int8),
+                "bomb_available":    np.asarray(buf_bomb_available,    dtype=np.int8),
                 "num_legal_actions": np.asarray(buf_num_legal,         dtype=np.int16),
                 "q_gap":             np.asarray(buf_q_gap,             dtype=np.float32),
                 "chosen_by_epsilon": np.asarray(buf_chosen_by_epsilon, dtype=np.int8),
@@ -328,6 +330,7 @@ def actor_loop(
         buf_action_type.clear()
         buf_is_pass.clear()
         buf_is_bomb.clear()
+        buf_bomb_available.clear()
         buf_num_legal.clear()
         buf_q_gap.clear()
         buf_chosen_by_epsilon.clear()
@@ -498,6 +501,7 @@ def actor_loop(
             buf_action_type.append(s.action_type)
             buf_is_pass.append(s.is_pass)
             buf_is_bomb.append(s.is_bomb)
+            buf_bomb_available.append(s.bomb_available)
             buf_num_legal.append(s.num_legal_actions)
             buf_q_gap.append(s.q_gap)
             buf_chosen_by_epsilon.append(s.chosen_by_epsilon)

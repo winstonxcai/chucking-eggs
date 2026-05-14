@@ -11,12 +11,18 @@ from typing import Callable, Mapping
 import numpy as np
 import torch
 
-from ...cards import Card, ComboType, card_to_id
+import math
+
+from ...cards import ComboType
 from ...combos import Combo
 from ...game import GuanDanEnv
 from ..data.buffer import collate_base_encoded, collate_role_encoded
 from ..model.encoding.base_encoder import StateActionEncoder
-from ..model.encoding.role_encoder import RoleAwareStateActionEncoder
+from ..model.encoding.role_encoder import (
+    ROLE_ENCODE_CHANNEL_SHAPES,
+    ROLE_ENCODE_STATE_KEYS,
+    RoleAwareStateActionEncoder,
+)
 from ..utils.legal_utils import dedup_strategic
 from ..utils.profiler import PhaseProfiler, _k_bucket
 from ..model.q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet
@@ -291,80 +297,55 @@ def play_episode(
         )
 
 
-# ─── Rust rollout support ────────────────────────────────────────────────────
+# ─── Rust rollout support (Phase 2: bytes-based scorer) ─────────────────────
+#
+# Rust encodes the full game state to f32 bytes. Python only needs to:
+#   1. np.frombuffer the bytes into channel arrays   (zero-copy)
+#   2. Build state_batch / action_batch tensors      (~10 tensor views)
+#   3. Run NN forward                                (the bottleneck)
+#   4. Pack the chosen action's encoding into a dict (stored in trajectory)
+#
+# This eliminates the Phase 1 overhead of serializing the full game state to a
+# Python dict and reconstructing multihots from scratch on every step.
 
-_CARD_ID_DIM = 108
+# Precompute state channel layout from role_encoder constants (once at import).
+# Each entry: (channel_key, shape_tuple, byte_offset_in_f32s, num_f32s)
+_STATE_CHANNELS: list[tuple[str, tuple[int, ...], int, int]] = []
+_off = 0
+for _key in ROLE_ENCODE_STATE_KEYS:
+    _shape = ROLE_ENCODE_CHANNEL_SHAPES[_key]
+    _numel = math.prod(_shape) if _shape else 1
+    _STATE_CHANNELS.append((_key, _shape, _off, _numel))
+    _off += _numel
+del _off, _key, _shape, _numel
+
+_ACTION_DIM = 108  # candidate_action only — matches encoder::ACTION_DIM in Rust
 
 
-def _card_tuple_to_id(rank: int, suit: int, deck: int) -> int:
-    """Convert a raw (rank, suit, deck) int triple to a stable card id in [0, 108)."""
-    if rank == 16:   # BLACK_JOKER
-        return 104 + deck
-    if rank == 17:   # RED_JOKER
-        return 106 + deck
-    return (rank - 2) * 8 + suit * 2 + deck
+def _build_encoded_dict(
+    state_bytes: bytes,
+    action_bytes: bytes,
+    idx: int,
+    n_actions: int,
+    head_id: int,
+    head_field: str,
+) -> dict[str, np.ndarray]:
+    """Build the numpy-dict encoding for the idx-th action from byte buffers.
 
-
-def _combo_from_tuple(t: tuple) -> Combo:
-    """Convert a PyCombo tuple from Rust to a Python Combo with Card objects."""
-    combo_type, key, raw_cards, length, wild_count = t
-    cards = [Card(rank, suit, deck) for rank, suit, deck in raw_cards]
-    return Combo(ComboType(combo_type), key, cards, length, wild_count)
-
-
-class SnapshotEnv:
-    """Duck-typed GuanDanEnv reconstructed from a Rust EpisodeState snapshot dict.
-
-    Consumed by StateActionEncoder and RoleAwareStateActionEncoder in place of a
-    live GuanDanEnv. All encoder-facing attributes are present and compatible.
+    The returned dict has the same layout as RoleAwareStateActionEncoder.encode_one
+    so it is transparently accepted by the replay buffer and collate functions.
+    Arrays are copied from the buffer so state_bytes can be freed immediately.
     """
-
-    __slots__ = (
-        "level_rank",
-        "current_trick",
-        "trick_winner",
-        "consecutive_passes",
-        "finish_order",
-        "is_out",
-        "hands",
-        "move_history",
-        "hand_multihot",
-        "played_multihot",
-        "bombs_played",
+    state_arr = np.frombuffer(state_bytes, dtype=np.float32)
+    enc: dict[str, np.ndarray] = {}
+    for key, shape, off, numel in _STATE_CHANNELS:
+        enc[key] = state_arr[off : off + numel].reshape(shape).copy()
+    action_arr = np.frombuffer(action_bytes, dtype=np.float32).reshape(
+        n_actions, _ACTION_DIM
     )
-
-    def __init__(self, snap: dict) -> None:
-        self.level_rank: int = snap["level_rank"]
-        self.consecutive_passes: int = snap["consecutive_passes"]
-        self.finish_order: list[int] = snap["finish_order"]
-        self.is_out: list[bool] = snap["is_out"]
-        self.trick_winner: int | None = snap["trick_winner"]
-
-        raw_trick = snap["current_trick"]
-        self.current_trick: Combo | None = (
-            _combo_from_tuple(raw_trick) if raw_trick is not None else None
-        )
-
-        # Hands as lists of raw tuples — encoders only need len(), not card access.
-        self.hands: list[list] = [list(h) for h in snap["hands"]]
-
-        # Move history as (player, Combo) pairs matching GuanDanEnv.move_history.
-        self.move_history: list[tuple[int, Combo]] = [
-            (p, _combo_from_tuple(c)) for p, c in snap["move_history"]
-        ]
-
-        # Precompute multihot arrays from raw card tuples.
-        self.hand_multihot = np.zeros((4, _CARD_ID_DIM), dtype=np.uint8)
-        for seat, cards in enumerate(snap["hands"]):
-            for rank, suit, deck in cards:
-                self.hand_multihot[seat, _card_tuple_to_id(rank, suit, deck)] = 1
-
-        self.played_multihot = np.zeros((4, _CARD_ID_DIM), dtype=np.uint8)
-        for seat, cards in enumerate(snap["played_cards"]):
-            for rank, suit, deck in cards:
-                self.played_multihot[seat, _card_tuple_to_id(rank, suit, deck)] = 1
-
-        self.bombs_played = np.array(snap["bombs_played"], dtype=np.uint8)
+    enc["candidate_action"] = action_arr[idx].copy()
+    enc[head_field] = np.array(head_id, dtype=np.int64)
+    return enc
 
 
 def make_scorer(
@@ -372,53 +353,75 @@ def make_scorer(
     encoder: StateActionEncoder | RoleAwareStateActionEncoder,
     device: torch.device | str,
     epsilon: float,
-) -> Callable[[dict, list, int], tuple]:
-    """Return a scorer closure for use with guandan_rs.play_episode_rust.
+) -> Callable[[bytes, bytes, int], tuple]:
+    """Return a scorer closure for use with guandan_rs.play_episode_rust (Phase 2).
 
-    The closure captures q_nets, encoder, device, and epsilon. It is called once
-    per decision step from the Rust episode loop with signature:
-        scorer(state_dict, legal_tuples, player) -> (idx, encoded, q_gap, chosen_by_epsilon)
+    The closure is called once per decision by the Rust loop with signature:
+        scorer(state_bytes, action_bytes, head_id)
+            -> (idx, encoded_dict, q_gap, chosen_by_epsilon)
+
+    `state_bytes` and `action_bytes` are flat f32 buffers produced by the Rust
+    encoder (layout matches ROLE_ENCODE_STATE_KEYS / ACTION_DIM). Only the shared-
+    head (RoleAwareStateActionEncoder + absolute_seat) path is supported; the
+    worker guards against other combinations before calling play_episode_rust.
     """
     device = torch.device(device)
     shared_path = isinstance(q_nets, (SharedHeadQNet, SharedTrickHeadQNet))
+    head_field: str = getattr(encoder, "head_field", "seat_id")
 
-    def scorer(state_dict: dict, legal_tuples: list, player: int) -> tuple:
-        snap = SnapshotEnv(state_dict)
-        legal = [_combo_from_tuple(t) for t in legal_tuples]
-        k = len(legal)
+    def scorer(state_bytes: bytes, action_bytes: bytes, head_id: int) -> tuple:
+        n_actions = len(action_bytes) // (_ACTION_DIM * 4)
 
-        if k == 1:
-            encoded = encoder.encode_one(snap, player, legal[0], legal)
-            return 0, encoded, float("nan"), 0
-
-        if random.random() < epsilon:
-            idx = random.randrange(k)
-            encoded = encoder.encode_one(snap, player, legal[idx], legal)
-            return idx, encoded, float("nan"), 1
-
-        encoded_list = encoder.encode_all(snap, player, legal)
-        if shared_path:
-            state_batch, action_batch, repeats = collate_role_encoded(
-                [encoded_list], device=device
+        if n_actions == 1 or random.random() < epsilon:
+            idx = 0 if n_actions == 1 else random.randrange(n_actions)
+            chosen = 0 if n_actions == 1 else 1
+            encoded = _build_encoded_dict(
+                state_bytes, action_bytes, idx, n_actions, head_id, head_field
             )
-            with torch.inference_mode():
+            return idx, encoded, float("nan"), chosen
+
+        # np.frombuffer returns a read-only view; copy once so torch.from_numpy
+        # gets a writable array (avoids PyTorch non-writable-tensor warning).
+        state_arr = np.frombuffer(state_bytes, dtype=np.float32).copy()
+        state_batch = {
+            key: torch.from_numpy(state_arr[off : off + numel].reshape(1, *shape)).to(
+                device, non_blocking=True
+            )
+            for key, shape, off, numel in _STATE_CHANNELS
+        }
+
+        action_arr = np.frombuffer(action_bytes, dtype=np.float32).copy().reshape(
+            n_actions, _ACTION_DIM
+        )
+        action_batch = {
+            "candidate_action": torch.from_numpy(action_arr).to(
+                device, non_blocking=True
+            ),
+            head_field: torch.full(
+                (n_actions,), head_id, dtype=torch.long, device=device
+            ),
+        }
+
+        repeats = torch.tensor([n_actions], dtype=torch.long, device=device)
+        with torch.inference_mode():
+            if shared_path:
                 q_vals = q_nets.forward_grouped(state_batch, action_batch, repeats)
-        else:
-            state_batch, action_batch, repeats = collate_base_encoded(
-                [encoded_list], device=device
-            )
-            with torch.inference_mode():
-                q_vals = q_nets[player].forward_grouped(state_batch, action_batch, repeats)
+            else:
+                q_vals = q_nets[head_id].forward_grouped(
+                    state_batch, action_batch, repeats
+                )
 
         q_flat = q_vals.view(-1)
         idx = int(q_flat.argmax().item())
+        q_gap = float("nan")
         if q_flat.numel() >= 2:
             top2 = torch.topk(q_flat, 2, largest=True).values
             q_gap = float(top2[0].item() - top2[1].item())
-        else:
-            q_gap = float("nan")
 
-        return idx, encoded_list[idx], q_gap, 0
+        encoded = _build_encoded_dict(
+            state_bytes, action_bytes, idx, n_actions, head_id, head_field
+        )
+        return idx, encoded, q_gap, 0
 
     return scorer
 
@@ -437,9 +440,9 @@ def play_episode_rust(
 ) -> list[TrainSample]:
     """Run one self-play episode via the Rust loop, return MC training samples.
 
-    Equivalent to play_episode for pure self-play with no hard bots or frozen
-    seats. Routes game stepping and legal-move generation through guandan_rs;
-    calls back into Python only for Q-network scoring.
+    Only supports RoleAwareStateActionEncoder with head_scheme="absolute_seat".
+    The worker guards this constraint; calling with other encoder types will
+    produce silently wrong encodings.
     """
     import guandan_rs
 
@@ -459,7 +462,6 @@ __all__ = [
     "play_episode",
     "play_episode_rust",
     "make_scorer",
-    "SnapshotEnv",
     "select_legal",
     "argmax_q",
     "argmax_q_role",

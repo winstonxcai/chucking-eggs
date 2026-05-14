@@ -460,13 +460,15 @@ def actor_loop(
             mode_counts["self_play"] += 1
 
         seed = rng.randint(0, 10_000_000)
-        # Route pure self-play episodes (no hard bots, no frozen seats, no inference
-        # server) through the Rust episode loop for lower per-decision overhead.
+        # Route pure self-play episodes through the Rust episode loop. Rust encoder
+        # only implements absolute_seat role encoding, so guard on encoder type/scheme.
         _use_rust = (
             episode_mode == EPISODE_MODE_SELF_PLAY
             and active_hard_bot is None
             and not frozen_seats
             and inference_client is None
+            and isinstance(encoder, RoleAwareStateActionEncoder)
+            and encoder.head_scheme == "absolute_seat"
         )
         try:
             if _use_rust:

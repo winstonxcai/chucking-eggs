@@ -102,3 +102,20 @@ pub fn make_deck() -> Vec<Card> {
     }
     cards
 }
+
+/// Stable id in [0, 108) matching Python's `card_to_id`.
+///
+/// Layout:
+/// - ranks 2..=A × 4 suits × 2 decks = 104 ids (0..=103)
+///   - id = (rank − 2) × 8 + suit × 2 + deck
+/// - BLACK_JOKER deck 0 → 104, deck 1 → 105
+/// - RED_JOKER   deck 0 → 106, deck 1 → 107
+pub fn card_to_id(card: &Card) -> usize {
+    if card.rank == RANK_BLACK_JOKER {
+        return 104 + card.deck as usize;
+    }
+    if card.rank == RANK_RED_JOKER {
+        return 106 + card.deck as usize;
+    }
+    (card.rank as usize - 2) * 8 + card.suit as usize * 2 + card.deck as usize
+}

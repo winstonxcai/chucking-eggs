@@ -1,18 +1,24 @@
 //! Rust-driven self-play episode with a Python NN scoring callback.
 //!
-//! `play_episode_rust` runs the full episode loop in Rust — game stepping and
-//! legal-move generation — and calls back into Python only for Q-network
-//! scoring.  The Python "curried hearth" callback is the only GIL-holding
-//! operation per step; game stepping and move generation run without the GIL.
+//! `play_episode_rust` runs the full episode loop in Rust — game stepping,
+//! legal-move generation, and state encoding — and calls back into Python only
+//! for Q-network scoring.  The Python callback receives pre-encoded `f32` byte
+//! buffers and needs only `np.frombuffer` + a single NN forward pass.
+//!
+//! Scorer signature (Python side):
+//!   ```python
+//!   scorer(state_bytes: bytes, action_bytes: bytes, head_id: int)
+//!       -> (idx, encoded_dict, q_gap, chosen_by_epsilon)
+//!   ```
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList};
 
-use crate::cards::{Card, BOMB_4, PASS, is_bomb_type};
+use crate::cards::{card_to_id, is_bomb_type, Card, BOMB_4, PASS};
 use crate::combos::Combo;
+use crate::encoder::{self, EncoderInput};
 use crate::game::GameEnv;
-use crate::{PyCombo, combo_to_py};
 
 // ─── Phase / role helpers ────────────────────────────────────────────────────
 // Mirror the Python helpers in actor.py verbatim so trajectory metadata is
@@ -47,16 +53,11 @@ fn trick_role(env: &GameEnv, partner: usize) -> u8 {
     }
 }
 
-/// Map a bomb combo_type (BOMB_4..=BOMB_JOKER) to a 0-based tier index.
-///
-/// The 9 tiers correspond to the 9 bomb types in ascending strength order,
-/// matching the `bombs_played` histogram layout the encoder reads.
-/// Returns `None` for non-bomb combo types.
+/// Map a bomb combo_type to a 0-based tier index (BOMB_4=0 … BOMB_JOKER=8).
 fn bomb_tier(combo_type: u8) -> Option<usize> {
     if !is_bomb_type(combo_type) {
         return None;
     }
-    // BOMB_4=8 is tier 0; BOMB_JOKER=16 is tier 8.
     Some((combo_type - BOMB_4) as usize)
 }
 
@@ -64,40 +65,57 @@ fn bomb_tier(combo_type: u8) -> Option<usize> {
 
 /// State maintained by the rollout loop beyond what `GameEnv` stores.
 ///
-/// `GameEnv` tracks the live game state. `EpisodeState` adds the history and
-/// aggregate statistics the Python encoder needs to produce training features.
+/// Multihots (`hand_multihot`, `played_multihot`, `last_nonpass_multihot`) are
+/// maintained incrementally — updated in O(cards_played) per step — so the
+/// encoder never reconstructs them from scratch.
 struct EpisodeState {
     env: GameEnv,
-    /// Chronological (player, combo) pairs for all moves — used to build the
-    /// encoder's history window and last-action-per-role features.
+    /// Chronological (seat, combo) pairs — fed directly to the encoder history.
     move_history: Vec<(usize, Combo)>,
-    /// Cards each seat has played so far (excluding their current hand).
-    played_cards: [Vec<Card>; 4],
-    /// Per-seat bomb-tier histogram — 9 entries matching BOMB_4..=BOMB_JOKER.
+    /// Per-seat bomb-tier histogram (9 bins: BOMB_4..=BOMB_JOKER).
     bombs_played: [[u32; 9]; 4],
+    /// Multi-hot card presence per seat; cleared as cards are played.
+    hand_multihot: [[u8; 108]; 4],
+    /// Multi-hot cumulative played cards per seat; set as cards are played.
+    played_multihot: [[u8; 108]; 4],
+    /// Most recent non-pass action per seat as a multi-hot; overwritten each time.
+    last_nonpass_multihot: [[u8; 108]; 4],
 }
 
 impl EpisodeState {
     fn new(level_rank: u8, seed: Option<u64>) -> Self {
         let mut env = GameEnv::new(level_rank);
         if let Some(s) = seed {
-            // reset was called by new(); re-reset with the fixed seed.
             env.reset_seeded(s);
+        }
+        let mut hand_multihot = [[0u8; 108]; 4];
+        for seat in 0..4 {
+            for card in &env.hands[seat] {
+                hand_multihot[seat][card_to_id(card)] = 1;
+            }
         }
         Self {
             env,
             move_history: Vec::with_capacity(100),
-            played_cards: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             bombs_played: [[0u32; 9]; 4],
+            hand_multihot,
+            played_multihot: [[0u8; 108]; 4],
+            last_nonpass_multihot: [[0u8; 108]; 4],
         }
     }
 
-    /// Record a completed step: update move history, played cards, and bomb histogram.
+    /// Record a completed step: update all incremental arrays and move history.
     fn record_step(&mut self, player: usize, combo: &Combo) {
         if combo.combo_type != PASS {
-            for &card in &combo.cards {
-                self.played_cards[player].push(card);
+            let mut last_action = [0u8; 108];
+            for card in &combo.cards {
+                let cid = card_to_id(card);
+                self.hand_multihot[player][cid] = 0;
+                self.played_multihot[player][cid] = 1;
+                last_action[cid] = 1;
             }
+            self.last_nonpass_multihot[player] = last_action;
+
             if let Some(tier) = bomb_tier(combo.combo_type) {
                 self.bombs_played[player][tier] =
                     self.bombs_played[player][tier].saturating_add(1);
@@ -106,65 +124,25 @@ impl EpisodeState {
         self.move_history.push((player, combo.clone()));
     }
 
-    /// Serialize the current game state to a Python dict for the scorer callback.
-    ///
-    /// The dict is consumed by `SnapshotEnv` on the Python side, which converts
-    /// raw card tuples into the cached multihot arrays the encoder expects.
-    ///
-    /// # Dict keys
-    /// - `hands`: `[[PyCard; N]; 4]` — current hands as raw card tuples
-    /// - `played_cards`: `[[PyCard; N]; 4]` — cumulative played cards per seat
-    /// - `bombs_played`: `[[u32; 9]; 4]` — bomb-tier histogram per seat
-    /// - `level_rank`, `current_player`, `consecutive_passes` — scalars
-    /// - `finish_order`, `is_out` — lists
-    /// - `current_trick`: `None | PyCombo`
-    /// - `trick_winner`: `None | int`
-    /// - `move_history`: `[(player, PyCombo)]`
-    fn to_snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let d = PyDict::new_bound(py);
-
-        let hands: Vec<Vec<(u8, u8, u8)>> = self
-            .env
-            .hands
-            .iter()
-            .map(|h| h.iter().map(|c| (c.rank, c.suit, c.deck)).collect())
-            .collect();
-        d.set_item("hands", hands)?;
-
-        let played: Vec<Vec<(u8, u8, u8)>> = self
-            .played_cards
-            .iter()
-            .map(|ps| ps.iter().map(|c| (c.rank, c.suit, c.deck)).collect())
-            .collect();
-        d.set_item("played_cards", played)?;
-
-        let bombs: Vec<Vec<u32>> =
-            self.bombs_played.iter().map(|b| b.to_vec()).collect();
-        d.set_item("bombs_played", bombs)?;
-
-        d.set_item("level_rank", self.env.level_rank)?;
-        d.set_item("current_player", self.env.current_player)?;
-        d.set_item("consecutive_passes", self.env.consecutive_passes)?;
-        d.set_item("finish_order", self.env.finish_order.clone())?;
-        d.set_item("is_out", self.env.is_out.to_vec())?;
-
-        match &self.env.current_trick {
-            None => d.set_item("current_trick", py.None())?,
-            Some(trick) => d.set_item("current_trick", combo_to_py(trick))?,
+    /// Build an `EncoderInput` borrowing from this state.
+    fn encoder_input(&self) -> EncoderInput<'_> {
+        EncoderInput {
+            hand_multihot: &self.hand_multihot,
+            played_multihot: &self.played_multihot,
+            last_nonpass_multihot: &self.last_nonpass_multihot,
+            bombs_played: &self.bombs_played,
+            hand_sizes: [
+                self.env.hands[0].len(),
+                self.env.hands[1].len(),
+                self.env.hands[2].len(),
+                self.env.hands[3].len(),
+            ],
+            is_out: self.env.is_out,
+            current_trick: self.env.current_trick.as_ref(),
+            trick_winner: self.env.trick_winner,
+            level_rank: self.env.level_rank,
+            move_history: &self.move_history,
         }
-        match self.env.trick_winner {
-            None => d.set_item("trick_winner", py.None())?,
-            Some(w) => d.set_item("trick_winner", w)?,
-        }
-
-        let hist: Vec<(usize, PyCombo)> = self
-            .move_history
-            .iter()
-            .map(|(p, c)| (*p, combo_to_py(c)))
-            .collect();
-        d.set_item("move_history", hist)?;
-
-        Ok(d)
     }
 }
 
@@ -215,27 +193,30 @@ impl StepRecord {
 
 /// Run one self-play episode, returning a trajectory list and terminal rewards.
 ///
-/// The game loop runs entirely in Rust.  For each decision the `scorer` callback
-/// is invoked once; all other work (game stepping, legal-move generation) runs
-/// without holding the GIL.
+/// The game loop — stepping, legal-move generation, and state encoding — runs
+/// entirely in Rust. For each decision the `scorer` callback is invoked once
+/// with pre-encoded byte buffers; all other work runs without the GIL.
+///
+/// # Scorer signature (Python)
+/// ```python
+/// scorer(state_bytes: bytes, action_bytes: bytes, head_id: int)
+///     -> (idx: int, encoded: dict, q_gap: float, chosen_by_epsilon: int)
+/// ```
+/// - `state_bytes`: flat `f32` buffer of length `STATE_DIM * 4` bytes
+///   (one encoded state vector, layout matches `ROLE_ENCODE_STATE_KEYS`).
+/// - `action_bytes`: flat `f32` buffer of length `n_actions * ACTION_DIM * 4`
+///   bytes (one candidate-action multi-hot per legal action, concatenated).
+/// - `head_id`: absolute seat index for head routing.
+/// - Returns the chosen action index, its numpy-dict encoding (stored in the
+///   trajectory), the Q-value gap (NaN for ε-random choices), and a 0/1 flag.
 ///
 /// # Arguments
-/// - `scorer` — Python callable with signature:
-///   ```python
-///   scorer(state_dict, legal_tuples, player) -> (idx, encoded, q_gap, chosen_by_epsilon)
-///   ```
-///   `state_dict` is the snapshot produced by `EpisodeState.to_snapshot`;
-///   `legal_tuples` is the full (un-deduped) legal move list as `PyCombo` tuples;
-///   `player` is the current seat (0-3).  The scorer returns the chosen action
-///   index, the encoded numpy-array dict for that action, the Q-value gap (NaN
-///   for ε-random decisions), and a 0/1 flag for ε-random selection.
-/// - `level_rank` — starting level card rank (default 2 = Two, matching `GuanDanEnv`).
-/// - `seed` — optional RNG seed for the deal and starting player.
+/// - `level_rank` — starting level card rank (default 2).
+/// - `seed` — optional RNG seed for reproducible deals.
 ///
 /// # Returns
 /// `(trajectory, rewards)` where `trajectory` is a Python list of step dicts
-/// accepted by `compute_mc_returns` and `rewards` is a `[f64; 4]` terminal
-/// reward vector.
+/// accepted by `compute_mc_returns` and `rewards` is a `[f64; 4]` reward vector.
 #[pyfunction]
 #[pyo3(signature = (scorer, level_rank = 2, seed = None))]
 pub fn play_episode_rust(
@@ -253,21 +234,31 @@ pub fn play_episode_rust(
         let legal = state.env.legal_moves();
         let k = legal.len();
 
-        // Compute pre-step metadata before the action is chosen.
+        // Pre-step metadata
         let phase_self_val = phase_bucket(state.env.hands[p].len());
         let phase_partner_val = phase_with_out(&state.env, partner);
         let trick_role_val = trick_role(&state.env, partner);
-        let bomb_available_val =
-            legal.iter().any(|m| is_bomb_type(m.combo_type)) as u8;
-        let legal_py: Vec<PyCombo> = legal.iter().map(combo_to_py).collect();
+        let bomb_available_val = legal.iter().any(|m| is_bomb_type(m.combo_type)) as u8;
 
-        // Build the game-state snapshot and invoke the Python scorer.
-        let snapshot: PyObject = state.to_snapshot(py)?.into();
+        // Encode state and actions in Rust — Python only runs the NN forward.
+        let enc_input = state.encoder_input();
+        let state_bytes = encoder::encode_state(&enc_input, p, &legal);
+        let action_bytes = encoder::encode_actions(&legal);
+        let head_id = encoder::compute_head_id(p);
+
         let result = scorer
-            .call1(py, (snapshot, legal_py, p as u8))
+            .call1(
+                py,
+                (
+                    PyBytes::new_bound(py, &state_bytes),
+                    PyBytes::new_bound(py, &action_bytes),
+                    head_id,
+                ),
+            )
             .map_err(|e| {
                 PyValueError::new_err(format!("scorer raised at player {p}: {e}"))
             })?;
+
         let (idx, encoded_obj, q_gap, chosen_by_epsilon): (usize, PyObject, f64, u8) =
             result.extract(py)?;
 
@@ -338,10 +329,46 @@ mod tests {
     fn episode_state_seeded_is_deterministic() {
         let s1 = EpisodeState::new(2, Some(42));
         let s2 = EpisodeState::new(2, Some(42));
-        // Same seed → same starting player and same hand sizes.
         assert_eq!(s1.env.current_player, s2.env.current_player);
         for seat in 0..4 {
             assert_eq!(s1.env.hands[seat].len(), s2.env.hands[seat].len());
         }
+    }
+
+    #[test]
+    fn hand_multihot_initializes_from_deal() {
+        let state = EpisodeState::new(2, Some(7));
+        // Each seat should have exactly 27 bits set in hand_multihot.
+        for seat in 0..4 {
+            let count: usize = state.hand_multihot[seat].iter().map(|&b| b as usize).sum();
+            assert_eq!(count, 27, "seat {seat} should have 27 cards");
+        }
+        // All bits across all seats should be distinct (no sharing).
+        let mut union = [0u8; 108];
+        for seat in 0..4 {
+            for i in 0..108 {
+                union[i] += state.hand_multihot[seat][i];
+            }
+        }
+        assert!(union.iter().all(|&b| b <= 1), "cards should not appear in two hands");
+    }
+
+    #[test]
+    fn record_step_moves_card_between_multihots() {
+        use crate::cards::{Card, SINGLE};
+        let mut state = EpisodeState::new(2, Some(11));
+        let p = state.env.current_player;
+        // Pick any card from player p's hand.
+        let card = *state.env.hands[p].iter().next().unwrap();
+        let cid = card_to_id(&card);
+        assert_eq!(state.hand_multihot[p][cid], 1);
+        assert_eq!(state.played_multihot[p][cid], 0);
+
+        let combo = Combo::new(SINGLE, card.rank, vec![card], 1, 0);
+        state.record_step(p, &combo);
+
+        assert_eq!(state.hand_multihot[p][cid], 0, "card should leave hand");
+        assert_eq!(state.played_multihot[p][cid], 1, "card should enter played");
+        assert_eq!(state.last_nonpass_multihot[p][cid], 1, "should be last action");
     }
 }

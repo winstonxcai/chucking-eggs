@@ -7,7 +7,8 @@ import math
 import numpy as np
 
 from guandan.cards import ComboType
-from guandan.guanzero.runtime.actor import _phase, _phase_with_out, _trick_role, play_episode
+from guandan.guanzero.runtime.actor import play_episode
+from guandan.guanzero.data.returns import EpisodeTags
 from guandan.guanzero.model.encoding.role_encoder import RoleAwareStateActionEncoder
 from guandan.guanzero.model.q_network import SharedHeadQNet, SharedHeadQNetConfig
 from guandan.guanzero.data.sample_tags import (
@@ -21,20 +22,23 @@ from guandan.guanzero.data.sample_tags import (
     collapse_action_type,
     k_bucket,
     k_bucket_array,
+    phase_bucket,
+    phase_with_out,
     q_gap_bucket,
     q_gap_bucket_array,
     reward_bucket,
     reward_bucket_array,
+    trick_role,
 )
 
 
-def test_phase_helper_bins():
-    assert _phase(27) == 0
-    assert _phase(20) == 0
-    assert _phase(19) == 1
-    assert _phase(10) == 1
-    assert _phase(9) == 2
-    assert _phase(0) == 2
+def test_phase_bucket_bins():
+    assert phase_bucket(27) == 0
+    assert phase_bucket(20) == 0
+    assert phase_bucket(19) == 1
+    assert phase_bucket(10) == 1
+    assert phase_bucket(9) == 2
+    assert phase_bucket(0) == 2
 
 
 def test_phase_with_out_returns_3_when_out():
@@ -43,10 +47,10 @@ def test_phase_with_out_returns_3_when_out():
         hands = [list(range(15)), [], list(range(5)), list(range(25))]
 
     env = FakeEnv()
-    assert _phase_with_out(env, 0) == 1  # 15 cards → midgame
-    assert _phase_with_out(env, 1) == 3  # out
-    assert _phase_with_out(env, 2) == 2  # 5 cards → endgame
-    assert _phase_with_out(env, 3) == 0  # 25 cards → opening
+    assert phase_with_out(env, 0) == 1  # 15 cards → midgame
+    assert phase_with_out(env, 1) == 3  # out
+    assert phase_with_out(env, 2) == 2  # 5 cards → endgame
+    assert phase_with_out(env, 3) == 0  # 25 cards → opening
 
 
 def test_trick_role_branches():
@@ -58,9 +62,9 @@ def test_trick_role_branches():
         def is_leading(self):
             return self._leading
 
-    assert _trick_role(FakeEnv(leading=True, partner_out=False), 2) == 0
-    assert _trick_role(FakeEnv(leading=False, partner_out=False), 2) == 1
-    assert _trick_role(FakeEnv(leading=False, partner_out=True), 2) == 2
+    assert trick_role(FakeEnv(leading=True, partner_out=False), 2) == 0
+    assert trick_role(FakeEnv(leading=False, partner_out=False), 2) == 1
+    assert trick_role(FakeEnv(leading=False, partner_out=True), 2) == 2
 
 
 def test_collapse_action_type_buckets():
@@ -139,9 +143,7 @@ def test_play_episode_tags_propagate():
         seed=99,
         device="cpu",
         gamma=1.0,
-        episode_mode=2,
-        opponent_id=3,
-        latest_team=1,
+        tags=EpisodeTags(mode=2, opponent_id=3, latest_team=1),
     )
     assert samples
 

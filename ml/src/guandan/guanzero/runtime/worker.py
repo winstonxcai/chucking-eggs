@@ -25,6 +25,7 @@ except ImportError:
 from ..model.encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from ..model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
 from ..utils.profiler import PhaseProfiler
+from ..data.returns import EpisodeTags
 from ..data.sample_tags import (
     EPISODE_MODE_SELF_PLAY,
     EPISODE_MODE_VS_CHECKPOINT,
@@ -479,6 +480,11 @@ def actor_loop(
             and encoder.head_scheme == "absolute_seat"
             and not os.environ.get("GUANZERO_NO_RUST")
         )
+        episode_tags = EpisodeTags(
+            mode=episode_mode,
+            opponent_id=opponent_id,
+            latest_team=latest_team,
+        )
         try:
             if _use_rust:
                 samples = play_episode_rust(
@@ -488,9 +494,7 @@ def actor_loop(
                     seed=seed,
                     device="cpu",
                     gamma=cfg.gamma,
-                    episode_mode=episode_mode,
-                    opponent_id=opponent_id,
-                    latest_team=latest_team,
+                    tags=episode_tags,
                 )
             else:
                 samples = play_episode(
@@ -507,9 +511,7 @@ def actor_loop(
                     epsilon_frozen=cfg.epsilon.frozen,
                     hard_bots=active_hard_bot,
                     hard_bot_seats=hard_bot_seats,
-                    episode_mode=episode_mode,
-                    opponent_id=opponent_id,
-                    latest_team=latest_team,
+                    tags=episode_tags,
                 )
         except Exception as e:
             from .inference_server import InferenceTimeoutError

@@ -17,6 +17,37 @@ import math
 import numpy as np
 
 from ...cards import ComboType
+from ...game import GuanDanEnv
+
+# ── Per-step tag computation ─────────────────────────────────────────────
+# Compute the diagnostic tags stored on each TrajectoryStep / TrainSample.
+# Mirrored in rollout.rs (phase_bucket, phase_with_out, trick_role) for the
+# Rust episode loop — keep the two implementations in sync.
+
+
+def phase_bucket(hand_size: int) -> int:
+    """Bucket a player's current hand size into opening / midgame / endgame."""
+    if hand_size >= 20:
+        return 0
+    if hand_size >= 10:
+        return 1
+    return 2
+
+
+def phase_with_out(env: GuanDanEnv, seat: int) -> int:
+    """phase_bucket for ``seat``; returns 3 if the player has already finished."""
+    if env.is_out[seat]:
+        return 3
+    return phase_bucket(len(env.hands[seat]))
+
+
+def trick_role(env: GuanDanEnv, partner_seat: int) -> int:
+    """0 = leading a new trick, 1 = following (partner alive), 2 = following (partner out)."""
+    if env.is_leading():
+        return 0
+    if env.is_out[partner_seat]:
+        return 2
+    return 1
 
 
 # ── Episode mode ─────────────────────────────────────────────────────────
@@ -191,6 +222,8 @@ def reward_bucket_array(r_arr: np.ndarray) -> np.ndarray:
 
 
 __all__ = [
+    # Per-step tag computation
+    "phase_bucket", "phase_with_out", "trick_role",
     # Episode mode
     "EPISODE_MODE_SELF_PLAY", "EPISODE_MODE_VS_CHECKPOINT",
     "EPISODE_MODE_VS_HARD_BOT", "EPISODE_MODE_NAMES",

@@ -25,29 +25,8 @@ from ..model.encoding.role_encoder import (
 from ..utils.legal_utils import select_legal
 from ..utils.profiler import PhaseProfiler, _k_bucket
 from ..model.q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet
-from ..data.returns import TrainSample, compute_mc_returns
-
-
-def _phase(hand_size: int) -> int:
-    if hand_size >= 20:
-        return 0
-    if hand_size >= 10:
-        return 1
-    return 2
-
-
-def _phase_with_out(env: GuanDanEnv, seat: int) -> int:
-    if env.is_out[seat]:
-        return 3
-    return _phase(len(env.hands[seat]))
-
-
-def _trick_role(env: GuanDanEnv, partner_seat: int) -> int:
-    if env.is_leading():
-        return 0
-    if env.is_out[partner_seat]:
-        return 2
-    return 1
+from ..data.returns import EpisodeTags, TrainSample, compute_mc_returns
+from ..data.sample_tags import phase_bucket, phase_with_out, trick_role
 
 
 def argmax_q(
@@ -99,9 +78,7 @@ def play_episode(
     epsilon_frozen: float = 0.0,
     hard_bots=None,
     hard_bot_seats: frozenset[int] = frozenset(),
-    episode_mode: int = 0,
-    opponent_id: int = 0,
-    latest_team: int = 0,
+    tags: EpisodeTags = EpisodeTags(),
 ) -> list[TrainSample]:
     """Roll one self-play episode, return per-step MC training samples.
 
@@ -212,9 +189,9 @@ def play_episode(
         trajectory.append({
             "player":             p,
             "encoded":            encoded,
-            "phase_self":         _phase(len(env.hands[p])),
-            "trick_role":         _trick_role(env, partner),
-            "phase_partner":      _phase_with_out(env, partner),
+            "phase_self":         phase_bucket(len(env.hands[p])),
+            "trick_role":         trick_role(env, partner),
+            "phase_partner":      phase_with_out(env, partner),
             "action_type":        action_type,
             "is_pass":            int(action_type == 0),
             "is_bomb":            int(action_type >= int(ComboType.BOMB_4)),
@@ -232,9 +209,7 @@ def play_episode(
             trajectory,
             rewards,
             gamma=gamma,
-            episode_mode=episode_mode,
-            opponent_id=opponent_id,
-            latest_team=latest_team,
+            tags=tags,
         )
 
 
@@ -375,9 +350,7 @@ def play_episode_rust(
     device: torch.device | str = "cpu",
     gamma: float = 1.0,
     *,
-    episode_mode: int = 0,
-    opponent_id: int = 0,
-    latest_team: int = 0,
+    tags: EpisodeTags = EpisodeTags(),
 ) -> list[TrainSample]:
     """Run one self-play episode via the Rust loop, return MC training samples.
 
@@ -393,9 +366,7 @@ def play_episode_rust(
         trajectory,
         dict(enumerate(rewards)),
         gamma=gamma,
-        episode_mode=episode_mode,
-        opponent_id=opponent_id,
-        latest_team=latest_team,
+        tags=tags,
     )
 
 

@@ -40,6 +40,18 @@ class TrajectoryStep(TypedDict, total=False):
 
 
 @dataclass(slots=True, frozen=True)
+class EpisodeTags:
+    """Episode-level metadata broadcast verbatim to every emitted TrainSample.
+
+    Computed once per episode in the worker (based on curriculum / opponent
+    mixing) and applied to all steps by ``compute_mc_returns``.
+    """
+    mode:        int = 0  # EPISODE_MODE_* — see sample_tags.py
+    opponent_id: int = 0  # OPPONENT_* — see sample_tags.py
+    latest_team: int = 0  # 0 or 1 — which team is the "latest" policy
+
+
+@dataclass(slots=True, frozen=True)
 class TrainSample:
     player: int
     encoded: dict[str, np.ndarray]
@@ -71,9 +83,7 @@ def compute_mc_returns(
     terminal_rewards: Mapping[int, float],
     gamma: float = 1.0,
     *,
-    episode_mode: int = 0,
-    opponent_id: int = 0,
-    latest_team: int = 0,
+    tags: EpisodeTags = EpisodeTags(),
 ) -> list[TrainSample]:
     """Compute G_t per (player, timestep).
 
@@ -82,8 +92,7 @@ def compute_mc_returns(
     [-1, 1] for ``mc_return`` but the raw value is also carried on each
     sample as ``terminal_reward`` for diagnostic bucketing.
 
-    The three episode-level kwargs (episode_mode, opponent_id, latest_team)
-    are broadcast verbatim to every emitted sample.
+    ``tags`` are episode-level — broadcast verbatim to every emitted sample.
     """
     norm = normalize_terminal_rewards(terminal_rewards)
 
@@ -117,15 +126,16 @@ def compute_mc_returns(
             num_legal_actions=int(step.get("num_legal_actions", 0)),
             q_gap=float(step.get("q_gap", float("nan"))),
             chosen_by_epsilon=int(step.get("chosen_by_epsilon", 0)),
-            episode_mode=int(episode_mode),
-            opponent_id=int(opponent_id),
-            latest_team=int(latest_team),
+            episode_mode=int(tags.mode),
+            opponent_id=int(tags.opponent_id),
+            latest_team=int(tags.latest_team),
             terminal_reward=float(terminal_rewards[p]),
         ))
     return out
 
 
 __all__ = [
+    "EpisodeTags",
     "TrajectoryStep",
     "TrainSample",
     "compute_mc_returns",

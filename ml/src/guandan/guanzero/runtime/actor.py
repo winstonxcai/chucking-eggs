@@ -23,7 +23,7 @@ from ..model.encoding.role_encoder import (
     RoleAwareStateActionEncoder,
 )
 from ..utils.legal_utils import select_legal
-from ..utils.profiler import PhaseProfiler, _k_bucket
+from ..utils.profiler import PhaseProfiler, k_bucket_label
 from ..model.q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet
 from ..data.returns import EpisodeTags, TrainSample, compute_mc_returns
 from ..data.sample_tags import phase_bucket, phase_with_out, trick_role
@@ -142,7 +142,7 @@ def play_episode(
         with prof.time("legal_actions"):
             legal = select_legal(env, p)
         K = len(legal)
-        bucket = _k_bucket(K)
+        bucket = k_bucket_label(K)
         prof.add_count("num_decisions", 1)
         prof.add_count("num_legal_actions", K)
         # Per-K-bucket decision counts — totals sum to num_decisions.

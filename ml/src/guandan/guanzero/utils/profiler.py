@@ -4,7 +4,7 @@ A single ``PhaseProfiler`` class handles all three use cases via two optional
 extensions:
 
 * **K-bucket breakdown** — actors populate bucket counts via ``add_count``
-  (e.g. ``"decisions_K1"``, ``"decisions_K2-5"``). Server and learner don't,
+  (e.g. ``"decisions_k=1"``, ``"decisions_k=2-5"``). Server and learner don't,
   so ``report_k_buckets`` returns an empty string for them automatically.
 
 * **CUDA synchronization** — pass ``device`` on construction; the context
@@ -16,7 +16,7 @@ Usage::
     prof = PhaseProfiler(enabled=True, device=torch.device("cuda"))
     with prof.time("forward", sync=True):
         output = net(batch)
-    prof.add_count("decisions_K>20", 1)
+    prof.add_count("decisions_k>20", 1)
     print(prof.report(wall_s=elapsed, n_events=n_episodes, event_label="episodes"))
     print(prof.report_k_buckets(n_decisions=n_dec))
 """
@@ -29,17 +29,12 @@ from typing import Generator
 
 import torch
 
+from ..data.sample_tags import K_BUCKET_NAMES, k_bucket
 
-_K_BUCKETS = ("K1", "K2-5", "K6-10", "K11-20", "K>20")
 
-
-def _k_bucket(K: int) -> str:
-    """Map a legal-action count K to a coarse bucket label."""
-    if K <= 1:   return "K1"
-    if K <= 5:   return "K2-5"
-    if K <= 10:  return "K6-10"
-    if K <= 20:  return "K11-20"
-    return "K>20"
+def k_bucket_label(K: int) -> str:
+    """Map a legal-action count K to its bucket label (e.g. 'k=2-5')."""
+    return K_BUCKET_NAMES[k_bucket(K)]
 
 
 class PhaseProfiler:
@@ -123,12 +118,12 @@ class PhaseProfiler:
     def report_k_buckets(self, n_decisions: int) -> str:
         """Return a K-bucket breakdown table, or '' if no bucket counts present.
 
-        Actors populate ``decisions_K1``, ``decisions_K2-5``, etc. via
+        Actors populate ``decisions_k=1``, ``decisions_k=2-5``, etc. via
         ``add_count``; server and learner don't, so this returns '' for them.
         """
         if not self.enabled:
             return ""
-        bucket_counts = {b: self._counts.get(f"decisions_{b}", 0) for b in _K_BUCKETS}
+        bucket_counts = {b: self._counts.get(f"decisions_{b}", 0) for b in K_BUCKET_NAMES.values()}
         if not any(bucket_counts.values()):
             return ""
         n = n_decisions or 1
@@ -139,13 +134,13 @@ class PhaseProfiler:
             f"  {'bucket':>8s} {'decisions':>10s} {'%':>6s} "
             f"{'fwd_calls':>10s} {'fwd_total_s':>12s} {'fwd_ms/call':>12s}",
         ]
-        for b in _K_BUCKETS:
+        for b in K_BUCKET_NAMES.values():
             d = bucket_counts[b]
             pct = 100.0 * d / n
             fwd_calls = self._counts.get(f"q_net_forward_{b}", 0)
             fwd_total = self._times.get(f"q_net_forward_{b}", 0.0)
             ms_per_call = 1000.0 * fwd_total / fwd_calls if fwd_calls else 0.0
-            tag = " (shortcut)" if b == "K1" and shortcut_K1 else ""
+            tag = " (shortcut)" if b == K_BUCKET_NAMES[0] and shortcut_K1 else ""
             lines.append(
                 f"  {b:>8s} {d:>10d} {pct:>5.1f}% "
                 f"{fwd_calls:>10d} {fwd_total:>12.3f} {ms_per_call:>12.3f}{tag}"
@@ -155,4 +150,4 @@ class PhaseProfiler:
         return "\n".join(lines)
 
 
-__all__ = ["PhaseProfiler", "_k_bucket", "_K_BUCKETS"]
+__all__ = ["PhaseProfiler", "k_bucket_label"]

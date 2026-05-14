@@ -14,7 +14,7 @@ from .metrics import (
     MetricsWriter,
     jsonl_writer,
 )
-from .profiler import PhaseProfiler, _K_BUCKETS, _k_bucket
+from .profiler import PhaseProfiler, k_bucket_label
 from .run_layout import RunLayout
 from .schedules import epsilon_linear
 
@@ -29,8 +29,7 @@ __all__ = [
     "MetricsWriter",
     "jsonl_writer",
     "PhaseProfiler",
-    "_K_BUCKETS",
-    "_k_bucket",
+    "k_bucket_label",
     "RunLayout",
     "epsilon_linear",
 ]

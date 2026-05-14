@@ -462,6 +462,7 @@ def actor_loop(
         seed = rng.randint(0, 10_000_000)
         # Route pure self-play episodes through the Rust episode loop. Rust encoder
         # only implements absolute_seat role encoding, so guard on encoder type/scheme.
+        # Set GUANZERO_NO_RUST=1 to force the Python path (e.g. for benchmarking).
         _use_rust = (
             episode_mode == EPISODE_MODE_SELF_PLAY
             and active_hard_bot is None
@@ -469,6 +470,7 @@ def actor_loop(
             and inference_client is None
             and isinstance(encoder, RoleAwareStateActionEncoder)
             and encoder.head_scheme == "absolute_seat"
+            and not os.environ.get("GUANZERO_NO_RUST")
         )
         try:
             if _use_rust:

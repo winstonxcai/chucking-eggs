@@ -24,6 +24,7 @@ except ImportError:
     _RUST_AVAILABLE = False
 from ..model.encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from ..model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
+from ..utils.logging_setup import setup_run_logging
 from ..utils.profiler import PhaseProfiler
 from ..data.returns import EpisodeTags
 from ..data.sample_tags import (
@@ -140,6 +141,15 @@ def actor_loop(
     torch.set_num_threads(1)
 
     cfg = TrainConfig.from_flat_dict(cfg_dict)
+
+    _log_run_dir = Path(run_dir) if run_dir is not None else Path("/tmp/guanzero_actor_logs")
+    logger, _ = setup_run_logging(
+        _log_run_dir,
+        log_filename=f"actor_{actor_id}.log",
+        name=f"guanzero.actor{actor_id}",
+        stream_to_stdout=True,
+    )
+
     if cfg.model_type in ("shared_heads", "shared_trick_heads") and cfg.inference.enabled:
         raise ValueError(
             f"Inference server not supported for model_type={cfg.model_type!r}."
@@ -208,10 +218,7 @@ def actor_loop(
             qnet_cfg_for_pool = shared_head_qnet_config(cfg)
             for ckpt_path in cfg.population_pool:
                 frozen_nets.append(load_frozen_shared_qnet(ckpt_path, qnet_cfg_for_pool, device="cpu"))
-        print(
-            f"[actor-{actor_id}] preloaded {len(frozen_nets)} frozen opponents",
-            flush=True,
-        )
+        logger.info("preloaded %d frozen opponents", len(frozen_nets))
 
     # ── Hard-bot opponent pool (shared-head + non-empty pool only) ──
     # Each actor instantiates one copy of every hard bot at startup and
@@ -250,10 +257,9 @@ def actor_loop(
             sampling_str = f"weighted={cfg.hard_bot_sampling}"
         else:
             sampling_str = "uniform"
-        print(
-            f"[actor-{actor_id}] loaded {len(hard_bots_pool)} hard-bot opponents: "
-            f"{[n for n, _ in hard_bots_pool]} ({sampling_str})",
-            flush=True,
+        logger.info(
+            "loaded %d hard-bot opponents: %s (%s)",
+            len(hard_bots_pool), [n for n, _ in hard_bots_pool], sampling_str,
         )
 
     # Per-actor counters for end-of-run summary (printed by every actor).
@@ -518,8 +524,7 @@ def actor_loop(
             if isinstance(e, InferenceTimeoutError):
                 n_inference_timeouts += 1
                 if n_inference_timeouts <= 3 or n_inference_timeouts % 10 == 0:
-                    print(f"[actor-{actor_id}] inference timeout #{n_inference_timeouts}: {e}",
-                          flush=True)
+                    logger.warning("inference timeout #%d: %s", n_inference_timeouts, e)
                 # Brief sleep before retrying so we don't busy-loop if the server
                 # is wedged. stop_event check below caps it.
                 if stop_event.wait(timeout=0.5):
@@ -598,8 +603,7 @@ def actor_loop(
             n_dec = prof._counts.get("num_decisions", 0)
             snap = prof.report(wall_s=wall_s, n_events=episode_count, event_label="episodes")
             snap += prof.report_k_buckets(n_decisions=n_dec)
-            print(f"[actor-{actor_id}] profile snapshot @ episode {episode_count}:{snap}",
-                  flush=True)
+            logger.info("profile snapshot @ episode %d:%s", episode_count, snap)
 
     if profile_enabled and run_dir is not None:
         try:
@@ -611,28 +615,28 @@ def actor_loop(
             out = run_dir / f"actor_{actor_id}_profile.txt"
             out.write_text(report + "\n")
         except Exception as e:
-            print(f"[actor-{actor_id}] failed to write profile: {e}", flush=True)
+            logger.warning("failed to write profile: %s", e)
 
-    # Per-actor opponent-pool counters — printed by every actor so off-balance
-    # pool sampling or skewed team assignment shows up immediately in logs.
-    print(f"[actor-{actor_id}] episode modes: {mode_counts}", flush=True)
+    # Per-actor opponent-pool counters logged by every actor so off-balance
+    # pool sampling or skewed team assignment shows up in logs.
+    logger.info("episode modes: %s", mode_counts)
     if frozen_nets:
         pool_str = ", ".join(
             f"{Path(p).stem}={c}"
             for p, c in zip(cfg.population_pool, frozen_pick_counts)
         )
-        print(f"[actor-{actor_id}] frozen picks: {pool_str}", flush=True)
-        print(f"[actor-{actor_id}] team assignment: {team_counts}", flush=True)
+        logger.info("frozen picks: %s", pool_str)
+        logger.info("team assignment: %s", team_counts)
     if hard_bots_pool:
         if pair_names:
             pool_str = ", ".join(f"{k}={c}" for k, c in pair_pick_counts.items())
-            print(f"[actor-{actor_id}] hard-bot pair picks: {pool_str}", flush=True)
+            logger.info("hard-bot pair picks: %s", pool_str)
         else:
             pool_str = ", ".join(
                 f"{n}={c}" for (n, _), c in zip(hard_bots_pool, hard_bot_pick_counts)
             )
-            print(f"[actor-{actor_id}] hard-bot picks: {pool_str}", flush=True)
-        print(f"[actor-{actor_id}] team assignment: {team_counts}", flush=True)
+            logger.info("hard-bot picks: %s", pool_str)
+        logger.info("team assignment: %s", team_counts)
 
 
 def _build_inference_client(actor_id: int, inference_args: dict, cfg) -> "object":

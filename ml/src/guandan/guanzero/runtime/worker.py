@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .actor import play_episode
+from .actor import play_episode, play_episode_rust
 from ..model.encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from ..model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
 from ..utils.profiler import PhaseProfiler
@@ -460,25 +460,46 @@ def actor_loop(
             mode_counts["self_play"] += 1
 
         seed = rng.randint(0, 10_000_000)
+        # Route pure self-play episodes (no hard bots, no frozen seats, no inference
+        # server) through the Rust episode loop for lower per-decision overhead.
+        _use_rust = (
+            episode_mode == EPISODE_MODE_SELF_PLAY
+            and active_hard_bot is None
+            and not frozen_seats
+            and inference_client is None
+        )
         try:
-            samples = play_episode(
-                q_nets=q_nets_inference,
-                encoder=encoder,
-                epsilon=eps,
-                seed=seed,
-                device="cpu",
-                gamma=cfg.gamma,
-                inference_client=inference_client,
-                profiler=prof,
-                q_nets_frozen=q_net_frozen_this_ep,
-                frozen_seats=frozen_seats,
-                epsilon_frozen=cfg.epsilon.frozen,
-                hard_bots=active_hard_bot,
-                hard_bot_seats=hard_bot_seats,
-                episode_mode=episode_mode,
-                opponent_id=opponent_id,
-                latest_team=latest_team,
-            )
+            if _use_rust:
+                samples = play_episode_rust(
+                    q_nets=q_nets_inference,
+                    encoder=encoder,
+                    epsilon=eps,
+                    seed=seed,
+                    device="cpu",
+                    gamma=cfg.gamma,
+                    episode_mode=episode_mode,
+                    opponent_id=opponent_id,
+                    latest_team=latest_team,
+                )
+            else:
+                samples = play_episode(
+                    q_nets=q_nets_inference,
+                    encoder=encoder,
+                    epsilon=eps,
+                    seed=seed,
+                    device="cpu",
+                    gamma=cfg.gamma,
+                    inference_client=inference_client,
+                    profiler=prof,
+                    q_nets_frozen=q_net_frozen_this_ep,
+                    frozen_seats=frozen_seats,
+                    epsilon_frozen=cfg.epsilon.frozen,
+                    hard_bots=active_hard_bot,
+                    hard_bot_seats=hard_bot_seats,
+                    episode_mode=episode_mode,
+                    opponent_id=opponent_id,
+                    latest_team=latest_team,
+                )
         except Exception as e:
             from .inference_server import InferenceTimeoutError
             if isinstance(e, InferenceTimeoutError):

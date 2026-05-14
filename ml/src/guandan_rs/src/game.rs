@@ -11,6 +11,7 @@ use crate::combos::{self, Combo};
 
 use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::SeedableRng;
 
 /// Full game state — cheaply cloneable for MC rollouts.
 #[derive(Clone)]
@@ -45,8 +46,18 @@ impl GameEnv {
 
     pub fn reset(&mut self) {
         let mut rng = rand::rng();
+        self.deal_and_reset(&mut rng);
+    }
+
+    /// Reset with a fixed seed — used by the rollout engine for reproducible episodes.
+    pub fn reset_seeded(&mut self, seed: u64) {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        self.deal_and_reset(&mut rng);
+    }
+
+    fn deal_and_reset<R: Rng>(&mut self, rng: &mut R) {
         let mut deck = cards::make_deck();
-        deck.shuffle(&mut rng);
+        deck.shuffle(rng);
 
         for h in self.hands.iter_mut() {
             h.clear();

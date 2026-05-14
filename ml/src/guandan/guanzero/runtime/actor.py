@@ -6,11 +6,12 @@ Public API: play_episode, select_legal, argmax_q, argmax_q_role.
 from __future__ import annotations
 
 import random
-from typing import Mapping
+from typing import Callable, Mapping
 
+import numpy as np
 import torch
 
-from ...cards import ComboType
+from ...cards import Card, ComboType, card_to_id
 from ...combos import Combo
 from ...game import GuanDanEnv
 from ..data.buffer import collate_base_encoded, collate_role_encoded
@@ -290,4 +291,176 @@ def play_episode(
         )
 
 
-__all__ = ["play_episode", "select_legal", "argmax_q", "argmax_q_role"]
+# ─── Rust rollout support ────────────────────────────────────────────────────
+
+_CARD_ID_DIM = 108
+
+
+def _card_tuple_to_id(rank: int, suit: int, deck: int) -> int:
+    """Convert a raw (rank, suit, deck) int triple to a stable card id in [0, 108)."""
+    if rank == 16:   # BLACK_JOKER
+        return 104 + deck
+    if rank == 17:   # RED_JOKER
+        return 106 + deck
+    return (rank - 2) * 8 + suit * 2 + deck
+
+
+def _combo_from_tuple(t: tuple) -> Combo:
+    """Convert a PyCombo tuple from Rust to a Python Combo with Card objects."""
+    combo_type, key, raw_cards, length, wild_count = t
+    cards = [Card(rank, suit, deck) for rank, suit, deck in raw_cards]
+    return Combo(ComboType(combo_type), key, cards, length, wild_count)
+
+
+class SnapshotEnv:
+    """Duck-typed GuanDanEnv reconstructed from a Rust EpisodeState snapshot dict.
+
+    Consumed by StateActionEncoder and RoleAwareStateActionEncoder in place of a
+    live GuanDanEnv. All encoder-facing attributes are present and compatible.
+    """
+
+    __slots__ = (
+        "level_rank",
+        "current_trick",
+        "trick_winner",
+        "consecutive_passes",
+        "finish_order",
+        "is_out",
+        "hands",
+        "move_history",
+        "hand_multihot",
+        "played_multihot",
+        "bombs_played",
+    )
+
+    def __init__(self, snap: dict) -> None:
+        self.level_rank: int = snap["level_rank"]
+        self.consecutive_passes: int = snap["consecutive_passes"]
+        self.finish_order: list[int] = snap["finish_order"]
+        self.is_out: list[bool] = snap["is_out"]
+        self.trick_winner: int | None = snap["trick_winner"]
+
+        raw_trick = snap["current_trick"]
+        self.current_trick: Combo | None = (
+            _combo_from_tuple(raw_trick) if raw_trick is not None else None
+        )
+
+        # Hands as lists of raw tuples — encoders only need len(), not card access.
+        self.hands: list[list] = [list(h) for h in snap["hands"]]
+
+        # Move history as (player, Combo) pairs matching GuanDanEnv.move_history.
+        self.move_history: list[tuple[int, Combo]] = [
+            (p, _combo_from_tuple(c)) for p, c in snap["move_history"]
+        ]
+
+        # Precompute multihot arrays from raw card tuples.
+        self.hand_multihot = np.zeros((4, _CARD_ID_DIM), dtype=np.uint8)
+        for seat, cards in enumerate(snap["hands"]):
+            for rank, suit, deck in cards:
+                self.hand_multihot[seat, _card_tuple_to_id(rank, suit, deck)] = 1
+
+        self.played_multihot = np.zeros((4, _CARD_ID_DIM), dtype=np.uint8)
+        for seat, cards in enumerate(snap["played_cards"]):
+            for rank, suit, deck in cards:
+                self.played_multihot[seat, _card_tuple_to_id(rank, suit, deck)] = 1
+
+        self.bombs_played = np.array(snap["bombs_played"], dtype=np.uint8)
+
+
+def make_scorer(
+    q_nets: Mapping[int, GuanZeroQNet] | SharedHeadQNet | SharedTrickHeadQNet,
+    encoder: StateActionEncoder | RoleAwareStateActionEncoder,
+    device: torch.device | str,
+    epsilon: float,
+) -> Callable[[dict, list, int], tuple]:
+    """Return a scorer closure for use with guandan_rs.play_episode_rust.
+
+    The closure captures q_nets, encoder, device, and epsilon. It is called once
+    per decision step from the Rust episode loop with signature:
+        scorer(state_dict, legal_tuples, player) -> (idx, encoded, q_gap, chosen_by_epsilon)
+    """
+    device = torch.device(device)
+    shared_path = isinstance(q_nets, (SharedHeadQNet, SharedTrickHeadQNet))
+
+    def scorer(state_dict: dict, legal_tuples: list, player: int) -> tuple:
+        snap = SnapshotEnv(state_dict)
+        legal = [_combo_from_tuple(t) for t in legal_tuples]
+        k = len(legal)
+
+        if k == 1:
+            encoded = encoder.encode_one(snap, player, legal[0], legal)
+            return 0, encoded, float("nan"), 0
+
+        if random.random() < epsilon:
+            idx = random.randrange(k)
+            encoded = encoder.encode_one(snap, player, legal[idx], legal)
+            return idx, encoded, float("nan"), 1
+
+        encoded_list = encoder.encode_all(snap, player, legal)
+        if shared_path:
+            state_batch, action_batch, repeats = collate_role_encoded(
+                [encoded_list], device=device
+            )
+            with torch.inference_mode():
+                q_vals = q_nets.forward_grouped(state_batch, action_batch, repeats)
+        else:
+            state_batch, action_batch, repeats = collate_base_encoded(
+                [encoded_list], device=device
+            )
+            with torch.inference_mode():
+                q_vals = q_nets[player].forward_grouped(state_batch, action_batch, repeats)
+
+        q_flat = q_vals.view(-1)
+        idx = int(q_flat.argmax().item())
+        if q_flat.numel() >= 2:
+            top2 = torch.topk(q_flat, 2, largest=True).values
+            q_gap = float(top2[0].item() - top2[1].item())
+        else:
+            q_gap = float("nan")
+
+        return idx, encoded_list[idx], q_gap, 0
+
+    return scorer
+
+
+def play_episode_rust(
+    q_nets: Mapping[int, GuanZeroQNet] | SharedHeadQNet | SharedTrickHeadQNet,
+    encoder: StateActionEncoder | RoleAwareStateActionEncoder,
+    epsilon: float,
+    seed: int | None = None,
+    device: torch.device | str = "cpu",
+    gamma: float = 1.0,
+    *,
+    episode_mode: int = 0,
+    opponent_id: int = 0,
+    latest_team: int = 0,
+) -> list[TrainSample]:
+    """Run one self-play episode via the Rust loop, return MC training samples.
+
+    Equivalent to play_episode for pure self-play with no hard bots or frozen
+    seats. Routes game stepping and legal-move generation through guandan_rs;
+    calls back into Python only for Q-network scoring.
+    """
+    import guandan_rs
+
+    scorer = make_scorer(q_nets, encoder, device, epsilon)
+    trajectory, rewards = guandan_rs.play_episode_rust(scorer, level_rank=2, seed=seed)
+    return compute_mc_returns(
+        trajectory,
+        dict(enumerate(rewards)),
+        gamma=gamma,
+        episode_mode=episode_mode,
+        opponent_id=opponent_id,
+        latest_team=latest_team,
+    )
+
+
+__all__ = [
+    "play_episode",
+    "play_episode_rust",
+    "make_scorer",
+    "SnapshotEnv",
+    "select_legal",
+    "argmax_q",
+    "argmax_q_role",
+]

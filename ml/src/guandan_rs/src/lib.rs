@@ -1,6 +1,7 @@
 mod cards;
 mod combos;
 mod game;
+mod rollout;
 
 use std::collections::HashSet;
 
@@ -9,19 +10,19 @@ use pyo3::prelude::*;
 use cards::Card;
 
 // Combo as raw tuple: (combo_type, key, cards_vec, length, wild_count)
-type PyCard = (u8, u8, u8);
-type PyCombo = (u8, u8, Vec<PyCard>, u8, u8);
+pub(crate) type PyCard = (u8, u8, u8);
+pub(crate) type PyCombo = (u8, u8, Vec<PyCard>, u8, u8);
 
-fn card_from_py(t: &PyCard) -> Card {
+pub(crate) fn card_from_py(t: &PyCard) -> Card {
     Card::new(t.0, t.1, t.2)
 }
 
-fn combo_to_py(c: &combos::Combo) -> PyCombo {
+pub(crate) fn combo_to_py(c: &combos::Combo) -> PyCombo {
     let cards: Vec<PyCard> = c.cards.iter().map(|card| (card.rank, card.suit, card.deck)).collect();
     (c.combo_type, c.key, cards, c.length, c.wild_count)
 }
 
-fn combo_from_py(t: &PyCombo) -> combos::Combo {
+pub(crate) fn combo_from_py(t: &PyCombo) -> combos::Combo {
     let cards: Vec<Card> = t.2.iter().map(card_from_py).collect();
     combos::Combo::new(t.0, t.1, cards, t.3, t.4)
 }
@@ -143,5 +144,6 @@ fn guandan_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_responses, m)?)?;
     m.add_function(wrap_pyfunction!(mc_rollout, m)?)?;
     m.add_function(wrap_pyfunction!(mc_rollout_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(rollout::play_episode_rust, m)?)?;
     Ok(())
 }

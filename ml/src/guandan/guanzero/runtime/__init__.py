@@ -9,7 +9,7 @@ Process modules:
 - ``weight_publish``   — atomic weight publish + read helpers
 - ``worker``           — per-actor subprocess; ``actor_loop`` target
 - ``actor``            — single-episode self-play helpers used by the worker
-- ``inference_server`` — optional shared-GPU inference server
+- ``inference_server/`` — optional shared-GPU inference server (batching/client/server)
 """
 
 from .actor import argmax_q, argmax_q_role, play_episode, select_legal

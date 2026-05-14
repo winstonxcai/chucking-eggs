@@ -32,11 +32,13 @@ image = (
     .run_commands(
         "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable",
     )
-    .pip_install("torch", "numpy", "pyyaml", "tqdm", "maturin")
-    .add_local_dir(str(_root / "ml" / "src"), remote_path="/root/ml/src")
-    .add_local_dir(str(_root / "ml" / "scripts"), remote_path="/root/ml/scripts")
+    .pip_install("torch", "numpy", "pyyaml", "tqdm", "maturin==1.7.0")
+    .add_local_dir(str(_root / "ml" / "src"), remote_path="/root/ml/src", copy=True)
+    .add_local_dir(str(_root / "ml" / "scripts"), remote_path="/root/ml/scripts", copy=True)
     .run_commands(
-        ". $HOME/.cargo/env && cd /root/ml/src/guandan_rs && maturin develop --release",
+        ". $HOME/.cargo/env && cd /root/ml/src/guandan_rs"
+        " && maturin build --release -i python3"
+        " && pip install target/wheels/*.whl",
     )
 )
 
@@ -106,12 +108,9 @@ def main() -> None:
     print(f"Config: {_CONFIG}")
     print()
 
-    # Run both variants in parallel
-    rust_job = run_variant.spawn(use_rust=True,  run_name="rust_phase2")
-    py_job   = run_variant.spawn(use_rust=False, run_name="python_baseline")
-
-    rust_r = rust_job.get()
-    py_r   = py_job.get()
+    # Run sequentially — 32 vCPU each, not enough to run both in parallel.
+    rust_r = run_variant.remote(use_rust=True,  run_name="rust_phase2")
+    py_r   = run_variant.remote(use_rust=False, run_name="python_baseline")
 
     # Report
     print("\n" + "=" * 60)

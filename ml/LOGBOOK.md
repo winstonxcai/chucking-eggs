@@ -4013,7 +4013,17 @@ Root cause: Rust sent 7.51 avg actions/step vs Python's 4.63 (after dedup),
 causing 62% more NN evals per step. Since NN is ~98% of per-decision time, this
 accounts for most of the regression.
 
-**Run 2 — after `dedup_strategic` fix:** *(pending)*
+**Run 2 — after `dedup_strategic` fix (sequential, clean):**
+| Path | actor samp/s | upd/s |
+|------|-------------|-------|
+| python_baseline | 4917 | 4.19 |
+| rust_phase2 | 4476 | 4.53 |
+| **speedup** | **0.91×** | — |
+
+Rust within 9% of Python — effectively parity given measurement noise. Remaining
+gap is FFI overhead: PyBytes allocation+copy per step and `_build_encoded_dict`
+reconstruction. Both runs are NN-bound (~98% of per-decision time); encoding
+differences are nearly invisible in the total.
 
 ### Key design note
 

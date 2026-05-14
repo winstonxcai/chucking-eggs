@@ -9,8 +9,11 @@ buffer; the buffer is managed externally (by ``_SeatAdapter`` inside
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from typing import Mapping
+
+logger = logging.getLogger(__name__)
 
 import torch
 import torch.nn.functional as F
@@ -41,7 +44,11 @@ class SeatLearner:
             p: torch.optim.Adam(self.q_nets[p].parameters(), lr=lr, foreach=True)
             for p in range(4)
         }
-        self.use_bf16 = use_bf16 and self.device.type == "cuda"
+        if use_bf16 and self.device.type != "cuda":
+            logger.warning("use_bf16=True requested but device=%s; BF16 disabled", self.device)
+            self.use_bf16 = False
+        else:
+            self.use_bf16 = use_bf16
         self.max_grad_norm = max_grad_norm
         # One stream per position so CUDA can schedule all 4 forward+backward
         # passes concurrently. Not used on MPS (no multi-stream support).

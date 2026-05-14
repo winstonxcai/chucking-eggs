@@ -14,11 +14,22 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.nn as nn
+
+
+def unwrap_compiled(module: nn.Module) -> nn.Module:
+    """Return the underlying module from a torch.compile() wrapper, or the module as-is.
+
+    torch.compile() wraps the original module in an OptimizedModule and stores
+    the original in ``._orig_mod``. State dicts must be extracted from the
+    original to remain loadable without torch.compile.
+    """
+    return getattr(module, "_orig_mod", module)
 
 
 def save_checkpoint_base(
     path: Path,
-    q_nets: dict[int, Any],
+    q_nets: dict[int, nn.Module],
     cfg: Any,
     episode_or_update: int,
 ) -> None:
@@ -34,7 +45,7 @@ def save_checkpoint_base(
             "episode": episode_or_update,
             "config": dataclasses.asdict(cfg),
             "q_nets": {
-                p: getattr(q_nets[p], "_orig_mod", q_nets[p]).state_dict()
+                p: unwrap_compiled(q_nets[p]).state_dict()
                 for p in range(4)
             },
         },
@@ -47,7 +58,7 @@ save_checkpoint = save_checkpoint_base
 
 def save_checkpoint_shared(
     path: Path,
-    q_net: torch.nn.Module,
+    q_net: nn.Module,
     cfg: Any,
     episode_or_update: int,
 ) -> None:
@@ -57,7 +68,7 @@ def save_checkpoint_shared(
         {
             "episode": episode_or_update,
             "config": dataclasses.asdict(cfg),
-            "q_net": getattr(q_net, "_orig_mod", q_net).state_dict(),
+            "q_net": unwrap_compiled(q_net).state_dict(),
         },
         path,
     )
@@ -130,6 +141,7 @@ class WeightSnapshot:
 
 
 __all__ = [
+    "unwrap_compiled",
     "save_checkpoint_base",
     "save_checkpoint",
     "save_checkpoint_shared",

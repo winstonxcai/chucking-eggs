@@ -39,10 +39,8 @@ class JsonlBackend:
         self._fp.write(json.dumps(row) + "\n")
 
     def close(self) -> None:
-        try:
-            self._fp.close()
-        except Exception:
-            pass
+        self._fp.flush()
+        self._fp.close()
 
 
 class MetricsWriter:

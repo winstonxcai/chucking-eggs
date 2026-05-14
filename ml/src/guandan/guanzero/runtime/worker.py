@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import dataclasses
+import multiprocessing as mp
 import os
 import random
 import time
@@ -113,13 +114,99 @@ def maybe_sync_weights_shared(
     return snapshot.version, snapshot.updates, snapshot.updates
 
 
+def _jitter_sync_threshold(cfg, rng: random.Random) -> int:
+    """Return sync_interval_updates ± sync_jitter_updates (uniform draw)."""
+    if cfg.sync_jitter_updates <= 0:
+        return cfg.sync_interval_updates
+    return cfg.sync_interval_updates + rng.randint(
+        -cfg.sync_jitter_updates, cfg.sync_jitter_updates,
+    )
+
+
+def _init_frozen_pool(cfg, logger) -> list:
+    """Preload every checkpoint in cfg.population_pool; return list of frozen nets.
+
+    Returns an empty list if population self-play is not active for this config.
+    Each loaded net is in eval() mode with requires_grad=False.
+    """
+    shared_path = cfg.model_type in ("shared_heads", "shared_trick_heads")
+    trick_path = cfg.model_type == "shared_trick_heads"
+    population_active = (
+        shared_path
+        and bool(cfg.population_pool)
+        and cfg.latest_vs_latest_frac < 1.0
+    )
+    if not population_active:
+        return []
+
+    from ..config import shared_head_qnet_config, shared_trick_head_qnet_config
+    frozen_nets: list = []
+    if trick_path:
+        from ..model.checkpoint import load_frozen_trick_qnet
+        qnet_cfg = shared_trick_head_qnet_config(cfg)
+        for ckpt_path in cfg.population_pool:
+            frozen_nets.append(load_frozen_trick_qnet(ckpt_path, qnet_cfg, device="cpu"))
+    else:
+        from ..model.checkpoint import load_frozen_shared_qnet
+        qnet_cfg = shared_head_qnet_config(cfg)
+        for ckpt_path in cfg.population_pool:
+            frozen_nets.append(load_frozen_shared_qnet(ckpt_path, qnet_cfg, device="cpu"))
+    logger.info("preloaded %d frozen opponents", len(frozen_nets))
+    return frozen_nets
+
+
+def _init_hard_bot_pool(cfg, logger) -> tuple[list, dict, list, list, list, list]:
+    """Instantiate hard-bot opponents from cfg.hard_bot_pool.
+
+    Returns (hard_bots_pool, hard_bots_by_name, hard_bot_weights, pair_names,
+             pair_weights, hard_bot_pick_counts).
+    hard_bots_pool is a list of (name, Agent) pairs; empty if not active.
+    """
+    shared_path = cfg.model_type in ("shared_heads", "shared_trick_heads")
+    hard_bot_active = (
+        shared_path
+        and bool(cfg.hard_bot_pool)
+        and cfg.latest_vs_hard_bot_frac > 0.0
+    )
+    if not hard_bot_active:
+        return [], {}, [], [], [], []
+
+    from ...agents import make_agent
+    hard_bots_pool: list = []
+    for bot_name in cfg.hard_bot_pool:
+        hard_bots_pool.append((bot_name, make_agent(bot_name)))
+    hard_bots_by_name: dict = {n: agent for n, agent in hard_bots_pool}
+
+    pair_names: list[str] = []
+    pair_weights: list[float] = []
+    hard_bot_weights: list[float] = []
+    if cfg.hard_bot_pair_sampling:
+        pair_names = list(cfg.hard_bot_pair_sampling.keys())
+        pair_weights = list(cfg.hard_bot_pair_sampling.values())
+    elif cfg.hard_bot_sampling:
+        hard_bot_weights = [cfg.hard_bot_sampling.get(n, 0.0) for n, _ in hard_bots_pool]
+
+    if cfg.hard_bot_pair_sampling:
+        sampling_str = f"pair_sampling={cfg.hard_bot_pair_sampling}"
+    elif cfg.hard_bot_sampling:
+        sampling_str = f"weighted={cfg.hard_bot_sampling}"
+    else:
+        sampling_str = "uniform"
+    logger.info(
+        "loaded %d hard-bot opponents: %s (%s)",
+        len(hard_bots_pool), [n for n, _ in hard_bots_pool], sampling_str,
+    )
+    hard_bot_pick_counts: list[int] = [0] * len(hard_bots_pool)
+    return hard_bots_pool, hard_bots_by_name, hard_bot_weights, pair_names, pair_weights, hard_bot_pick_counts
+
+
 def actor_loop(
     actor_id:     int,
     cfg_dict:     dict,
-    sample_queue,           # multiprocessing.Queue
-    stop_event,             # multiprocessing.Event
+    sample_queue: "mp.Queue[bytes]",
+    stop_event:   "mp.Event",
     weight_dir:   Path,
-    inference_args=None,    # Optional[dict] — shared-memory inference handles
+    inference_args: "dict | None" = None,
     run_dir:      Path | None = None,
 ) -> None:
     """Persistent actor process for distributed actor-learner DMC.
@@ -201,71 +288,24 @@ def actor_loop(
     # ── Checkpoint-population pool (shared-head + non-empty pool only) ──
     # Each actor preloads every frozen checkpoint once. Per vs-frozen episode
     # we sample one uniformly and use it for the opponent seats.
-    frozen_nets: list = []
-    population_active = (
-        shared_path
-        and bool(cfg.population_pool)
-        and cfg.latest_vs_latest_frac < 1.0
-    )
-    if population_active:
-        if trick_path:
-            from ..model.checkpoint import load_frozen_trick_qnet
-            qnet_cfg_for_pool = shared_trick_head_qnet_config(cfg)
-            for ckpt_path in cfg.population_pool:
-                frozen_nets.append(load_frozen_trick_qnet(ckpt_path, qnet_cfg_for_pool, device="cpu"))
-        else:
-            from ..model.checkpoint import load_frozen_shared_qnet
-            qnet_cfg_for_pool = shared_head_qnet_config(cfg)
-            for ckpt_path in cfg.population_pool:
-                frozen_nets.append(load_frozen_shared_qnet(ckpt_path, qnet_cfg_for_pool, device="cpu"))
-        logger.info("preloaded %d frozen opponents", len(frozen_nets))
+    frozen_nets = _init_frozen_pool(cfg, logger)
 
     # ── Hard-bot opponent pool (shared-head + non-empty pool only) ──
     # Each actor instantiates one copy of every hard bot at startup and
     # samples one per vs-hard-bot episode. Bots are stateless across episodes
     # (level_rank fixed) so a single instance per actor is enough.
-    hard_bots_pool: list = []   # list of (name, Agent) pairs
-    hard_bot_active = (
-        shared_path
-        and bool(cfg.hard_bot_pool)
-        and cfg.latest_vs_hard_bot_frac > 0.0
-    )
-    hard_bot_weights: list[float] | None = None
-    hard_bots_by_name: dict = {}
-    pair_names: list[str] = []
-    pair_weights: list[float] = []
-    if hard_bot_active:
-        from ...agents import make_agent
-        for bot_name in cfg.hard_bot_pool:
-            hard_bots_pool.append((bot_name, make_agent(bot_name)))
-        hard_bots_by_name = {n: agent for n, agent in hard_bots_pool}
-        if cfg.hard_bot_pair_sampling:
-            # Pair sampling: keys are "<a>_<b>" (alphabetized, validated in
-            # TrainConfig). Two opponent seats get distinct bot instances
-            # (or the same instance for homogeneous pairs).
-            pair_names = list(cfg.hard_bot_pair_sampling.keys())
-            pair_weights = list(cfg.hard_bot_pair_sampling.values())
-        elif cfg.hard_bot_sampling:
-            # Validation in TrainConfig already normalized weights to sum to 1
-            # and verified all keys are in hard_bot_pool. Bots not listed get 0.
-            hard_bot_weights = [
-                cfg.hard_bot_sampling.get(n, 0.0) for n, _ in hard_bots_pool
-            ]
-        if cfg.hard_bot_pair_sampling:
-            sampling_str = f"pair_sampling={cfg.hard_bot_pair_sampling}"
-        elif cfg.hard_bot_sampling:
-            sampling_str = f"weighted={cfg.hard_bot_sampling}"
-        else:
-            sampling_str = "uniform"
-        logger.info(
-            "loaded %d hard-bot opponents: %s (%s)",
-            len(hard_bots_pool), [n for n, _ in hard_bots_pool], sampling_str,
-        )
+    (
+        hard_bots_pool,
+        hard_bots_by_name,
+        hard_bot_weights,
+        pair_names,
+        pair_weights,
+        hard_bot_pick_counts,
+    ) = _init_hard_bot_pool(cfg, logger)
 
     # Per-actor counters for end-of-run summary (printed by every actor).
     mode_counts = {"self_play": 0, "vs_frozen": 0, "vs_hard_bot": 0}
     frozen_pick_counts = [0] * len(frozen_nets)
-    hard_bot_pick_counts = [0] * len(hard_bots_pool)
     pair_pick_counts: dict[str, int] = {k: 0 for k in pair_names}
     team_counts = {"latest_even": 0, "latest_odd": 0}
 
@@ -275,6 +315,7 @@ def actor_loop(
     local_updates  = 0   # update count of the policy actor currently holds
     global_updates = 0   # latest published update count (for ε-schedule)
     episode_count  = 0
+    dropped_batches = 0
     # Pre-stacked accumulator: keep raw encoded dicts and stack at push-time.
     # One pickle of 9 contiguous arrays is ~6× faster to unpickle than 512 dicts
     # of 9 small arrays each (measured: 3.81 ms → 0.63 ms per push).
@@ -298,15 +339,7 @@ def actor_loop(
     buf_terminal_reward:   list[float] = []
     rng = random.Random(cfg.seed + actor_id * 10_000)
 
-    def _sample_sync_threshold() -> int:
-        """Per-actor sync threshold = sync_interval_updates ± sync_jitter_updates (uniform)."""
-        if cfg.sync_jitter_updates <= 0:
-            return cfg.sync_interval_updates
-        return cfg.sync_interval_updates + rng.randint(
-            -cfg.sync_jitter_updates, cfg.sync_jitter_updates,
-        )
-
-    sync_threshold = _sample_sync_threshold()
+    sync_threshold = _jitter_sync_threshold(cfg, rng)
 
     profile_enabled = os.environ.get("GUANZERO_ACTOR_PROFILE") == "1"
     prof = PhaseProfiler(enabled=profile_enabled)
@@ -348,8 +381,13 @@ def actor_loop(
         with prof.time("queue_put"):
             try:
                 sample_queue.put(msg, timeout=5)
-            except Exception:
-                pass   # queue full or closed — drop and continue
+            except Exception as exc:
+                dropped_batches += 1
+                if dropped_batches <= 3 or dropped_batches % 20 == 0:
+                    logger.warning(
+                        "actor-%d: sample queue drop #%d: %s",
+                        actor_id, dropped_batches, exc,
+                    )
         buf_dicts.clear()
         buf_players.clear()
         buf_returns.clear()
@@ -388,7 +426,7 @@ def actor_loop(
                     )
             if local_version > prev_version:
                 # Just synced — draw a fresh threshold so the next reload is independently jittered.
-                sync_threshold = _sample_sync_threshold()
+                sync_threshold = _jitter_sync_threshold(cfg, rng)
                 if use_int8:
                     q_nets_inference = _quantize_for_inference(q_nets)
 
@@ -574,14 +612,9 @@ def actor_loop(
                 sample_bucket = 1  # hard_bot_general
             else:
                 # yaoji/jidan loss episode — check per-sample coord state.
-                # player_blocks layout (243 dims per role):
-                #   [0:108] played, [108:216] last_action, [216:243] count one-hot.
-                # role 0 = self, role 1 = next_opp, role 2 = partner, role 3 = prev_opp.
-                blocks = s.encoded["player_blocks"]
-                self_cards = int(s.encoded["own_hand"].sum())
-                partner_cards = int(np.argmax(blocks[2, 216:243]))
-                next_opp_cards = int(np.argmax(blocks[1, 216:243]))
-                prev_opp_cards = int(np.argmax(blocks[3, 216:243]))
+                self_cards, partner_cards, next_opp_cards, prev_opp_cards = (
+                    RoleAwareStateActionEncoder.decode_card_counts(s.encoded)
+                )
                 min_opp_cards = min(next_opp_cards, prev_opp_cards)
                 is_final_third = i >= total * 2 // 3
                 is_coord = (
@@ -619,6 +652,8 @@ def actor_loop(
 
     # Per-actor opponent-pool counters logged by every actor so off-balance
     # pool sampling or skewed team assignment shows up in logs.
+    if dropped_batches:
+        logger.warning("actor-%d: dropped %d sample batches (queue full/closed)", actor_id, dropped_batches)
     logger.info("episode modes: %s", mode_counts)
     if frozen_nets:
         pool_str = ", ".join(

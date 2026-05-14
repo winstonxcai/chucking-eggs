@@ -7,13 +7,16 @@ load ``weight_dir/weights_{version}.pt``.  Both writes are made atomic via
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Union
 
 import torch
 
-from ..model.checkpoint import WeightSnapshot
+logger = logging.getLogger(__name__)
+
+from ..model.checkpoint import WeightSnapshot, unwrap_compiled
 from ..model.q_network import SharedHeadQNet, SharedTrickHeadQNet
 
 
@@ -29,7 +32,7 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int, updates: int =
             "updates": updates,
             "state_dicts": {
                 p: {k: v.detach().cpu()
-                    for k, v in getattr(q_nets[p], "_orig_mod", q_nets[p]).state_dict().items()}
+                    for k, v in unwrap_compiled(q_nets[p]).state_dict().items()}
                 for p in range(4)
             },
         },
@@ -65,7 +68,7 @@ def publish_weights_shared(
             "state_dicts": {
                 "shared": {
                     k: v.detach().cpu()
-                    for k, v in getattr(q_net, "_orig_mod", q_net).state_dict().items()
+                    for k, v in unwrap_compiled(q_net).state_dict().items()
                 }
             },
         },
@@ -124,7 +127,10 @@ def load_latest_weights(weight_dir: Path) -> WeightSnapshot | None:
             state_dicts=payload["state_dicts"],
             updates=int(payload.get("updates", 0)),
         )
-    except Exception:
+    except (FileNotFoundError, OSError):
+        return None  # not published yet or mid-atomic-swap — expected
+    except Exception as exc:
+        logger.warning("weight_publish: unexpected error loading weights v%d: %s", version, exc)
         return None
 
 

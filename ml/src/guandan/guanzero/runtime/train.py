@@ -320,12 +320,9 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
         weight_dir, layout, inference_args,
     )
 
-    sep = "=" * 68
     server_suffix = " + 1 inference server" if cfg.inference.enabled else ""
-    logger.info(sep)
-    logger.info("GuanZero  |  %d actors + 1 learner%s", cfg.n_actors, server_suffix)
-    logger.info("Log → %s", log_path)
-    logger.info(sep)
+    logger.info("GuanZero | %d actors + 1 learner%s", cfg.n_actors, server_suffix)
+    logger.info("log → %s", log_path)
 
     target_updates = cfg.total_updates_target or cfg.checkpoint_every_updates
     abort_reason: str | None = None
@@ -340,13 +337,9 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
         _shutdown_all(stop_event, actor_procs, learner_proc, inf_server_proc, inf_bufs)
 
     if abort_reason:
-        logger.error(sep)
-        logger.error("Failed. Check logs in %s", layout.run_dir)
-        logger.error(sep)
+        logger.error("training failed — check logs in %s", layout.run_dir)
         raise RuntimeError(abort_reason)
-    logger.info(sep)
-    logger.info("Done. Checkpoints → %s", layout.checkpoints_dir)
-    logger.info(sep)
+    logger.info("done — checkpoints → %s", layout.checkpoints_dir)
 
 
 # ─── CLI ─────────────────────────────────────────────────────

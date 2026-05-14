@@ -329,6 +329,20 @@ class RoleAwareStateActionEncoder:
                 actions[row] = _multi_hot(combo.cards)
         return actions, roles, is_pass
 
+    @staticmethod
+    def decode_card_counts(encoded: dict) -> tuple[int, int, int, int]:
+        """Return (own, partner, next_opp, prev_opp) card counts from an encoded sample.
+
+        Uses the count one-hot in player_blocks (cols 216:243 per role) and own_hand
+        directly. Callers should use this rather than indexing player_blocks directly
+        so that layout changes only require updating this one method.
+        """
+        own_count = int(encoded["own_hand"].sum())
+        partner_count = int(np.argmax(encoded["player_blocks"][REL_PARTNER, 216:243]))
+        next_opp_count = int(np.argmax(encoded["player_blocks"][REL_NEXT_OPP, 216:243]))
+        prev_opp_count = int(np.argmax(encoded["player_blocks"][REL_PREV_OPP, 216:243]))
+        return own_count, partner_count, next_opp_count, prev_opp_count
+
 
 __all__ = [
     "RoleAwareStateActionEncoder",

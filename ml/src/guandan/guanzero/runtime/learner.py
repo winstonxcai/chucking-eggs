@@ -19,6 +19,7 @@ Module map
 from __future__ import annotations
 
 import dataclasses
+import multiprocessing as mp
 import time
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -421,12 +422,12 @@ def _make_adapter(cfg) -> LearnerProtocol:
 
 def learner_loop(
     cfg_dict:          dict,
-    sample_queue,               # multiprocessing.Queue
-    stop_event,                 # multiprocessing.Event
+    sample_queue:      "mp.Queue[bytes]",
+    stop_event:        "mp.Event",
     weight_dir:        Path,
     run_dir:           Path,
-    update_counter=None,        # multiprocessing.Value('i'), advanced per gradient step
-    weights_ready=None,         # multiprocessing.Event, set after first publish
+    update_counter:    "mp.Value | None" = None,
+    weights_ready:     "mp.Event | None" = None,
     resume_checkpoint: Path | None = None,
 ) -> None:
     """Central learner process for faithful persistent actor-learner DMC.

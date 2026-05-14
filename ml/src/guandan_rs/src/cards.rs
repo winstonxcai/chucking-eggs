@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 // Suit constants (matching Python IntEnum)
 pub const SUIT_SPADE: u8 = 0;
 pub const SUIT_HEART: u8 = 1;

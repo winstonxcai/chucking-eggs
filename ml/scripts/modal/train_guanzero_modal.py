@@ -32,9 +32,18 @@ _root = Path(__file__).resolve().parent.parent.parent.parent  # repo root
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("torch", "numpy", "pyyaml", "tqdm")
-    .add_local_dir(str(_root / "ml" / "src"),     remote_path="/root/ml/src")
-    .add_local_dir(str(_root / "ml" / "scripts"), remote_path="/root/ml/scripts")
+    .apt_install("curl", "gcc", "libssl-dev", "pkg-config", "build-essential")
+    .run_commands(
+        "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable",
+    )
+    .pip_install("torch", "numpy", "pyyaml", "tqdm", "maturin==1.7.0")
+    .add_local_dir(str(_root / "ml" / "src"),     remote_path="/root/ml/src", copy=True)
+    .add_local_dir(str(_root / "ml" / "scripts"), remote_path="/root/ml/scripts", copy=True)
+    .run_commands(
+        ". $HOME/.cargo/env && cd /root/ml/src/guandan_rs"
+        " && maturin build --release -i python3"
+        " && pip install target/wheels/*.whl",
+    )
 )
 
 

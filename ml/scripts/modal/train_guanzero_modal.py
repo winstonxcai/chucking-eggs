@@ -3,11 +3,11 @@
 Drives the distributed orchestrator (`guandan.guanzero.runtime.train`, invoked via
 `python -m guandan.guanzero` through __main__.py) with
 a config tuned for Modal GPU workers with 32 vCPUs. The default worker uses
-an L4 GPU; override `config_path`, `n_actors`, and `updates` for other shapes.
+an L4 GPU; actor count and all other hyperparameters are controlled by the YAML config.
 
 Sanity smoke (~5 min, ~$0.25):
     modal run ml/scripts/modal/train_guanzero_modal.py \\
-        --updates 2000 --n-actors 8 --run-name guanzero_l4_sanity
+        --updates 2000 --run-name guanzero_l4_sanity
 
 Benchmark (~10 min, ~$0.50) — primary perf-tuning target:
     modal run ml/scripts/modal/train_guanzero_modal.py \\
@@ -52,7 +52,7 @@ image = (
     gpu="L4",
     cpu=32,
     memory=20 * 1024,   # peak observed 16.89 GB; 20 GB leaves ~3 GB headroom
-    timeout=3600 * 6,  # 6-hour cap per CLAUDE.md
+    timeout=3600 * 10,  # 10-hour cap per CLAUDE.md
     volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
     secrets=[modal.Secret.from_name("huggingface-token")],
 )
@@ -61,7 +61,6 @@ def train_remote(
     run_name:    str,
     seed:        int,
     config_path: str,
-    n_actors:    int | None,
     device:      str,
     profile:     bool = False,
     resume:      str | None = None,
@@ -96,8 +95,6 @@ def train_remote(
         "--seed",    str(seed),
         "--run-dir", run_dir,
     ]
-    if n_actors is not None:
-        cmd.extend(["--n-actors", str(n_actors)])
     if resume:
         cmd.extend(["--resume", resume])
 
@@ -113,17 +110,24 @@ def main(
     run_name: str = "guanzero_l4_bench",
     seed: int = 0,
     config_path: str = "/root/ml/src/guandan/guanzero/configs/m0_l4_distributed.yaml",
-    n_actors: int | None = None,
     device: str = "cuda",
     profile: bool = False,
     resume: str | None = None,
+    dry_run: bool = False,
 ) -> None:
+    if dry_run:
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
+        from guandan.guanzero.config import load_config_from_yaml
+        cfg = load_config_from_yaml(config_path)
+        print(f"Config OK: model_type={cfg.model_type}, n_actors={cfg.n_actors}, updates={updates}")
+        return
+
     out = train_remote.remote(
         updates=updates,
         run_name=run_name,
         seed=seed,
         config_path=config_path,
-        n_actors=n_actors,
         device=device,
         profile=profile,
         resume=resume,

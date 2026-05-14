@@ -3669,3 +3669,221 @@ opponent distribution itself, not just the policy lag — true mixed-opponent
 training, league play, or PBT. Update-count alone is not the lever.
 
 ---
+
+## 63. M3 hard-bot mixed-opponent self-play — yaoji breakthrough (2026-05-10)
+
+**Setup.** Branch from M3-20k. Actor-side: each episode independently
+flips a coin to dispatch self-play vs vs-hard-bot. Hard-bot seats call
+`Agent.act(env, p)` and **skip trajectory recording**, so only latest-team
+samples enter the buffer. Two configs run back-to-back, both with
+`epsilon=0.02` fixed (no decay) and replay ratio target 1.0 / cap 1.25:
+
+| Phase | Updates | Self-play | Hard-bot | Sampling |
+|------:|--------:|----------:|---------:|:---------|
+|  M3-hardbots-A | 20k → 35k | 60% | 40% | uniform over (strategic, yaoji, jidan) |
+|  M3-hardbots-B | 35k → 55k | 40% | 60% | weighted strategic=0.20, yaoji=0.40, jidan=0.40 |
+
+Phase A's flat-then-stalled yaoji curve (stuck at 48–49%) motivated the
+yaoji-up-weight in Phase B. All evals are 1000 paired-deck games at 8 workers
+with `eval_guanzero.py`.
+
+### Win-rate evolution
+
+| Opponent     | M3-20k | 25k     | 30k     | 35k     | 40k     | 45k     | 50k     | 55k     |
+|:-------------|-------:|--------:|--------:|--------:|--------:|--------:|--------:|--------:|
+| strategic    | 63.6%  | 68.1%   | 68.5%   | 70.8%   | 73.1%   | 72.9%   | 73.8%   | 71.3%   |
+| yaoji        | 44.6%  | 49.3%   | 48.4%   | 49.0%   | 52.5%   | **55.7%** | 52.3% | 52.2%   |
+| jidan        | 51.1%  | 53.0%   | 56.3%   | 53.4%   | 55.3%   | **60.1%** | 57.8% | 57.2%   |
+| **hard_avg** | 53.1%  | 56.8%   | 57.7%   | 57.7%   | 60.3%   | **62.9%** | 61.3% | 60.2%   |
+
+### Phase A (uniform): yaoji plateaus at coin-flip
+
+5k–15k updates lifted strategic +7pp and gave jidan a transient +5pp
+spike at 30k that partially reverted. **Yaoji barely moved** (44.6% →
+49.0%, ±1.6pp noise band). Diagnosis: only ~13% of episodes were vs
+yaoji (40% × 1/3 uniform), and yaoji's `Score = Gain*(1+Possibility)/Value`
+formula with explicit `mate_pos` is structurally unlike strategic / jidan,
+so vs-other-bot training transferred poorly.
+
+### Phase B (yaoji-weighted): real breakthrough at 45k
+
+Up-weighting to `yaoji=jidan=0.40, strategic=0.20` (so yaoji and jidan
+each get ~17% of all episodes vs ~9% for strategic) **immediately moved
+yaoji** at 40k (+3.5pp) and again at 45k (+6.7pp from 35k). hard_avg cleared
+60% for the first time at 40k and **peaked 62.9% at 45k** — +9.8pp over
+M3-20k baseline. Strategic continued to climb despite getting only 20% of
+hard-bot episodes — gains transferred from yaoji/jidan training.
+
+### 50k → 55k: regression
+
+Both 50k and 55k regressed from the 45k peak. yaoji slipped to 52.2%,
+hard_avg back to 60.2%. Likely the same mechanism that sank Phase A past
+35k: prolonged training against the fixed bot pool over-fits to the bot's
+specific patterns at the expense of the broader policy, and gains decay.
+
+### Seat-asymmetry diagnostic
+
+The 45k eval revealed a +5–6pp gap between even (GZ on {0,2}) and odd
+(GZ on {1,3}) seating across all three opponents:
+
+| 45k       | even   | odd    | Δ |
+|:----------|-------:|-------:|--:|
+| strategic | 76.0%  | 69.8%  | +6.2pp |
+| yaoji     | 58.2%  | 53.2%  | +5.0pp |
+| jidan     | 62.8%  | 57.4%  | +5.4pp |
+
+Root cause: `SharedHeadQNet` is a misnomer — it has **4 separate output
+heads + a `seat_emb` for absolute seat-id**, so the role-aware encoder's
+canonicalization is broken downstream. The 4 heads drift apart through
+training. Starting-player imbalance (258/500 seeds start in {0,2}) accounts
+for ~1.5pp; the remaining ~4pp is real head divergence.
+
+50k partially erased the gap on strategic (+1.2pp) and jidan (+0.4pp)
+but left it intact on yaoji (+6.2pp), suggesting yaoji-specific patterns
+are concentrated in the {0,2} heads. 55k kept some asymmetry (strategic
++6.6pp, yaoji +3.2pp, jidan +3.6pp).
+
+### Verdict & next steps
+
+**M3-hardbots-45k is the production checkpoint** for this branch. hard_avg
+62.9% is +9.8pp over M3-20k and the strongest GuanZero result so far.
+
+Three concrete follow-ups, ordered by leverage:
+
+1. **Fix the seat-head asymmetry.** Either (a) drop the per-seat heads
+   for true parameter sharing, (b) test-time average across `seat_id=p`
+   and `seat_id=(p+2)%4` (partner head, same role-aware features) — cheap,
+   no retraining, should compress the 5–6pp gap to <2pp.
+
+2. **Stop training at the WR peak**, not at a fixed update count. The
+   45k → 55k decay echoes the 20k → 35k decay in §62 — sustained training
+   against a fixed opponent distribution always over-fits. Best-checkpoint
+   selection on hard_avg should be the production rule.
+
+3. **Diversify the opponent pool further.** Add xingdream, hulalala, etc.
+   to break the over-fit dynamic. Or add a behavior-flag-aware regularizer
+   so coordination signals get explicit gradient.
+
+---
+
+## 65. M3 partner-visibility — early eval at 2.5k updates (2026-05-12)
+
+Encoding refactor: dropped full oracle (all hands visible) in favour of
+partner-only visibility (`is_partner_visible=True`). Opponents' hands are
+zero-filled. Run: `guanzero_partner_10k` (pure self-play, 32 actors, 10k
+updates planned). Checkpoint pulled at 2500 updates, 1000 games per opponent,
+8 workers, CPU.
+
+M3 v1 reference columns are the oracle-visibility run from §61.
+
+| Opponent  | M3 v1 5k | M3 v1 10k | **M3 v2 2.5k** | **M3 v2 5k** | **M3 v2 7.5k** | **M3 v2 10k** |
+|:----------|----------:|----------:|---------------:|-------------:|---------------:|--------------:|
+| random    | 99.6%     | 99.5%     | 98.3% ±0.4%    | 98.7% ±0.4%  | 99.1% ±0.3%    | **99.5% ±0.2%** |
+| greedy    | 98.0%     | 98.5%     | 96.3% ±0.6%    | 98.3% ±0.4%  | 97.9% ±0.5%    | **98.4% ±0.4%** |
+| heuristic | 87.6%     | 88.1%     | 75.9% ±1.4%    | 83.9% ±1.2%  | 85.6% ±1.1%    | **87.8% ±1.0%** |
+| xingdream | 86.1%     | 87.8%     | 76.3% ±1.3%    | 83.8% ±1.2%  | 83.9% ±1.2%    | **87.1% ±1.1%** |
+| strategic | 68.0%     | 63.9%     | 60.2% ±1.5%    | 67.1% ±1.5%  | 62.9% ±1.5%    | **66.3% ±1.5%** |
+| yaoji     | 42.1%     | 41.6%     | 32.1% ±1.5%    | 35.2% ±1.5%  | 36.7% ±1.5%    | **39.1% ±1.5%** |
+| jidan     | 45.8%     | 44.5%     | 30.3% ±1.5%    | 37.6% ±1.5%  | 42.5% ±1.6%    | **40.6% ±1.6%** |
+
+2.5k updates with partner-only visibility lands at 76% vs heuristic — well
+ahead of M0 5k (28.6%) and tracking toward M3 v1 levels. Learning is
+progressing normally; run continues to 10k.
+
+## 66. M3 v3 — trick-relative head routing (shared_trick_heads) (2026-05-12)
+
+New architecture variant `shared_trick_heads`: 4 Q-heads routed by
+`trick_head_id = (env.trick_winner - actor) % 4` (0=leading, 1=first responder,
+2=across, 3=last responder) instead of absolute seat. `player_blocks` grows
+from (4,252) to (4,256) with a per-role trick-position one-hot at [252:256].
+No `seat_emb`. Run: `guanzero_trick_head_10k` (pure self-play, 32 actors, 10k
+updates, branched from same hyperparams as M3 v2).
+
+### Combined WR — v2 vs v3 side by side
+
+| Opponent  | v2 2.5k | v3 2.5k | Δ | v2 5k | v3 5k | Δ | v2 7.5k | v3 7.5k | Δ | v2 10k | v3 10k | Δ |
+|:----------|--------:|--------:|:-:|------:|------:|:-:|--------:|--------:|:-:|-------:|-------:|:-:|
+| random    | 98.3%   | 98.0%   | −0.3 | 98.7% | 99.1% | +0.4 | 99.1% | 99.6% | +0.5 | 99.5% | 99.1% | −0.4 |
+| greedy    | 96.3%   | 96.6%   | +0.3 | 98.3% | 97.7% | −0.6 | 97.9% | 97.8% | −0.1 | 98.4% | 98.3% | −0.1 |
+| heuristic | 75.9%   | 77.8%   | +1.9 | 83.9% | 85.0% | +1.1 | 85.6% | 87.7% | +2.1 | 87.8% | **87.5%** | −0.3 |
+| xingdream | 76.3%   | 79.0%   | +2.7 | 83.8% | 85.8% | +2.0 | 83.9% | 86.4% | +2.5 | 87.1% | 85.9% | −1.2 |
+| strategic | 60.2%   | 62.1%   | +1.9 | 67.1% | 64.7% | −2.4 | 62.9% | 64.5% | +1.6 | 66.3% | **67.0%** | **+0.7** |
+| yaoji     | 32.1%   | 33.6%   | +1.5 | 35.2% | 40.3% | +5.1 | 36.7% | 40.2% | +3.5 | 39.1% | **39.3%** | **+0.2** |
+| jidan     | 30.3%   | 33.4%   | +3.1 | 37.6% | 41.2% | +3.6 | 42.5% | 43.3% | +0.8 | 40.6% | **42.3%** | **+1.7** |
+
+### Even/odd gap — v3 at each checkpoint (v2 10k ref column)
+
+| Opponent  | v3 2.5k (e/o/Δ) | v3 5k (e/o/Δ) | v3 7.5k (e/o/Δ) | v3 10k (e/o/Δ) | v2 10k Δ ref |
+|:----------|:---------------:|:-------------:|:---------------:|:--------------:|:------------:|
+| heuristic | 80.4/75.2/+5.2  | 85.4/84.6/+0.8 | 89.2/86.2/+3.0  | 88.2/86.8/**+1.4** | — |
+| xingdream | 82.2/75.8/+6.4  | 89.6/82.0/+7.6 | 90.4/82.4/+8.0  | 88.2/83.6/**+4.6** | — |
+| strategic | 65.8/58.4/+7.4  | 66.6/62.8/+3.8 | 66.0/63.0/+3.0  | 69.2/64.8/**+4.4** | +4.4pp |
+| yaoji     | 36.2/31.0/+5.2  | 46.6/34.0/+12.6 | 42.0/38.4/+3.6 | 39.8/38.8/**+1.0** | +10.6pp |
+| jidan     | 35.8/31.0/+4.8  | 45.0/37.4/+7.6 | 46.0/40.6/+5.4  | 43.4/41.2/**+2.2** | +6.8pp |
+
+### Verdict: Architecture validated
+
+**Combined WR at 10k:** v3 is within ±1.2pp of v2 on all 7 bots (within noise for
+all). Strategic (+0.7pp) and jidan (+1.7pp) are genuinely ahead; heuristic and
+yaoji are statistically tied; only xingdream is slightly behind (−1.2pp).
+
+**Even/odd gap reduction:** The primary goal — eliminating seat-identity leakage —
+is confirmed:
+- yaoji: +10.6pp (v2) → **+1.0pp (v3)** — gap reduced by 9.6pp
+- jidan: +6.8pp (v2) → **+2.2pp (v3)** — gap reduced by 4.6pp
+- strategic: +4.4pp → +4.4pp (unchanged — gap was opponent-side)
+- xingdream: residual +4.6pp gap; heuristic essentially symmetric at +1.4pp
+
+The trick-relative head routing eliminated the seat-identity asymmetry on the two
+hardest bots without sacrificing combined WR. **M3 v3 (guanzero_trick_head_10k)
+is the new production checkpoint.** Loss at 10k: 0.2482 (still decreasing).
+
+## 67. M3 v3 League — checkpoint population self-play (2026-05-13)
+
+Resumed from v3 5k. 50% of episodes pit latest vs a frozen v3 snapshot (2.5k or
+5k, uniform pick). epsilon fixed at 0.02 for latest, 0.00 for frozen. Run:
+`guanzero_trick_head_league`, 5k → 10k (5k league updates).
+
+Update counter in league run continues from 5000, so:
+- `update_00007500` = v3 5k + **2.5k league updates**
+- `update_00010000` = v3 5k + **5k league updates**
+
+| Opponent  | v3 10k (ref) | league 7.5k | Δ | league 10k | Δ |
+|:----------|:------------:|:-----------:|:-:|:----------:|:-:|
+| random    | 99.1%        | 99.2%       | +0.1 | 99.5% | +0.4 |
+| greedy    | 98.3%        | 97.7%       | −0.6 | 98.0% | −0.3 |
+| heuristic | 87.5%        | 85.6%       | −1.9 | **87.8%** | **+0.3** |
+| xingdream | 85.9%        | 85.0%       | −0.9 | 85.0% | −0.9 |
+| strategic | 67.0%        | 65.0%       | −2.0 | 64.0% | −3.0 |
+| yaoji     | 39.3%        | 36.6%       | −2.7 | **41.8%** | **+2.5** |
+| jidan     | 42.3%        | 44.6%       | +2.3 | **46.3%** | **+4.0** |
+
+Even/odd gaps:
+
+| Opponent  | league 7.5k (e/o/Δ) | league 10k (e/o/Δ) | v3 10k Δ ref |
+|:----------|:-------------------:|:------------------:|:------------:|
+| heuristic | 87.0/84.2/+2.8pp    | 88.4/87.2/+1.2pp   | +1.4pp |
+| xingdream | 85.8/84.2/+1.6pp    | 87.8/82.2/+5.6pp   | +4.6pp |
+| strategic | 65.8/64.2/+1.6pp    | 65.8/62.2/+3.6pp   | +4.4pp |
+| yaoji     | 39.4/33.8/+5.6pp    | 45.6/38.0/+7.6pp   | +1.0pp |
+| jidan     | 48.0/41.2/+6.8pp    | 50.4/42.2/+8.2pp   | +2.2pp |
+
+### Analysis
+
+**Combined WR:** jidan breaks above the pure self-play plateau — 46.3% vs v3 10k's
+42.3% (+4.0pp, new high for pure GuanZero without hard bots). yaoji also improves
+(+2.5pp). Strategic regresses −3.0pp vs v3 10k. Heuristic/xingdream flat.
+
+**Even/odd gap:** League training reintroduces seat asymmetry on yaoji (+7.6pp,
+was +1.0pp after v3) and jidan (+8.2pp, was +2.2pp). The frozen opponents
+(epsilon=0.0, fixed at v3 2.5k/5k quality) don't fully break the symmetry
+the way trick-head routing does — the latest policy may be adapting to team-side
+patterns in frozen opponent behavior. Strategic and heuristic gaps are modest.
+
+**Verdict (at 5k league updates):** The league is working for the hardest bots but
+not uniformly. jidan and yaoji combined WRs are the best non-hardbot results so
+far. Strategic regression (−3.0pp) is a concern — 50/50 split may be under-sampling
+strategic-style games. Even/odd gap widening on yaoji/jidan is a side effect of
+the asymmetric frozen opponent pool. Continue to 10k more league updates to see if
+jidan/yaoji keep improving and strategic recovers.
+

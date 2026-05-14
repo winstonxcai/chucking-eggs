@@ -347,6 +347,7 @@ def actor_loop(
     snapshot_every_episodes = max(1, cfg.log_every_updates * 10)
 
     def _push_buffered() -> None:
+        nonlocal dropped_batches
         if len(buf_dicts) < cfg.actor_push_batch_size:
             return
         with prof.time("buffer_stack"):

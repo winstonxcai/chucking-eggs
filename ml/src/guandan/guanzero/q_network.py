@@ -169,20 +169,27 @@ class GuanZeroQNet(nn.Module):
         can be computed once and added to the per-action contribution. This is
         exactly equivalent to expanding state/history to K rows before the MLP,
         but avoids a large repeated first-layer matmul for local actor calls.
+
+        Falls through to the expansion path when ``self.mlp[0]`` is not a plain
+        nn.Linear (e.g. dynamic-quantized int8), since the weight-slicing trick
+        only works on a regular dense linear.
         """
         first = self.mlp[0]
-        assert isinstance(first, nn.Linear)
-        state_dim = state_flat.shape[-1]
-        action_dim = action_flat.shape[-1]
-        w = first.weight
-
-        shared = F.linear(state_flat, w[:, :state_dim], first.bias)
-        shared = shared + F.linear(z_hist, w[:, state_dim + action_dim :], None)
-        x = F.linear(action_flat, w[:, state_dim : state_dim + action_dim], None)
-        x = x + shared
-
-        for layer in list(self.mlp.children())[1:]:
-            x = layer(x)
+        K = action_flat.shape[0]
+        if isinstance(first, nn.Linear):
+            state_dim = state_flat.shape[-1]
+            action_dim = action_flat.shape[-1]
+            w = first.weight
+            shared = F.linear(state_flat, w[:, :state_dim], first.bias)
+            shared = shared + F.linear(z_hist, w[:, state_dim + action_dim :], None)
+            x = F.linear(action_flat, w[:, state_dim : state_dim + action_dim], None)
+            x = x + shared
+            for layer in list(self.mlp.children())[1:]:
+                x = layer(x)
+        else:
+            state_exp = state_flat.expand(K, -1)
+            z_hist_exp = z_hist.expand(K, -1)
+            x = self.mlp(torch.cat([state_exp, action_flat, z_hist_exp], dim=-1))
         return x.squeeze(-1)
 
 
@@ -330,21 +337,28 @@ class SharedHeadQNet(nn.Module):
         z_seat: torch.Tensor,
         seat_id: torch.Tensor,
     ) -> torch.Tensor:
-        """Fast path for the actor's common one-decision grouped forward."""
+        """Fast path for the actor's common one-decision grouped forward.
+
+        Falls through to the expansion path when ``self.trunk[0]`` is not a
+        plain nn.Linear (e.g. dynamic-quantized int8).
+        """
         first = self.trunk[0]
-        assert isinstance(first, nn.Linear)
-
-        state = torch.cat([z_p, z_hist, z_g], dim=-1)
-        action = torch.cat([z_a, z_seat], dim=-1)
-        state_dim = state.shape[-1]
-        w = first.weight
-
-        shared = F.linear(state, w[:, :state_dim], first.bias)
-        x = F.linear(action, w[:, state_dim:], None)
-        x = x + shared
-
-        for layer in list(self.trunk.children())[1:]:
-            x = layer(x)
+        K = z_a.shape[0]
+        if isinstance(first, nn.Linear):
+            state = torch.cat([z_p, z_hist, z_g], dim=-1)
+            action = torch.cat([z_a, z_seat], dim=-1)
+            state_dim = state.shape[-1]
+            w = first.weight
+            shared = F.linear(state, w[:, :state_dim], first.bias)
+            x = F.linear(action, w[:, state_dim:], None)
+            x = x + shared
+            for layer in list(self.trunk.children())[1:]:
+                x = layer(x)
+        else:
+            z_p_exp = z_p.expand(K, -1)
+            z_hist_exp = z_hist.expand(K, -1)
+            z_g_exp = z_g.expand(K, -1)
+            x = self.trunk(torch.cat([z_p_exp, z_hist_exp, z_g_exp, z_a, z_seat], dim=-1))
         if seat_id.device.type == "cpu" and seat_id.numel() > 0:
             # Actor inference scores one decision at a time, so every
             # candidate row routes to the same absolute-seat head.
@@ -501,20 +515,26 @@ class SharedTrickHeadQNet(nn.Module):
 
         The first trunk layer is linear, so the shared state contribution can
         be computed once and added to the per-action contribution.
+
+        Falls through to the expansion path when ``self.trunk[0]`` is not a
+        plain nn.Linear (e.g. dynamic-quantized int8).
         """
         first = self.trunk[0]
-        assert isinstance(first, nn.Linear)
-
-        state = torch.cat([z_p, z_hist, z_g], dim=-1)
-        state_dim = state.shape[-1]
-        w = first.weight
-
-        shared = F.linear(state, w[:, :state_dim], first.bias)
-        x = F.linear(z_a, w[:, state_dim:], None)
-        x = x + shared
-
-        for layer in list(self.trunk.children())[1:]:
-            x = layer(x)
+        K = z_a.shape[0]
+        if isinstance(first, nn.Linear):
+            state = torch.cat([z_p, z_hist, z_g], dim=-1)
+            state_dim = state.shape[-1]
+            w = first.weight
+            shared = F.linear(state, w[:, :state_dim], first.bias)
+            x = F.linear(z_a, w[:, state_dim:], None)
+            x = x + shared
+            for layer in list(self.trunk.children())[1:]:
+                x = layer(x)
+        else:
+            z_p_exp = z_p.expand(K, -1)
+            z_hist_exp = z_hist.expand(K, -1)
+            z_g_exp = z_g.expand(K, -1)
+            x = self.trunk(torch.cat([z_p_exp, z_hist_exp, z_g_exp, z_a], dim=-1))
         if head_id.device.type == "cpu" and head_id.numel() > 0:
             # Actor inference scores one decision at a time, so every
             # candidate row routes to the same head.

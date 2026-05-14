@@ -184,6 +184,9 @@ class TrainConfig:
     use_bf16_learner: bool = False   # BF16 autocast in Learner.update (cuda only)
     compile_mode: str = "default"    # passed to torch.compile(mode=...)
 
+    # ── CPU actor inference knobs ────────────────────────────
+    use_int8_actor: bool = False     # int8 dynamic quantization of actor Q-nets (cpu only)
+
     # ── Replay-ratio controller ──────────────────────────────
     target_replay_ratio: float = 0.0   # 0 = disabled
     max_replay_ratio: float = 4.0

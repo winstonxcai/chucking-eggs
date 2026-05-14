@@ -164,6 +164,23 @@ def actor_loop(
     else:
         q_nets = None
 
+    # int8 dynamic quantization of actor Q-nets (CPU only). The fp32 q_nets are
+    # kept as the load_state_dict target; q_nets_inference holds the quantized
+    # copy that play_episode actually calls forward on. Re-quantized after each
+    # weight sync.
+    use_int8 = bool(getattr(cfg, "use_int8_actor", False)) and q_nets is not None
+    if use_int8:
+        import torch.ao.quantization as _qao
+
+        def _quantize_for_inference(nets):
+            if shared_path:
+                return _qao.quantize_dynamic(nets, {torch.nn.Linear}, dtype=torch.qint8)
+            return {p: _qao.quantize_dynamic(nets[p], {torch.nn.Linear}, dtype=torch.qint8) for p in range(4)}
+
+        q_nets_inference = _quantize_for_inference(q_nets)
+    else:
+        q_nets_inference = q_nets
+
     # ── Checkpoint-population pool (shared-head + non-empty pool only) ──
     # Each actor preloads every frozen checkpoint once. Per vs-frozen episode
     # we sample one uniformly and use it for the opponent seats.
@@ -359,6 +376,8 @@ def actor_loop(
             if local_version > prev_version:
                 # Just synced — draw a fresh threshold so the next reload is independently jittered.
                 sync_threshold = _sample_sync_threshold()
+                if use_int8:
+                    q_nets_inference = _quantize_for_inference(q_nets)
 
         eps = epsilon_linear(global_updates, cfg.epsilon)
 
@@ -443,7 +462,7 @@ def actor_loop(
         seed = rng.randint(0, 10_000_000)
         try:
             samples = play_episode(
-                q_nets=q_nets,
+                q_nets=q_nets_inference,
                 encoder=encoder,
                 epsilon=eps,
                 seed=seed,

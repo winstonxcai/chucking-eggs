@@ -12,12 +12,11 @@ Process modules:
 - ``inference_server/`` — optional shared-GPU inference server (batching/client/server)
 """
 
-from .actor import argmax_q, argmax_q_role, play_episode, select_legal
+from .actor import argmax_q, play_episode, select_legal
 from .train import main, train
 
 __all__ = [
     "argmax_q",
-    "argmax_q_role",
     "main",
     "play_episode",
     "select_legal",

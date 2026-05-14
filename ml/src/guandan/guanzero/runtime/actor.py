@@ -1,6 +1,6 @@
 """Single-episode self-play rollout.
 
-Public API: play_episode, select_legal, argmax_q, argmax_q_role.
+Public API: play_episode, play_episode_rust, make_scorer, select_legal, argmax_q.
 """
 
 from __future__ import annotations
@@ -50,73 +50,28 @@ def _trick_role(env: GuanDanEnv, partner_seat: int) -> int:
     return 1
 
 
-@torch.inference_mode()
 def argmax_q(
-    net: GuanZeroQNet,
+    net: GuanZeroQNet | SharedHeadQNet | SharedTrickHeadQNet,
     encoded_list: list[dict],
     device: torch.device,
-) -> int:
-    """Score ``encoded_list`` with ``net`` and return the greedy argmax index."""
-    state_batch, action_batch, repeats = collate_base_encoded([encoded_list], device=device)
-    q = net.forward_grouped(state_batch, action_batch, repeats)
-    return int(q.argmax().item())
-
-
-@torch.inference_mode()
-def argmax_q_role(
-    net: SharedHeadQNet,
-    encoded_list: list[dict],
-    device: torch.device,
-) -> int:
-    """Score role-encoded candidates and return the greedy argmax index."""
-    state_batch, action_batch, repeats = collate_role_encoded([encoded_list], device=device)
-    q = net.forward_grouped(state_batch, action_batch, repeats)
-    return int(q.argmax().item())
-
-
-def _argmax_with_timing(
-    net: GuanZeroQNet,
-    encoded_list: list[dict],
-    device: torch.device,
-    prof: PhaseProfiler,
-    bucket: str,
+    *,
+    role_encoded: bool = False,
+    profiler: PhaseProfiler | None = None,
+    bucket: str = "",
 ) -> tuple[int, float]:
-    """Instrumented greedy action selection used inside play_episode.
+    """Greedy argmax over candidate actions; returns ``(idx, q_gap)``.
 
-    Returns (argmax_index, q_gap) where q_gap = q_max - q_second.
+    ``q_gap = q_max - q_second`` (NaN if only one action). Pass
+    ``role_encoded=True`` for shared-head networks (uses ``collate_role_encoded``).
+    Optional ``profiler``/``bucket`` instrument the collate/forward/argmax phases.
     """
-    with prof.time("q_collate"):
-        state_batch, action_batch, repeats = collate_base_encoded(
-            [encoded_list],
-            device=device,
-        )
-    with prof.time(f"q_net_forward_{bucket}"):
-        with torch.inference_mode():
-            q_vals = net.forward_grouped(state_batch, action_batch, repeats)
-    with prof.time("q_argmax_item"):
-        q_flat = q_vals.view(-1)
-        if q_flat.numel() >= 2:
-            top2 = torch.topk(q_flat, 2, largest=True).values
-            q_gap = float(top2[0].item() - top2[1].item())
-        else:
-            q_gap = float("nan")
-        return int(q_flat.argmax().item()), q_gap
+    collate = collate_role_encoded if role_encoded else collate_base_encoded
+    prof = profiler if profiler is not None else PhaseProfiler(enabled=False)
+    bucket_suffix = f"_{bucket}" if bucket else ""
 
-
-def _argmax_role_with_timing(
-    net: SharedHeadQNet,
-    encoded_list: list[dict],
-    device: torch.device,
-    prof: PhaseProfiler,
-    bucket: str,
-) -> tuple[int, float]:
-    """Instrumented greedy action selection for the shared-head path."""
     with prof.time("q_collate"):
-        state_batch, action_batch, repeats = collate_role_encoded(
-            [encoded_list],
-            device=device,
-        )
-    with prof.time(f"q_net_forward_{bucket}"):
+        state_batch, action_batch, repeats = collate([encoded_list], device=device)
+    with prof.time(f"q_net_forward{bucket_suffix}"):
         with torch.inference_mode():
             q_vals = net.forward_grouped(state_batch, action_batch, repeats)
     with prof.time("q_argmax_item"):
@@ -240,13 +195,15 @@ def play_episode(
                 encoded_list = encoder.encode_all(env, p, legal)
             if shared_path:
                 acting_net = q_nets_frozen if on_frozen else q_nets
-                idx, q_gap_for_this_step = _argmax_role_with_timing(
-                    acting_net, encoded_list, device, prof, bucket,
+                idx, q_gap_for_this_step = argmax_q(
+                    acting_net, encoded_list, device,
+                    role_encoded=True, profiler=prof, bucket=bucket,
                 )
             else:
                 assert q_nets is not None
-                idx, q_gap_for_this_step = _argmax_with_timing(
-                    q_nets[p], encoded_list, device, prof, bucket,
+                idx, q_gap_for_this_step = argmax_q(
+                    q_nets[p], encoded_list, device,
+                    profiler=prof, bucket=bucket,
                 )
             encoded = encoded_list[idx]
 
@@ -448,5 +405,4 @@ __all__ = [
     "make_scorer",
     "select_legal",
     "argmax_q",
-    "argmax_q_role",
 ]

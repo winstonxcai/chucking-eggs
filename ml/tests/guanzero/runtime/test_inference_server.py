@@ -71,7 +71,8 @@ def _local_argmaxes(
     out: list[int] = []
     dev = torch.device(device)
     for seat, encoded in decisions:
-        out.append(argmax_q(q_nets[seat], encoded, dev))
+        idx, _ = argmax_q(q_nets[seat], encoded, dev)
+        out.append(idx)
     return out
 
 

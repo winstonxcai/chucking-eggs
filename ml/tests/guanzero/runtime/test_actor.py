@@ -9,7 +9,7 @@ from guandan.agents import make_agent
 from guandan.cards import Card, ComboType, Rank, Suit
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
-from guandan.guanzero.runtime.actor import argmax_q, argmax_q_role, play_episode, select_legal
+from guandan.guanzero.runtime.actor import argmax_q, play_episode, select_legal
 from guandan.guanzero.data.buffer import collate_base_encoded, collate_role_encoded
 from guandan.guanzero.config import QNetConfig
 from guandan.guanzero.model.encoding.base_encoder import StateActionEncoder
@@ -108,7 +108,8 @@ def test_argmax_q_matches_grouped_forward():
         expected = int(
             q_nets[p].forward_grouped(state_batch, action_batch, repeats).argmax().item()
         )
-    assert argmax_q(q_nets[p], encoded, torch.device("cpu")) == expected
+    idx, _ = argmax_q(q_nets[p], encoded, torch.device("cpu"))
+    assert idx == expected
 
 
 def _small_shared_net() -> SharedHeadQNet:
@@ -135,7 +136,8 @@ def test_argmax_q_role_matches_grouped_forward():
     with torch.no_grad():
         state_batch, action_batch, repeats = collate_role_encoded([encoded])
         expected = int(net.forward_grouped(state_batch, action_batch, repeats).argmax().item())
-    assert argmax_q_role(net, encoded, torch.device("cpu")) == expected
+    idx, _ = argmax_q(net, encoded, torch.device("cpu"), role_encoded=True)
+    assert idx == expected
 
 
 def test_role_episode_returns_samples_with_m3_keys():

@@ -754,7 +754,7 @@ def run_server(
 
     def _disk_refresh_loop():
         from pathlib import Path
-        from .learner import load_latest_weights
+        from .weight_publish import load_latest_weights
         wd = Path(weight_dir) if weight_dir else None
         last_version = int(initial_version)
         while not stop_event.is_set() and not refresh_stop.is_set():

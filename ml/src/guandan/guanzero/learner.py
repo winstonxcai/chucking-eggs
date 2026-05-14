@@ -12,10 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-import json
-import logging
 import os
-import sys
 import time
 from pathlib import Path
 from typing import Mapping
@@ -31,8 +28,11 @@ from .checkpoint import (
     save_checkpoint_shared,
     unwrap_compiled,
 )
+from .logging_setup import setup_run_logging
+from .metrics import jsonl_writer
 from .profiler import PhaseProfiler
 from .q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
+from .run_layout import RunLayout
 from .sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
 
 
@@ -533,6 +533,8 @@ def learner_loop(
     stop_event,                 # multiprocessing.Event
     weight_dir:        Path,
     run_dir:           Path,
+    update_counter=None,        # multiprocessing.Value('i'), advanced per gradient step
+    weights_ready=None,         # multiprocessing.Event, set after first publish
     resume_checkpoint: Path | None = None,
 ) -> None:
     """Central learner process for faithful persistent actor-learner DMC.
@@ -555,29 +557,17 @@ def learner_loop(
             stop_event=stop_event,
             weight_dir=weight_dir,
             run_dir=run_dir,
+            update_counter=update_counter,
+            weights_ready=weights_ready,
             resume_checkpoint=resume_checkpoint,
         )
         return
 
-    run_dir    = Path(run_dir)
+    layout     = RunLayout(Path(run_dir))
     weight_dir = Path(weight_dir)
 
-    # Dedicated log file for learner process
-    log_path = run_dir / "learner.log"
-    logger = logging.getLogger("guanzero.learner")
-    logger.handlers.clear()
-    logger.setLevel(logging.DEBUG)
-    fmt = logging.Formatter("%(asctime)s [%(levelname)-5s] %(message)s",
-                            datefmt="%Y-%m-%d %H:%M:%S")
-    fh = logging.FileHandler(log_path, mode="a")
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
-    if os.environ.get("GUANZERO_STREAM_LOGS") == "1":
-        sh = logging.StreamHandler(sys.stdout)
-        sh.setFormatter(fmt)
-        sh.setLevel(logging.INFO)
-        logger.addHandler(sh)
+    logger, _      = setup_run_logging(layout.run_dir, layout.learner_log.name, name="guanzero.learner")
+    metrics_writer = jsonl_writer(layout.metrics_jsonl)
 
     # Free TF32 + cuDNN tuning on CUDA paths (Adam math, anything outside BF16 autocast).
     if cfg.device == "cuda":
@@ -610,7 +600,6 @@ def learner_loop(
     version       = 0
     total_updates = 0
     last_losses: dict[int, float] = {}
-    metrics_path  = run_dir / "metrics_learner.jsonl"
     last_ticked   = -1   # tracks the last total_updates value that triggered periodic actions
 
     # Optionally resume from a prior checkpoint
@@ -622,9 +611,14 @@ def learner_loop(
         version       = total_updates // cfg.publish_interval_updates
         logger.info("resumed from %s  (total_updates=%d)", resume_checkpoint, total_updates)
 
+    if update_counter is not None:
+        update_counter.value = total_updates
+
     # Publish initial weights so actors can start immediately
     publish_weights(q_nets, weight_dir, version, updates=total_updates)
     logger.info("initial weights published (version %d)", version)
+    if weights_ready is not None:
+        weights_ready.set()
 
     t0 = time.time()
     session_start_updates = total_updates  # for accurate upd/s on resumed runs
@@ -692,6 +686,8 @@ def learner_loop(
             if new_losses:
                 last_losses = new_losses
                 total_updates += 1
+                if update_counter is not None:
+                    update_counter.value = total_updates
 
         # 3–5 only fire when total_updates actually advanced to a new tick
         if total_updates == last_ticked or total_updates == 0:
@@ -706,7 +702,7 @@ def learner_loop(
 
         # 4. Checkpoint
         if total_updates % cfg.checkpoint_every_updates == 0:
-            ckpt = run_dir / "checkpoints" / f"update_{total_updates:08d}.pt"
+            ckpt = layout.update_checkpoint(total_updates)
             save_checkpoint_base(ckpt, q_nets, cfg, total_updates)
             logger.info("checkpoint → %s", ckpt)
 
@@ -778,8 +774,7 @@ def learner_loop(
                 throttle_sleeps         = n_throttle_sleeps,
                 throttle_sleep_s        = round(throttle_sleep_total_s, 2),
             )
-            with metrics_path.open("a") as f:
-                f.write(json.dumps(dataclasses.asdict(row)) + "\n")
+            metrics_writer.write(row)
             logger.info(
                 "updates=%d ver=%d buf=%d loss=%s  %.0f samp/s (%.2f upd/s)  replay=%.1fx(int)/%.1fx(cum)  q=%d gpu=%sGB drained=%d  ETA %dh%02dm",
                 total_updates, version, buffer.total_size(),
@@ -808,11 +803,9 @@ def learner_loop(
 
     # Final checkpoint on clean shutdown
     if total_updates > 0:
-        save_checkpoint_base(
-            run_dir / "checkpoints" / "final.pt",
-            q_nets, cfg, total_updates,
-        )
+        save_checkpoint_base(layout.final_checkpoint, q_nets, cfg, total_updates)
     logger.info("learner stopped after %d updates", total_updates)
+    metrics_writer.close()
 
 
 def _learner_loop_shared(
@@ -821,6 +814,8 @@ def _learner_loop_shared(
     stop_event,
     weight_dir: Path,
     run_dir: Path,
+    update_counter=None,
+    weights_ready=None,
     resume_checkpoint: Path | None = None,
 ) -> None:
     """Central learner process for role-aware shared-head training.
@@ -840,23 +835,10 @@ def _learner_loop_shared(
             "Set use_inference_server: false in config."
         )
 
-    run_dir = Path(run_dir)
+    layout     = RunLayout(Path(run_dir))
     weight_dir = Path(weight_dir)
-    log_path = run_dir / "learner.log"
-    logger = logging.getLogger("guanzero.learner")
-    logger.handlers.clear()
-    logger.setLevel(logging.DEBUG)
-    fmt = logging.Formatter("%(asctime)s [%(levelname)-5s] %(message)s",
-                            datefmt="%Y-%m-%d %H:%M:%S")
-    fh = logging.FileHandler(log_path, mode="a")
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
-    if os.environ.get("GUANZERO_STREAM_LOGS") == "1":
-        sh = logging.StreamHandler(sys.stdout)
-        sh.setFormatter(fmt)
-        sh.setLevel(logging.INFO)
-        logger.addHandler(sh)
+    logger, _      = setup_run_logging(layout.run_dir, layout.learner_log.name, name="guanzero.learner")
+    metrics_writer = jsonl_writer(layout.metrics_jsonl)
 
     if trick_path:
         q_net = SharedTrickHeadQNet(shared_trick_head_qnet_config(cfg))
@@ -881,7 +863,6 @@ def _learner_loop_shared(
     version = 0
     total_updates = 0
     last_metrics: dict[str, float] = {}
-    metrics_path = run_dir / "metrics_learner.jsonl"
     last_ticked = -1
 
     if resume_checkpoint is not None:
@@ -891,8 +872,13 @@ def _learner_loop_shared(
         version = total_updates // cfg.publish_interval_updates
         logger.info("resumed from %s  (total_updates=%d)", resume_checkpoint, total_updates)
 
+    if update_counter is not None:
+        update_counter.value = total_updates
+
     publish_weights_shared(q_net, weight_dir, version, updates=total_updates)
     logger.info("initial shared weights published (version %d)", version)
+    if weights_ready is not None:
+        weights_ready.set()
 
     t0 = time.time()
     session_start_updates = total_updates
@@ -953,6 +939,8 @@ def _learner_loop_shared(
             if metrics is not None:
                 last_metrics = metrics
                 total_updates += 1
+                if update_counter is not None:
+                    update_counter.value = total_updates
 
         if total_updates == last_ticked or total_updates == 0:
             if drained == 0:
@@ -965,7 +953,7 @@ def _learner_loop_shared(
             publish_weights_shared(q_net, weight_dir, version, updates=total_updates)
 
         if total_updates % cfg.checkpoint_every_updates == 0:
-            ckpt = run_dir / "checkpoints" / f"update_{total_updates:08d}.pt"
+            ckpt = layout.update_checkpoint(total_updates)
             save_checkpoint_shared(ckpt, q_net, cfg, total_updates)
             logger.info("checkpoint → %s", ckpt)
 
@@ -1017,8 +1005,7 @@ def _learner_loop_shared(
                 "throttle_sleeps": n_throttle_sleeps,
                 "throttle_sleep_s": round(throttle_sleep_total_s, 2),
             }
-            with metrics_path.open("a") as f:
-                f.write(json.dumps(row) + "\n")
+            metrics_writer.write(row)
             logger.info(
                 "updates=%d ver=%d buf=%d loss=%.4f %.2f upd/s drained=%d",
                 total_updates,
@@ -1034,13 +1021,9 @@ def _learner_loop_shared(
             last_log_fresh_samples = fresh_samples_total
 
     if total_updates > 0:
-        save_checkpoint_shared(
-            run_dir / "checkpoints" / "final.pt",
-            q_net,
-            cfg,
-            total_updates,
-        )
+        save_checkpoint_shared(layout.final_checkpoint, q_net, cfg, total_updates)
     logger.info("shared learner stopped after %d updates", total_updates)
+    metrics_writer.close()
 
 
 __all__ = [

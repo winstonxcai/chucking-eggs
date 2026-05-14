@@ -10,7 +10,7 @@ Typical local smoke:
 
 ```bash
 GUANZERO_ACTOR_PROFILE=1 GUANZERO_LEARNER_PROFILE=1 \
-  uv run python -m guandan.guanzero.train --quick
+  uv run python -m guandan.guanzero.train --config <config.yaml>
 ```
 
 When the inference server is enabled, add:

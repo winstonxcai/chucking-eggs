@@ -1,7 +1,7 @@
 # GuanZero M1 — Transformer history encoder ablation (L4 GPU, 32 actors).
 # Identical to m0_l4_distributed.yaml except history_encoder: transformer.
 # M0 baseline: ~5,029 actor rows/s on L4. Check inference server forward=Xms
-# and rows/s after --quick smoke to assess throughput cost before full run.
+# and rows/s after a short smoke run to assess throughput cost before full run.
 
 n_actors: 32
 sync_interval_updates: 20

@@ -3887,3 +3887,72 @@ strategic-style games. Even/odd gap widening on yaoji/jidan is a side effect of
 the asymmetric frozen opponent pool. Continue to 10k more league updates to see if
 jidan/yaoji keep improving and strategic recovers.
 
+## 68. M5 clean self-play baseline — full eval 0–67.5k (2026-05-14)
+
+Clean from-scratch run stripping all curriculum interventions (no league pool,
+no hard-bot mix, no stratified replay). Keeps `shared_trick_heads` + partner-only
+visibility. K=1 forced moves restored to trajectory, capped at 5% per batch at
+sample time (`max_forced_k1_replay_frac: 0.05`). Fine-tuned at 60k→75k with
+lr=3e-5, epsilon=0.01 flat (run: `guanzero_v5_baseline_75k`).
+
+Runs: `guanzero_v5_baseline_20k` (0→20k), `guanzero_v5_baseline_70k` (20k→60k),
+`guanzero_v5_baseline_75k` (60k→75k, ongoing). 1000 games × 8 workers per checkpoint.
+
+### Combined WR — M5 baseline 0–67.5k
+
+| upd   | random | greedy | heuristic | xingdream | strategic | yaoji | jidan |
+|------:|-------:|-------:|----------:|----------:|----------:|------:|------:|
+|  2.5k | 98.7%  | 96.8%  | 81.3%     | 79.7%     | 59.5%     | 34.6% | 35.5% |
+|    5k | 98.9%  | 98.2%  | 86.2%     | 84.9%     | 66.3%     | 39.6% | 45.0% |
+|  7.5k | 99.5%  | 98.2%  | 88.1%     | 85.5%     | 63.7%     | 45.1% | 44.3% |
+|   10k | 99.4%  | 98.1%  | 85.4%     | 85.5%     | 62.4%     | 40.4% | 45.2% |
+| 12.5k | 99.2%  | 98.6%  | 87.5%     | 87.6%     | 67.1%     | 39.9% | 45.5% |
+|   15k | 99.5%  | 98.0%  | 88.5%     | 89.3%     | 68.3%     | 43.0% | 47.5% |
+| 17.5k | 99.3%  | 98.6%  | 89.8%     | 88.8%     | 66.4%     | 44.5% | 46.9% |
+|   20k | 99.4%  | 97.8%  | 88.0%     | 88.9%     | 65.8%     | 40.5% | 46.9% |
+| 22.5k | 99.4%  | 98.2%  | 86.9%     | 89.8%     | 61.3%     | 40.0% | 48.5% |
+|   25k | 99.7%  | 98.7%  | 89.6%     | 92.1%     | 67.4%     | 42.3% | 52.2% |
+| 27.5k | 99.4%  | 98.4%  | 88.9%     | 89.7%     | 65.1%     | 41.2% | 53.2% |
+|   30k | 99.5%  | 97.9%  | 85.0%     | 89.7%     | 62.0%     | 39.4% | 49.8% |
+| 32.5k | 99.6%  | 98.8%  | 89.7%     | 91.6%     | 69.0%     | 42.7% | 50.5% |
+|   35k | 99.3%  | 98.4%  | 90.1%     | 89.4%     | 69.2%     | 46.4% | 52.6% |
+| 37.5k | 99.6%  | 98.9%  | 85.9%     | 89.3%     | 68.5%     | 43.9% | 52.8% |
+|   40k | 99.6%  | 98.4%  | 87.0%     | 89.1%     | 69.8%     | 45.7% | 53.0% |
+| 42.5k | 99.2%  | 98.1%  | 88.8%     | 89.9%     | 66.7%     | 45.7% | 51.1% |
+|   45k | 99.1%  | 98.2%  | 86.9%     | 90.6%     | 66.3%     | 47.4% | 53.4% |
+| 47.5k | 99.6%  | 98.1%  | 86.1%     | 90.5%     | 67.6%     | 44.9% | 53.3% |
+|   50k | 99.8%  | 97.9%  | 82.6%     | 89.8%     | 62.4%     | 41.5% | 50.9% |
+| 52.5k | 99.5%  | 98.1%  | 85.0%     | 91.8%     | 65.4%     | 42.6% | 54.3% |
+|   55k | 99.1%  | 97.0%  | 81.5%     | 88.9%     | 61.7%     | 43.7% | 50.7% |
+| 57.5k | 99.2%  | 98.4%  | 87.8%     | 90.5%     | 66.0%     | 43.5% | 52.0% |
+|   60k | 99.6%  | 97.8%  | 84.2%     | 89.0%     | 62.0%     | 40.2% | 48.8% |
+| 62.5k | 99.5%  | 99.0%  | 86.8%     | 91.1%     | 68.1%     | 47.3% | 55.3% |
+|   65k | 99.8%  | 98.6%  | 88.3%     | 91.0%     | 66.3%     | 48.0% | **56.5%** |
+| 67.5k | 99.8%  | 98.7%  | 89.4%     | 91.5%     | 68.7%     | **50.6%** | 54.8% |
+|   70k | 99.5%  | 98.9%  | 87.7%     | **92.7%** | 68.5%     | 46.8% | 55.6% |
+
+*60k→75k continuation uses lr=3e-5, epsilon=0.01 flat.*
+
+### Key observations
+
+**Jidan:** Strongest and most consistent positive trend. Starts at 35.5% (2.5k),
+climbs steadily, reaches **56.5% peak at 65k** — new all-time high. First crossed
+50% at ~25k. The fine-tune LR (60k+) appears to help: 48.8% at 60k → 55.3/56.5/54.8%
+at 62.5k/65k/67.5k. Noisy but clearly above the 50k plateau.
+
+**Yaoji:** High variance throughout (34–51%), never sustainably above 47.4% until
+67.5k where it hits **50.6%** — first time crossing 50% in pure self-play.
+Pattern: periodic spikes followed by regression. Requires curriculum to stabilize.
+
+**Strategic:** Noisy band of 59.5–69.8%. No clear trend; plateaued after ~15k.
+Even/odd gap persists (opponent-side asymmetry, not fixed by trick routing).
+
+**Xingdream:** Steady improvement 79.7% → ~91% by 25k, then flat. Ceiling reached early.
+
+**Heuristic:** Similar: 81.3% → 88–90%, flat after 15k.
+
+**Conclusion:** Pure self-play plateaus for strategic/yaoji/heuristic after ~20–25k.
+Jidan is the exception — still trending up at 67.5k, suggesting the low-epsilon
+fine-tune benefits endgame coordination specifically. Recommend curriculum
+(league or hard-bot mix) for strategic and yaoji once the 75k run completes.
+

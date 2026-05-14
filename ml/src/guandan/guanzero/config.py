@@ -464,22 +464,17 @@ def shared_trick_head_qnet_config(cfg: TrainConfig):
 
 def load_config_from_cli(
     yaml_path: str | Path | None,
-    quick: bool,
-    quick_overrides: dict[str, Any],
     **cli_overrides: Any,
 ) -> TrainConfig:
-    """Load config from YAML plus quick-mode and explicit CLI overrides.
+    """Load config from YAML plus explicit CLI overrides.
 
-    ``quick_overrides`` is applied after YAML, and explicit CLI values are
-    applied last. ``None`` CLI values are ignored so optional argparse flags do
-    not erase values loaded from the config file.
+    ``None`` CLI values are ignored so optional argparse flags do not erase
+    values loaded from the config file.
     """
     raw: dict[str, Any] = {}
     if yaml_path:
         import yaml
         raw.update(yaml.safe_load(Path(yaml_path).read_text()) or {})
-    if quick:
-        raw.update(quick_overrides)
     raw.update({k: v for k, v in cli_overrides.items() if v is not None})
     return TrainConfig.from_flat_dict(raw)
 

@@ -78,18 +78,11 @@ def test_yaml_and_cli_loading_apply_precedence(tmp_path):
 
     cfg = load_config_from_cli(
         path,
-        quick=True,
-        quick_overrides={
-            "qnet": QNetConfig(hidden_lstm=24, hidden_mlp=48),
-            "buffer_min_size": 5,
-        },
         n_actors=2,
         device=None,
     )
-    assert cfg.qnet.hidden_lstm == 24
-    assert cfg.qnet.hidden_mlp == 48
+    assert cfg.qnet.hidden_lstm == 16
     assert cfg.epsilon.start == 0.5
-    assert cfg.buffer_min_size == 5
     assert cfg.n_actors == 2
 
 

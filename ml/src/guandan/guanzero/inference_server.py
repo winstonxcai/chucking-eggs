@@ -680,51 +680,22 @@ def run_server(
     server_log_path=None,              # Optional[Path] — server writes its own log here
 ) -> None:
     """Top-level shared-mem server entry point. Picklable for spawn."""
-    import os
-    import sys
-    import logging as _logging
-    import traceback
     from pathlib import Path
     import torch
+    from .logging_setup import setup_run_logging
     from .q_network import init_seat_nets
 
     # Server-side log file on the run volume (so we can pull it after a run).
     # Spawn-context children's stdout/stderr don't reliably propagate to
-    # Modal's log capture, so we write our own file.
-    log_fp = None
-    if server_log_path is not None:
-        Path(server_log_path).parent.mkdir(parents=True, exist_ok=True)
-        log_fp = open(server_log_path, "w", buffering=1)  # line-buffered
-
-    def _log(msg: str) -> None:
-        line = f"[server] {time.strftime('%H:%M:%S')} {msg}"
-        try:
-            print(line, flush=True)
-        except Exception:
-            pass
-        if log_fp is not None:
-            try:
-                log_fp.write(line + "\n")
-            except Exception:
-                pass
-
-    _log("entry reached")
-
-    # Route the module logger through our _log() so existing logger.info calls
-    # also land in the server log file.
-    _logging.getLogger("guanzero.inference_server").handlers.clear()
-    class _LogToFile(_logging.Handler):
-        def emit(self, record):
-            try:
-                _log(self.format(record))
-            except Exception:
-                pass
-    _h = _LogToFile()
-    _h.setFormatter(_logging.Formatter("%(message)s"))
-    _h.setLevel(_logging.INFO)
-    _slog = _logging.getLogger("guanzero.inference_server")
-    _slog.addHandler(_h)
-    _slog.setLevel(_logging.INFO)
+    # Modal's log capture; the file handler is the durable record, and
+    # GUANZERO_STREAM_LOGS=1 mirrors to stdout when the launcher wants it.
+    server_log_path = Path(server_log_path) if server_log_path else Path("inference_server.log")
+    _slog, _ = setup_run_logging(
+        server_log_path.parent,
+        server_log_path.name,
+        name="guanzero.inference_server",
+    )
+    _slog.info("entry reached")
 
     torch.set_num_threads(1)
 
@@ -738,8 +709,8 @@ def run_server(
         weight_refresh_s = cfg.inference.weight_refresh_s
         use_bf16        = cfg.use_bf16_learner and cfg_device == "cuda"
 
-        _log(f"cfg.inference.device={cfg_device}")
-        _log("attaching shared buffers...")
+        _slog.info("cfg.inference.device=%s", cfg_device)
+        _slog.info("attaching shared buffers...")
         bufs = attach_shared_buffers(
             meta=meta,
             free_slots=free_slots,
@@ -748,18 +719,16 @@ def run_server(
             weights_version=weights_version,
         )
 
-        _log(f"building q_nets and moving to {cfg_device}...")
+        _slog.info("building q_nets and moving to %s...", cfg_device)
         q_nets = init_seat_nets(cfg.qnet)
         if initial_state_dicts is not None:
             for p in range(4):
                 q_nets[p].load_state_dict(initial_state_dicts[p])
         for p in range(4):
             q_nets[p] = q_nets[p].to(cfg_device).eval()
-        _log(f"q_nets ready on {cfg_device}")
-    except Exception as e:
-        _log(f"SETUP FAILED: {type(e).__name__}: {e}")
-        for line in traceback.format_exc().splitlines():
-            _log(f"  {line}")
+        _slog.info("q_nets ready on %s", cfg_device)
+    except Exception:
+        _slog.exception("SETUP FAILED")
         raise
 
     server = InferenceServer(
@@ -816,16 +785,14 @@ def run_server(
     else:
         refresher = None
 
-    _log("entering server_loop")
+    _slog.info("entering server_loop")
     try:
         server.server_loop()
-    except Exception as e:
-        _log(f"server_loop crashed: {type(e).__name__}: {e}")
-        for line in traceback.format_exc().splitlines():
-            _log(f"  {line}")
+    except Exception:
+        _slog.exception("server_loop crashed")
         raise
     finally:
-        _log("server_loop exited; cleaning up")
+        _slog.info("server_loop exited; cleaning up")
         refresh_stop.set()
         if refresher is not None:
             refresher.join(timeout=2.0)

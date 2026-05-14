@@ -23,6 +23,9 @@ packages = ["ml/src/guandan"]
 
 [tool.pytest.ini_options]
 testpaths = ["ml/tests", "web/backend/tests"]
+markers = [
+    "slow: spawns subprocesses or takes >5s; opt in with `-m slow`",
+]
 
 [dependency-groups]
 dev = [

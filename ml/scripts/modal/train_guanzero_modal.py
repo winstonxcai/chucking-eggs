@@ -55,7 +55,6 @@ def train_remote(
     device:      str,
     profile:     bool = False,
     resume:      str | None = None,
-    quick:       bool = False,
 ) -> str:
     import os
     import subprocess
@@ -91,8 +90,6 @@ def train_remote(
         cmd.extend(["--n-actors", str(n_actors)])
     if resume:
         cmd.extend(["--resume", resume])
-    if quick:
-        cmd.append("--quick")
 
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, env=env, check=True)
@@ -110,7 +107,6 @@ def main(
     device: str = "cuda",
     profile: bool = False,
     resume: str | None = None,
-    quick: bool = False,
 ) -> None:
     out = train_remote.remote(
         updates=updates,
@@ -121,6 +117,5 @@ def main(
         device=device,
         profile=profile,
         resume=resume,
-        quick=quick,
     )
     print(f"Final checkpoint: {out}")

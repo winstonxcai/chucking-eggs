@@ -58,8 +58,8 @@ from tqdm import tqdm
 from .worker import actor_loop
 from .learner import learner_loop, load_latest_weights
 from .config import TrainConfig, load_config_from_cli
-from .logging_setup import setup_run_logging
-from .run_layout import RunLayout
+from .utils.logging_setup import setup_run_logging
+from .utils.run_layout import RunLayout
 from . import inference_server as _isrv
 
 

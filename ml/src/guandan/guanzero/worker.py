@@ -18,7 +18,7 @@ import torch
 from .actor import play_episode
 from .encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from .encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
-from .profiler import PhaseProfiler
+from .utils.profiler import PhaseProfiler
 from .sample_tags import (
     EPISODE_MODE_SELF_PLAY,
     EPISODE_MODE_VS_CHECKPOINT,
@@ -125,7 +125,7 @@ def actor_loop(
     """
     # Lazy imports — spawned child re-imports the full package from scratch.
     from .config import TrainConfig
-    from .schedules import epsilon_linear
+    from .utils.schedules import epsilon_linear
     from .q_network import SharedHeadQNet
     from .q_network import init_seat_nets
     from .config import shared_head_qnet_config

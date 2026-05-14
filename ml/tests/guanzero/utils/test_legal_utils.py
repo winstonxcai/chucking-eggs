@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from guandan.cards import Card, ComboType, Rank, Suit
 from guandan.combos import Combo
-from guandan.guanzero.legal_utils import dedup_strategic, strategic_key
+from guandan.guanzero.utils.legal_utils import dedup_strategic, strategic_key
 
 
 def _combo(ctype: ComboType, key: int, cards: list[Card], length: int = 0) -> Combo:

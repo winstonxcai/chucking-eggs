@@ -28,11 +28,11 @@ from .checkpoint import (
     save_checkpoint_shared,
     unwrap_compiled,
 )
-from .logging_setup import setup_run_logging
-from .metrics import jsonl_writer
-from .profiler import PhaseProfiler
+from .utils.logging_setup import setup_run_logging
+from .utils.metrics import jsonl_writer
+from .utils.profiler import PhaseProfiler
 from .q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
-from .run_layout import RunLayout
+from .utils.run_layout import RunLayout
 from .sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
 
 

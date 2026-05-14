@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from guandan.guanzero.config import EpsilonConfig
-from guandan.guanzero.schedules import epsilon_linear
+from guandan.guanzero.utils.schedules import epsilon_linear
 
 
 def test_epsilon_linear_interpolates_and_clamps():

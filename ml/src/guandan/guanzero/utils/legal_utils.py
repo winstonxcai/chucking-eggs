@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from ..cards import ComboType
-from ..combos import Combo
+from ...cards import ComboType
+from ...combos import Combo
 
 # Combo types where suit composition does not affect strength under Combo.beats().
 # STRAIGHT_FLUSH and BOMB_JOKER are excluded: their suit composition is intrinsic

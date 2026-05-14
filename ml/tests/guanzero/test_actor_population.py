@@ -11,7 +11,7 @@ import torch
 
 from guandan.guanzero.actor import play_episode
 from guandan.guanzero.encoding.role_encoder import RoleAwareStateActionEncoder
-from guandan.guanzero.profiler import PhaseProfiler
+from guandan.guanzero.utils.profiler import PhaseProfiler
 from guandan.guanzero.q_network import SharedHeadQNet, SharedHeadQNetConfig
 
 

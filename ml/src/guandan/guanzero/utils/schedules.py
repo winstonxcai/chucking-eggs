@@ -6,7 +6,7 @@ Additional schedules (exponential, piecewise) can be added here as siblings.
 
 from __future__ import annotations
 
-from .config import EpsilonConfig
+from ..config import EpsilonConfig
 
 
 def epsilon_linear(update: int, cfg: EpsilonConfig) -> float:

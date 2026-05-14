@@ -21,7 +21,7 @@ from .checkpoint import migrate_state_dict
 from .config import TrainConfig, shared_head_qnet_config, shared_trick_head_qnet_config
 from .encoding.base_encoder import StateActionEncoder
 from .encoding.role_encoder import RoleAwareStateActionEncoder
-from .legal_utils import dedup_strategic
+from .utils.legal_utils import dedup_strategic
 from .q_network import SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
 
 

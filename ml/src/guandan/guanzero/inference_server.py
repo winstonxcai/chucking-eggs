@@ -38,7 +38,7 @@ import numpy as np
 import torch
 
 from .encoding.base_encoder import ENCODE_CHANNEL_SHAPES
-from .profiler import PhaseProfiler
+from .utils.profiler import PhaseProfiler
 from .q_network import GuanZeroQNet
 
 
@@ -682,7 +682,7 @@ def run_server(
     """Top-level shared-mem server entry point. Picklable for spawn."""
     from pathlib import Path
     import torch
-    from .logging_setup import setup_run_logging
+    from .utils.logging_setup import setup_run_logging
     from .q_network import init_seat_nets
 
     # Server-side log file on the run volume (so we can pull it after a run).

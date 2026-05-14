@@ -4,14 +4,12 @@ Runs every ordered bot pair (A on seats {0,2} vs B on seats {1,3}) and
 records win rates. Derives calibrated Glicko-2 ratings from the empirical WRs.
 
 Use --inject to fold in pre-known matchup results without re-running them:
-    --inject "partner_oracle,jidan,150,200"   (name, opponent, wins, n_games)
+    --inject "name,opponent,wins,n_games"
   Injected agents are included in Glicko derivation using only their known matchups.
 
 Usage:
     PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200
     PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200 --agents greedy,heuristic,strategic,jidan
-    PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200 \\
-        --inject "partner_oracle,jidan,150,200"
 """
 
 from __future__ import annotations
@@ -24,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from guandan.agents import PartnerOracleBot, PartnerPIMCBot, make_agent
+from guandan.agents import make_agent
 from guandan.cards import Rank
 from guandan.game import GuanDanEnv
 from guandan.rating import GlickoPlayer, glicko2_update
@@ -35,27 +33,7 @@ DEFAULT_AGENTS = [
 ]
 
 
-def build_agent(
-    name: str,
-    level_rank: int,
-    n_det: int,
-    n_cands: int,
-    checkpoint: str | None = None,
-    top_k: int = 3,
-):
-    if name == "partner_pimc":
-        return PartnerPIMCBot(level_rank=level_rank, n_det=n_det, n_cands=n_cands)
-    if name == "partner_oracle":
-        if checkpoint is None:
-            raise ValueError("--checkpoint is required for partner_oracle")
-        return PartnerOracleBot(
-            checkpoint_path=checkpoint,
-            level_rank=level_rank,
-            use_search=True,
-            n_det=n_det,
-            top_k=top_k,
-            use_belief=True,
-        )
+def build_agent(name: str, level_rank: int):
     return make_agent(name, level_rank=level_rank)
 
 
@@ -181,14 +159,6 @@ def main() -> None:
                         help="Games per directed matchup (default: 200)")
     parser.add_argument("--agents", type=str, default=None,
                         help="Comma-separated agent names (default: all rule-based)")
-    parser.add_argument("--n-det", type=int, default=20,
-                        help="partner_pimc/partner_oracle: determinizations per move (default 20)")
-    parser.add_argument("--n-cands", type=int, default=10,
-                        help="partner_pimc: max candidates pre-filter (default 10)")
-    parser.add_argument("--top-k", type=int, default=3,
-                        help="partner_oracle: top-K candidates from policy (default 3)")
-    parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Checkpoint path for partner_oracle agent")
     parser.add_argument("--inject", type=str, action="append", default=[],
                         help="Pre-known result: 'name,opponent,wins,n_games'. "
                              "Agent is added to Glicko without re-running games. "
@@ -220,11 +190,7 @@ def main() -> None:
     if injected_only:
         print(f"Injected (no games run): {', '.join(sorted(injected_only))}")
 
-    agents = {
-        name: build_agent(name, level_rank, args.n_det, args.n_cands,
-                          checkpoint=args.checkpoint, top_k=args.top_k)
-        for name in live_names
-    }
+    agents = {name: build_agent(name, level_rank) for name in live_names}
     print(f"Agents loaded: {', '.join(live_names)}")
 
     matrix: dict[str, dict[str, dict]] = {a: {} for a in agent_names}

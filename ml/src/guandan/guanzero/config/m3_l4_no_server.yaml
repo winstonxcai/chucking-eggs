@@ -1,0 +1,48 @@
+# GuanZero M3 - role-aware shared trunk + 4 heads, no inference server.
+
+n_actors: 32
+sync_interval_updates: 1000   # actors reload when ≥threshold updates behind (≈12 min self-play diversity)
+sync_jitter_updates: 200      # per-actor uniform jitter; thresholds spread across [800, 1200]
+actor_push_batch_size: 512
+sample_queue_maxsize: 64
+max_drain_batches_per_loop: 16
+publish_interval_updates: 200
+checkpoint_every_updates: 5000
+log_every_updates: 10
+updates_per_learner_step: 1
+
+model_type: shared_heads
+shared_head_role_d_model: 128
+shared_head_history_hidden: 256
+shared_head_global_hidden: 128
+shared_head_action_hidden: 128
+shared_head_trunk_hidden: 1024
+shared_head_trunk_layers: 4
+dropout: 0.0
+
+use_inference_server: false
+inference_device: cuda
+inference_batch_max_requests: 32
+inference_batch_max_action_rows: 4096
+inference_batch_timeout_ms: 5.0
+inference_max_actions: 512
+inference_n_slots: 512
+
+target_replay_ratio: 1.0
+max_replay_ratio: 1.5
+max_throttle_sleep_s: 0.05
+
+lr: 1.0e-4
+gamma: 1.0
+batch_size: 4096
+buffer_capacity: 400000
+buffer_capacity_per_player: 100000
+buffer_min_size: 8192
+epsilon_start: 0.05
+epsilon_final: 0.05
+epsilon_decay_updates: 0
+use_oracle_others_hand: true
+
+device: cuda
+use_bf16_learner: true
+compile_mode: reduce-overhead

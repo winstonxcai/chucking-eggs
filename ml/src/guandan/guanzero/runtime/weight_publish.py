@@ -13,7 +13,7 @@ from typing import Union
 
 import torch
 
-from ..model.checkpoint import WeightSnapshot, unwrap_compiled
+from ..model.checkpoint import WeightSnapshot
 from ..model.q_network import SharedHeadQNet, SharedTrickHeadQNet
 
 
@@ -29,7 +29,7 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int, updates: int =
             "updates": updates,
             "state_dicts": {
                 p: {k: v.detach().cpu()
-                    for k, v in unwrap_compiled(q_nets[p]).state_dict().items()}
+                    for k, v in getattr(q_nets[p], "_orig_mod", q_nets[p]).state_dict().items()}
                 for p in range(4)
             },
         },
@@ -65,7 +65,7 @@ def publish_weights_shared(
             "state_dicts": {
                 "shared": {
                     k: v.detach().cpu()
-                    for k, v in unwrap_compiled(q_net).state_dict().items()
+                    for k, v in getattr(q_net, "_orig_mod", q_net).state_dict().items()
                 }
             },
         },

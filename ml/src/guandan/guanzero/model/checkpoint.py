@@ -16,21 +16,6 @@ from typing import Any
 import torch
 
 
-def unwrap_compiled(net: torch.nn.Module) -> torch.nn.Module:
-    """Return the original module, stripping any torch.compile wrapper."""
-    return getattr(net, "_orig_mod", net)
-
-
-def migrate_state_dict(sd: dict) -> dict:
-    """Rename pre-M1 keys so old checkpoints load under the current architecture."""
-    # Pre-M1 used `history_lstm.*`; M1 nests the LSTM under `history_module.lstm.*`.
-    return {
-        k.replace("history_lstm.", "history_module.lstm.", 1)
-        if k.startswith("history_lstm.") else k: v
-        for k, v in sd.items()
-    }
-
-
 def save_checkpoint_base(
     path: Path,
     q_nets: dict[int, Any],
@@ -48,7 +33,10 @@ def save_checkpoint_base(
         {
             "episode": episode_or_update,
             "config": dataclasses.asdict(cfg),
-            "q_nets": {p: unwrap_compiled(q_nets[p]).state_dict() for p in range(4)},
+            "q_nets": {
+                p: getattr(q_nets[p], "_orig_mod", q_nets[p]).state_dict()
+                for p in range(4)
+            },
         },
         path,
     )
@@ -69,7 +57,7 @@ def save_checkpoint_shared(
         {
             "episode": episode_or_update,
             "config": dataclasses.asdict(cfg),
-            "q_net": unwrap_compiled(q_net).state_dict(),
+            "q_net": getattr(q_net, "_orig_mod", q_net).state_dict(),
         },
         path,
     )
@@ -99,9 +87,6 @@ def load_frozen_shared_qnet(
     # keeping the import lazy avoids any future circular-import surprises.
     from .q_network import SharedHeadQNet
 
-    # Note: migrate_state_dict is for the M0→M1 DmcQNet rename only — the
-    # SharedHeadQNet (M3) uses `history_lstm` natively, so its checkpoints
-    # load directly without remapping. See learner.py resume path at L704.
     net = SharedHeadQNet(qnet_cfg).to(device)
     ckpt = torch.load(path, map_location=device, weights_only=True)
     net.load_state_dict(ckpt["q_net"])
@@ -151,7 +136,5 @@ __all__ = [
     "load_checkpoint",
     "load_frozen_shared_qnet",
     "load_frozen_trick_qnet",
-    "unwrap_compiled",
-    "migrate_state_dict",
     "WeightSnapshot",
 ]

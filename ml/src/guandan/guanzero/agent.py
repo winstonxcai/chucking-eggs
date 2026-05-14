@@ -17,7 +17,6 @@ from ..agents.base import Agent
 from ..combos import Combo
 from ..game import GuanDanEnv
 from .data.buffer import collate_base_encoded, collate_role_encoded
-from .model.checkpoint import migrate_state_dict
 from .config import TrainConfig, shared_head_qnet_config, shared_trick_head_qnet_config
 from .model.encoding.base_encoder import StateActionEncoder
 from .model.encoding.role_encoder import RoleAwareStateActionEncoder
@@ -62,7 +61,7 @@ class GuanZeroBot(Agent):
             return cls(q_nets=q_net, encoder=encoder, device=device)
         q_nets = init_seat_nets(cfg.qnet)
         for p in range(4):
-            q_nets[p].load_state_dict(migrate_state_dict(ckpt["q_nets"][p]))
+            q_nets[p].load_state_dict(ckpt["q_nets"][p])
         encoder = StateActionEncoder(is_partner_visible=cfg.qnet.is_partner_visible)
         return cls(q_nets=q_nets, encoder=encoder, device=device)
 

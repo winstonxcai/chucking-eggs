@@ -27,10 +27,8 @@ import torch
 
 from ..data.buffer import ReplayBuffer, RoleAwareReplayBuffer
 from ..model.checkpoint import (
-    migrate_state_dict,
     save_checkpoint_base,
     save_checkpoint_shared,
-    unwrap_compiled,
 )
 from ..utils.logging_setup import setup_run_logging
 from ..utils.metrics import jsonl_writer
@@ -189,9 +187,8 @@ class _SeatAdapter:
     def resume(self, path: Path) -> int:
         ckpt = torch.load(path, map_location="cpu", weights_only=True)
         for p in range(4):
-            unwrap_compiled(self._learner.q_nets[p]).load_state_dict(
-                migrate_state_dict(ckpt["q_nets"][p])
-            )
+            net = self._learner.q_nets[p]
+            getattr(net, "_orig_mod", net).load_state_dict(ckpt["q_nets"][p])
         return int(ckpt.get("episode", 0))
 
     def buffer_size(self) -> int:
@@ -356,7 +353,8 @@ class _SharedAdapter:
 
     def resume(self, path: Path) -> int:
         ckpt = torch.load(path, map_location="cpu", weights_only=True)
-        unwrap_compiled(self._learner.q_net).load_state_dict(ckpt["q_net"])
+        net = self._learner.q_net
+        getattr(net, "_orig_mod", net).load_state_dict(ckpt["q_net"])
         return int(ckpt.get("episode", 0))
 
     def buffer_size(self) -> int:

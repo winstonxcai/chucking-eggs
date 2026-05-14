@@ -10,10 +10,8 @@ from .checkpoint import (
     load_checkpoint,
     load_frozen_shared_qnet,
     load_frozen_trick_qnet,
-    migrate_state_dict,
     save_checkpoint_base,
     save_checkpoint_shared,
-    unwrap_compiled,
 )
 from .encoder import (
     BEHAVIOR_DIM,
@@ -50,8 +48,6 @@ __all__ = [
     "load_checkpoint",
     "load_frozen_shared_qnet",
     "load_frozen_trick_qnet",
-    "migrate_state_dict",
     "save_checkpoint_base",
     "save_checkpoint_shared",
-    "unwrap_compiled",
 ]

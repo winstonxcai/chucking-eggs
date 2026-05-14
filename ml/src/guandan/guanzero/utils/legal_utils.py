@@ -1,56 +1,57 @@
-"""Strategic deduplication of legal moves for GuanZero ML consumers.
+"""Strategic deduplication and legal-move selection for GuanZero ML consumers.
 
 The game engine enumerates every physical-card selection as a separate Combo
 (e.g., A♠+A♥ and A♣+A♦ are distinct). For training, suit-variants of the same
 logical play are strategically identical — the encoder is suit-agnostic —
-so keeping them dilutes labels without adding information.
+so keeping them dilutes labels and produces redundant NN evaluations.
 
-``dedup_strategic`` collapses those variants, retaining the first-seen
-representative, before encoding or action selection. The engine and web backend
-are unaffected; this wrapper is applied only at ML call sites.
+``dedup_strategic`` collapses those variants and ``select_legal`` is the
+canonical entry point for actors. Both delegate to the Rust ``guandan_rs``
+extension so the Python episode loop and the Rust rollout loop share a single
+implementation.
 """
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
+
+import guandan_rs
 
 from ...cards import ComboType
-from ...combos import Combo
+from ...combos import Combo, _rs_tuple_to_combo
 
-# Combo types where suit composition does not affect strength under Combo.beats().
-# STRAIGHT_FLUSH and BOMB_JOKER are excluded: their suit composition is intrinsic
-# to identity (SF suits are distinct), so they keep the full card-tuple key.
-_SUIT_AGNOSTIC = frozenset({
-    ComboType.SINGLE, ComboType.PAIR, ComboType.TRIPLE,
-    ComboType.FULL_HOUSE, ComboType.STRAIGHT,
-    ComboType.TUBE, ComboType.PLATE,
-    ComboType.BOMB_4, ComboType.BOMB_5, ComboType.BOMB_6,
-    ComboType.BOMB_7, ComboType.BOMB_8, ComboType.BOMB_9, ComboType.BOMB_10,
-})
+if TYPE_CHECKING:
+    from ...game import GuanDanEnv
+
+_PASS = Combo(ComboType.PASS, 0, [], 0, 0)
 
 
-def strategic_key(c: Combo) -> tuple:
-    """Equivalence key under which suit-variants of the same play collapse.
-
-    PASS, STRAIGHT_FLUSH, and BOMB_JOKER preserve full card identity so
-    beats() semantics are not disturbed.
-    """
-    if c.type in _SUIT_AGNOSTIC:
-        ranks = tuple(sorted(card.rank for card in c.cards))
-        return (c.type, c.key, c.length, c.wild_count, ranks)
-    card_ids = tuple(sorted((card.rank, card.suit) for card in c.cards))
-    return (c.type, c.key, c.length, c.wild_count, card_ids)
+def _combo_to_tuple(c: Combo) -> tuple:
+    return (
+        int(c.type),
+        c.key,
+        [(card.rank, card.suit, card.deck) for card in c.cards],
+        c.length,
+        c.wild_count,
+    )
 
 
 def dedup_strategic(legal: Iterable[Combo]) -> list[Combo]:
-    """Collapse suit-variants of strategically-equivalent plays.
+    """Collapse suit-variants of strategically-equivalent plays; first-seen wins."""
+    tuples = [_combo_to_tuple(c) for c in legal]
+    return [_rs_tuple_to_combo(t) for t in guandan_rs.dedup_strategic(tuples)]
 
-    First-seen variant survives; insertion order is preserved.
+
+def select_legal(env: "GuanDanEnv", player: int) -> list[Combo]:
+    """Return the deduplicated legal moves for ``player``.
+
+    Appends an explicit PASS move if the player must respond but PASS is
+    absent from the raw legal-move set (can happen with strict-response rules).
     """
-    out: dict[tuple, Combo] = {}
-    for c in legal:
-        out.setdefault(strategic_key(c), c)
-    return list(out.values())
+    legal = dedup_strategic(env.legal_moves(player))
+    if not env.is_leading() and not any(m.type == ComboType.PASS for m in legal):
+        legal.append(_PASS)
+    return legal
 
 
-__all__ = ["dedup_strategic", "strategic_key"]
+__all__ = ["dedup_strategic", "select_legal"]

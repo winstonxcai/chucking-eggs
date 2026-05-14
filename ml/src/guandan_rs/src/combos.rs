@@ -684,6 +684,50 @@ fn add_straight_flushes(
     }
 }
 
+// ─── Strategic deduplication ──────────────────────────────
+//
+// Collapses suit-variants of strategically-equivalent plays. The encoder is
+// suit-agnostic for most combo types, so emitting all suit variants only adds
+// redundant NN evaluations without changing the action distribution. Used by
+// both the Rust rollout loop and the Python `select_legal` helper.
+
+/// Combo types where suit composition does not affect strength under `beats()`.
+/// Excluded: PASS=0, STRAIGHT_FLUSH=10, BOMB_JOKER=16 (identity is intrinsic).
+pub fn is_suit_agnostic(combo_type: u8) -> bool {
+    matches!(combo_type, 1..=9 | 11..=15)
+}
+
+/// Canonical key under which suit-variants of the same play collapse.
+pub fn strategic_key(combo: &Combo) -> Vec<u8> {
+    let mut key = vec![combo.combo_type, combo.key, combo.length, combo.wild_count];
+    if is_suit_agnostic(combo.combo_type) {
+        let mut ranks: Vec<u8> = combo.cards.iter().map(|c| c.rank).collect();
+        ranks.sort_unstable();
+        key.extend(ranks);
+    } else {
+        let mut card_ids: Vec<(u8, u8)> = combo.cards.iter().map(|c| (c.rank, c.suit)).collect();
+        card_ids.sort_unstable();
+        for (rank, suit) in card_ids {
+            key.push(rank);
+            key.push(suit);
+        }
+    }
+    key
+}
+
+/// Collapse suit-variants of strategically-equivalent plays; first-seen wins.
+pub fn dedup_strategic(legal: Vec<Combo>) -> Vec<Combo> {
+    let mut seen: HashSet<Vec<u8>> = HashSet::new();
+    let mut out = Vec::with_capacity(legal.len());
+    for combo in legal {
+        let key = strategic_key(&combo);
+        if seen.insert(key) {
+            out.push(combo);
+        }
+    }
+    out
+}
+
 // ─── DEDUPLICATION ──────────────────────────────────────
 
 fn deduplicate(combos: Vec<Combo>) -> Vec<Combo> {

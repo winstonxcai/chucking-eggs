@@ -16,51 +16,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
 use crate::cards::{card_to_id, is_bomb_type, BOMB_4, PASS};
-use crate::combos::Combo;
+use crate::combos::{dedup_strategic, Combo};
 use crate::encoder::{self, EncoderInput};
 use crate::game::GameEnv;
-
-// ─── Strategic deduplication ─────────────────────────────────────────────────
-
-/// Combo types where suit composition does not affect strength.
-/// Mirrors Python's `_SUIT_AGNOSTIC` in `legal_utils.py`.
-/// Excluded: PASS=0, STRAIGHT_FLUSH=10, BOMB_JOKER=16.
-fn is_suit_agnostic(combo_type: u8) -> bool {
-    matches!(combo_type, 1..=9 | 11..=15)
-}
-
-/// Canonical key for strategic deduplication.
-/// Suit-agnostic types collapse all suit/deck variants of the same rank set.
-fn strategic_key(combo: &Combo) -> Vec<u8> {
-    let mut key = vec![combo.combo_type, combo.key, combo.length, combo.wild_count];
-    if is_suit_agnostic(combo.combo_type) {
-        let mut ranks: Vec<u8> = combo.cards.iter().map(|c| c.rank).collect();
-        ranks.sort_unstable();
-        key.extend(ranks);
-    } else {
-        let mut card_ids: Vec<(u8, u8)> = combo.cards.iter().map(|c| (c.rank, c.suit)).collect();
-        card_ids.sort_unstable();
-        for (rank, suit) in card_ids {
-            key.push(rank);
-            key.push(suit);
-        }
-    }
-    key
-}
-
-/// Collapse suit-variants of strategically-equivalent plays, keeping first-seen.
-/// Mirrors Python's `dedup_strategic` in `legal_utils.py`.
-fn dedup_strategic(legal: Vec<Combo>) -> Vec<Combo> {
-    let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
-    let mut out = Vec::with_capacity(legal.len());
-    for combo in legal {
-        let key = strategic_key(&combo);
-        if seen.insert(key) {
-            out.push(combo);
-        }
-    }
-    out
-}
 
 // ─── Phase / role helpers ────────────────────────────────────────────────────
 // Mirror the Python helpers in actor.py verbatim so trajectory metadata is

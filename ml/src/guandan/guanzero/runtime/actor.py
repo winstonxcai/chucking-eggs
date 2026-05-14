@@ -14,7 +14,6 @@ import torch
 import math
 
 from ...cards import ComboType
-from ...combos import Combo
 from ...game import GuanDanEnv
 from ..data.buffer import collate_base_encoded, collate_role_encoded
 from ..model.encoding.base_encoder import StateActionEncoder
@@ -23,13 +22,10 @@ from ..model.encoding.role_encoder import (
     ROLE_ENCODE_STATE_KEYS,
     RoleAwareStateActionEncoder,
 )
-from ..utils.legal_utils import dedup_strategic
+from ..utils.legal_utils import select_legal
 from ..utils.profiler import PhaseProfiler, _k_bucket
 from ..model.q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet
 from ..data.returns import TrainSample, compute_mc_returns
-
-
-_PASS = Combo(ComboType.PASS, 0, [])
 
 
 def _phase(hand_size: int) -> int:
@@ -52,18 +48,6 @@ def _trick_role(env: GuanDanEnv, partner_seat: int) -> int:
     if env.is_out[partner_seat]:
         return 2
     return 1
-
-
-def select_legal(env: GuanDanEnv, player: int) -> list[Combo]:
-    """Return the deduplicated legal moves for ``player``.
-
-    Appends an explicit PASS move if the player must respond but PASS is
-    absent from the raw legal-move set (can happen with strict-response rules).
-    """
-    legal = dedup_strategic(env.legal_moves(player))
-    if not env.is_leading() and not any(m.type == ComboType.PASS for m in legal):
-        legal.append(_PASS)
-    return legal
 
 
 @torch.inference_mode()

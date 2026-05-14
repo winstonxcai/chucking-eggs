@@ -5,7 +5,7 @@ filesystem layout, ad-hoc helpers) — no dependencies on model, data, or
 runtime modules.
 """
 
-from .legal_utils import dedup_strategic, strategic_key
+from .legal_utils import dedup_strategic, select_legal
 from .logging_setup import TqdmLoggingHandler, setup_run_logging
 from .metrics import (
     JsonlBackend,
@@ -20,7 +20,7 @@ from .schedules import epsilon_linear
 
 __all__ = [
     "dedup_strategic",
-    "strategic_key",
+    "select_legal",
     "TqdmLoggingHandler",
     "setup_run_logging",
     "JsonlBackend",

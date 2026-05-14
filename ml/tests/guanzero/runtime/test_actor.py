@@ -72,8 +72,8 @@ def test_select_legal_dedups_and_adds_pass_when_responding():
     )
 
     legal = select_legal(_FakeEnv([pair_a, pair_b], leading=False), 0)
-    assert legal[0] is pair_a
     assert len(legal) == 2
+    assert legal[0].type == pair_a.type and legal[0].key == pair_a.key
     assert legal[-1].type == ComboType.PASS
 
 
@@ -81,7 +81,8 @@ def test_select_legal_does_not_add_pass_when_leading():
     single = Combo(ComboType.SINGLE, Rank.ACE, [Card(Rank.ACE, Suit.SPADE, 0)])
 
     legal = select_legal(_FakeEnv([single], leading=True), 0)
-    assert legal == [single]
+    assert len(legal) == 1
+    assert legal[0].type == single.type and legal[0].key == single.key
 
 
 def test_argmax_q_matches_grouped_forward():

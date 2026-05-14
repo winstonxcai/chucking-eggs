@@ -45,6 +45,15 @@ fn generate_responses(hand: Vec<PyCard>, level_rank: u8, trick: PyCombo) -> Vec<
     results.iter().map(combo_to_py).collect()
 }
 
+/// Collapse suit-variants of strategically-equivalent plays; first-seen wins.
+/// Single source of truth — Python `legal_utils.dedup_strategic` calls this.
+#[pyfunction]
+fn dedup_strategic(legal: Vec<PyCombo>) -> Vec<PyCombo> {
+    let combos_in: Vec<combos::Combo> = legal.iter().map(combo_from_py).collect();
+    let combos_out = combos::dedup_strategic(combos_in);
+    combos_out.iter().map(combo_to_py).collect()
+}
+
 /// Run MC rollouts for a specific move from a game state.
 ///
 /// Args:
@@ -223,6 +232,7 @@ fn encode_state_for_parity(
 fn guandan_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_all_leads, m)?)?;
     m.add_function(wrap_pyfunction!(generate_responses, m)?)?;
+    m.add_function(wrap_pyfunction!(dedup_strategic, m)?)?;
     m.add_function(wrap_pyfunction!(mc_rollout, m)?)?;
     m.add_function(wrap_pyfunction!(mc_rollout_batch, m)?)?;
     m.add_function(wrap_pyfunction!(rollout::play_episode_rust, m)?)?;

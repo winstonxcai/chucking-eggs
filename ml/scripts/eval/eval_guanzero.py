@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import multiprocessing as mp
 import sys
@@ -28,6 +29,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from tqdm import tqdm
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _eval_worker import play_n_games
 
 
 # ─── Worker (top-level so spawn can pickle it) ───────────────────────────────
@@ -49,20 +53,12 @@ def _worker(args: tuple) -> tuple[int, int, int, int]:
     bot = GuanZeroBot.load(checkpoint, device=device)
     opp = make_agent(opponent_name)
 
-    def play(gz_on_even: bool, seed: int) -> bool:
-        env = GuanDanEnv()
-        env.reset(seed=seed)
-        gz_check = (lambda p: p % 2 == 0) if gz_on_even else (lambda p: p % 2 == 1)
-        win_seat = 0 if gz_on_even else 1
-        while not env.done:
-            p = env.current_player
-            action = bot.act(env, p) if gz_check(p) else opp.act(env, p)
-            env.step(action)
-        return env.get_rewards()[win_seat] > 0
-
-    wins_e = sum(1 for s in even_seeds if play(True, s))
-    wins_o = sum(1 for s in odd_seeds  if play(False, s))
-    return wins_e, len(even_seeds), wins_o, len(odd_seeds)
+    # even seating: bot on {0,2}, opp on {1,3}
+    r_even = play_n_games(bot, opp, len(even_seeds), seeds=even_seeds)
+    # odd seating: opp on {0,2}, bot on {1,3} — wins_o counts opp wins so invert
+    r_odd  = play_n_games(opp, bot, len(odd_seeds),  seeds=odd_seeds)
+    wins_o = r_odd["losses"]  # bot wins = opp losses
+    return r_even["wins"], len(even_seeds), wins_o, len(odd_seeds)
 
 
 # ─── Driver ──────────────────────────────────────────────────────────────────
@@ -149,6 +145,8 @@ def main() -> None:
                    help="Torch device for the GuanZero forward pass. Default cpu — for the "
                         "small per-move batches in eval, CPU beats MPS due to dispatch latency.")
     p.add_argument("--seed", type=int, default=0, help="Base seed for env.reset.")
+    p.add_argument("--out", type=Path, default=None,
+                   help="Optional path to save structured JSON results.")
     args = p.parse_args()
 
     result = run_eval(args.checkpoint, args.opponent, args.games, args.device,
@@ -164,6 +162,22 @@ def main() -> None:
         se = math.sqrt(wr * (1 - wr) / total_n)
         print(f"  {args.checkpoint.name}  vs {args.opponent}  (combined): "
               f"{wr:.1%} ± {se:.1%}  ({total_w}/{total_n})")
+
+    if args.out is not None:
+        combined_wr = total_w / total_n if total_n else 0.0
+        combined_se = math.sqrt(combined_wr * (1 - combined_wr) / total_n) if total_n else 0.0
+        out_data = {
+            "checkpoint": str(args.checkpoint),
+            "opponent": args.opponent,
+            "n_games": total_n,
+            "wins": total_w,
+            "wr": round(combined_wr, 4),
+            "se": round(combined_se, 4),
+            **{f"wr_{label}": round(r["win_rate"], 4) for label, r in result.items()},
+        }
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(out_data, indent=2))
+        print(f"Results saved to {args.out}")
 
 
 if __name__ == "__main__":

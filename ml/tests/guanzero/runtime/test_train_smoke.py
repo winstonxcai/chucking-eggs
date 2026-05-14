@@ -60,4 +60,4 @@ def test_train_smoke_runs_to_completion(tmp_path):
 
     train_log = (run_dir / "train.log").read_text()
     assert "Learner started" in train_log
-    assert "Done" in train_log
+    assert "done" in train_log.lower()

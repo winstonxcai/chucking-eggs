@@ -16,6 +16,12 @@ import numpy as np
 import torch
 
 from .actor import play_episode, play_episode_rust
+
+try:
+    import guandan_rs as _guandan_rs  # noqa: F401
+    _RUST_AVAILABLE = True
+except ImportError:
+    _RUST_AVAILABLE = False
 from ..model.encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from ..model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
 from ..utils.profiler import PhaseProfiler
@@ -464,7 +470,8 @@ def actor_loop(
         # only implements absolute_seat role encoding, so guard on encoder type/scheme.
         # Set GUANZERO_NO_RUST=1 to force the Python path (e.g. for benchmarking).
         _use_rust = (
-            episode_mode == EPISODE_MODE_SELF_PLAY
+            _RUST_AVAILABLE
+            and episode_mode == EPISODE_MODE_SELF_PLAY
             and active_hard_bot is None
             and not frozen_seats
             and inference_client is None

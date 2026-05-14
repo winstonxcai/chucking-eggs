@@ -1,16 +1,16 @@
 # Project Overview
 
-Guan Dan (掼蛋) RL agent — full game engine + Deep Monte Carlo training with LSTM Q-network and curriculum learning (random -> greedy -> heuristic opponents).
+Guan Dan (掼蛋) RL agent — full game engine + paper-spec Deep Monte Carlo training (LSTM Q-network, distributed actors + learner, optional shared-memory inference server). See `ml/src/guandan/guanzero/` for the active pipeline.
 
 # Repo Structure
 
 ```
 ml/src/guandan/       — Python package (pip-installable via hatch)
   cards.py, combos.py, game.py  — Core game engine
-  agents/             — Agent hierarchy (random, greedy, heuristic, strategic, MC, RL)
-  training/           — RL training (encoding, q_network, replay, train)
-ml/scripts/           — eval/, train/, util/, modal/ subfolders + run_e2e.sh entry point
-ml/tests/             — ML + game engine pytest tests
+  agents/             — Rule-based agent hierarchy (random, greedy, heuristic, strategic, yaoji, jidan, …)
+  guanzero/           — Active training stack (actor, learner, buffer, encoder, q_network, train)
+ml/scripts/           — eval/ and modal/ subfolders (training entry is `python -m guandan.guanzero.train`)
+ml/tests/             — Engine + guanzero pytest tests
 ml/runs/              — Experiment outputs (gitignored)
 ml/data/              — Training data (gitignored)
 ml/checkpoints/       — Model checkpoints (gitignored)
@@ -22,12 +22,11 @@ docs/                 — Architecture and design docs
 # Common Commands
 
 - Run tests: `uv run pytest`
-- Smoke train: `./ml/scripts/run_e2e.sh --train-only`
-- Full train: `PYTHONPATH=ml/src python -m guandan.training.train --episodes 30000`
-- Quick validation: `PYTHONPATH=ml/src python -m guandan.training.train --quick`
-- Evaluate: `PYTHONPATH=ml/src python ml/scripts/eval/checkpoint.py --checkpoint <path> --opponent heuristic --games 500`
-- Ladder eval: `PYTHONPATH=ml/src python ml/scripts/eval/ladder.py --checkpoint <path>`
-- Modal GPU train: `./ml/scripts/run_e2e.sh --modal`
+- Train (local): `PYTHONPATH=ml/src .venv/bin/python -m guandan.guanzero.train --config <config.yaml>`
+- Train (Modal GPU): `modal run --detach ml/scripts/modal/train_guanzero_modal.py`
+- Evaluate checkpoint: `PYTHONPATH=ml/src python ml/scripts/eval/eval_guanzero.py --checkpoint <path>`
+- Head-to-head eval: `PYTHONPATH=ml/src python ml/scripts/eval/bots.py --agent1 <a> --agent2 <b> --games 200`
+- WR matrix (Glicko-2): `PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200`
 
 # Training Constraints
 
@@ -41,8 +40,5 @@ docs/                 — Architecture and design docs
 - Snake_case everywhere, `_bot` suffix for agent classes.
 - All agents implement `Agent.act(env, player) -> Combo`.
 - Training outputs go to `ml/runs/<run_name>/` with `config.json`, `metrics.jsonl`, `train.log`.
-- Use `--quick` flag for smoke testing (~4-5 hours on M1 Pro, 8000 episodes).
-- Encoding dimensions: state=417, action=160, history_move=83.
-- Curriculum stages: random (65% win gate) -> greedy (60% win gate) -> heuristic (terminal).
 - `uv run` is the standard runner; `PYTHONPATH=ml/src` needed when invoking modules directly.
-- E2E script (`ml/scripts/run_e2e.sh`) is the single entry point with skip flags.
+- Guanzero training is configured via YAML (`ml/src/guandan/guanzero/config/*.yaml`).

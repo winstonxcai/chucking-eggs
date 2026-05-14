@@ -3956,3 +3956,68 @@ Jidan is the exception — still trending up at 67.5k, suggesting the low-epsilo
 fine-tune benefits endgame coordination specifically. Recommend curriculum
 (league or hard-bot mix) for strategic and yaoji once the 75k run completes.
 
+---
+
+## 20. Phase 2 Rust rollout ("Curried Hearth") — encoder port + Modal benchmark (May 2026)
+
+**Goal:** Flip the episode loop into Rust. Python is called back only for the NN
+forward pass (scorer closure). Phase 2: Rust also encodes state/actions to f32
+bytes; Python scorer does `frombuffer → tensor → forward_grouped → argmax`.
+
+### Implementation
+
+**New Rust components:**
+- `guandan_rs::rollout::play_episode_rust(scorer, level_rank, seed)` — full
+  episode loop with incremental multihot tracking, legal move gen, and encoder
+- `guandan_rs::encoder` — role-aware M3 encoder in Rust (state: 3614 f32,
+  action: 108 f32 per candidate)
+- `guandan_rs::lib::encode_state_for_parity` — standalone function for parity
+  testing without a full game replay
+
+**Python side:**
+- `actor.make_scorer(q_nets, encoder, device, epsilon)` — factory producing a
+  `(state_bytes, action_bytes, head_id) → (idx, encoded_dict, q_gap, flag)` closure
+- `actor.play_episode_rust(...)` — thin wrapper: scorer → Rust loop → compute_mc_returns
+- `worker._use_rust` guard: only routes to Rust for `RoleAwareStateActionEncoder`
+  + `head_scheme="absolute_seat"` + `GUANZERO_NO_RUST` not set
+
+### Bugs fixed during implementation
+
+1. **History window ordering** — Rust placed entries at rows 0..n; Python pads at
+   front (most recent = last row). Fixed by computing `row_offset = HISTORY_LEN - n`.
+2. **`is_highest_rank` wild-card check** — Rust checked `wild_count == 0` but
+   Python only checks `all(c.rank == level_rank)`. Heart-level-rank cards still
+   satisfy this even when counted as wilds. Removed `wild_count == 0`.
+3. **`dedup_strategic` missing** — Rust loop passed all raw legal moves (including
+   suit variants) to the scorer; Python's `select_legal` deduplicates first.
+   Without dedup, Rust sent ~1.62× more actions to the NN per step, causing ~2×
+   throughput regression. Fixed by porting `dedup_strategic` to Rust.
+
+### Encoder parity tests
+
+21 unit tests in `ml/tests/guanzero/model/test_encoder_parity.py`:
+- 20 parametrized seeds: full episode replay, compare Rust vs Python encoder at
+  every step (atol=1e-5). All pass after fixes 1–2.
+- 1 state-dim test: buffer is exactly `STATE_DIM=3614` floats.
+
+### Modal benchmark (m3_l4_no_server.yaml, 32 actors, L4 + 32 vCPU, 100 updates)
+
+**Run 1 — before `dedup_strategic` fix:**
+| Path | actor samp/s | upd/s |
+|------|-------------|-------|
+| python_baseline | 7844 | 5.60 |
+| rust_phase2 | 3965 | 4.45 |
+| **speedup** | **0.51×** | — |
+
+Root cause: Rust sent 7.51 avg actions/step vs Python's 4.63 (after dedup),
+causing 62% more NN evals per step. Since NN is ~98% of per-decision time, this
+accounts for most of the regression.
+
+**Run 2 — after `dedup_strategic` fix:** *(pending)*
+
+### Key design note
+
+The scorer closure is the only Python touchpoint. Epsilon-greedy, model dispatch,
+`forward_grouped` fast path (state trunk runs once, action head runs k times) —
+all inside the closure. Rust is model-agnostic.
+

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
+import glob
 
+import pytest
 import yaml
 
 from guandan.guanzero.config import (
@@ -188,3 +190,17 @@ def test_pair_sampling_mutual_exclusion_with_hard_bot_sampling():
             hard_bot_sampling={"yaoji": 1.0},
             hard_bot_pair_sampling={"strategic_yaoji": 1.0},
         )
+
+
+# ── YAML config roundtrip ─────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "yaml_path",
+    sorted(glob.glob("ml/src/guandan/guanzero/configs/*.yaml")),
+)
+def test_all_config_yamls_parse(yaml_path):
+    cfg = load_config_from_yaml(yaml_path)
+    assert isinstance(cfg, TrainConfig)
+    assert cfg.n_actors >= 1
+    assert cfg.model_type in ("seat_nets", "shared_heads", "shared_trick_heads")

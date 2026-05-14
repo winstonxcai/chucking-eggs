@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skip(reason="subprocess integration tests are skipped for this path")
+pytestmark = pytest.mark.slow
 
 
 def test_actor_loop_single_episode():

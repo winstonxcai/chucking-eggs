@@ -43,14 +43,14 @@ def test_heuristic_games_complete():
 
 
 def test_heuristic_vs_random_winrate():
-    """Heuristic (team {0,2}) should beat random (team {1,3}) 60-90% of the time."""
+    """Heuristic (team {0,2}) should beat random (team {1,3}) with >60% win rate."""
     wins = 0
     n_games = 200
 
-    for _ in range(n_games):
+    for i in range(n_games):
         env = GuanDanEnv()
         heuristic = HeuristicAgent(env.level_rank)
-        env.reset()
+        env.reset(seed=42 + i)
 
         while not env.done:
             player = env.current_player
@@ -65,7 +65,7 @@ def test_heuristic_vs_random_winrate():
             wins += 1
 
     wr = wins / n_games
-    assert 0.55 <= wr <= 0.95, f"Heuristic vs random WR={wr:.1%}, expected 55-95%"
+    assert wr > 0.60, f"Heuristic vs random WR={wr:.1%}, expected >60%"
 
 
 def test_heuristic_vs_heuristic_balance():
@@ -76,8 +76,8 @@ def test_heuristic_vs_heuristic_balance():
     env = GuanDanEnv()
     agent = HeuristicAgent(env.level_rank)
 
-    for _ in range(n_games):
-        env.reset()
+    for i in range(n_games):
+        env.reset(seed=100 + i)
         while not env.done:
             player = env.current_player
             move = agent.choose_action(env, player)

@@ -13,16 +13,18 @@ from guandan.cards import BOMB_TYPES, ComboType, Rank
 from guandan.game import GuanDanEnv
 
 
-def _play_tournament(agent_a, agent_b, n_games: int = 200) -> float:
+def _play_tournament(agent_a, agent_b, n_games: int = 200, seed: int | None = None) -> float:
     """Play n_games with agent_a on team {0,2} vs agent_b on team {1,3}.
 
-    Returns win rate for team {0,2}.
+    If seed is given, each game i is reset with seed+i so outcomes are fully
+    deterministic. Returns win rate for team {0,2}.
     """
     env = GuanDanEnv()
     wins = 0
 
-    for _ in range(n_games):
-        env.reset()
+    for i in range(n_games):
+        kw = {"seed": seed + i} if seed is not None else {}
+        env.reset(**kw)
         steps = 0
         while not env.done:
             player = env.current_player
@@ -77,24 +79,24 @@ def test_greedy_beats_random():
     """GreedyBot should beat RandomBot with >55% win rate."""
     greedy = GreedyBot(Rank.TWO)
     rand = RandomBot()
-    wr = _play_tournament(greedy, rand, n_games=200)
+    wr = _play_tournament(greedy, rand, n_games=200, seed=42)
     assert wr > 0.55, f"Greedy vs Random WR={wr:.1%}, expected >55%"
 
 
 def test_heuristic_beats_greedy():
-    """HeuristicBot should beat GreedyBot with >52% win rate."""
+    """HeuristicBot should beat GreedyBot with >50% win rate."""
     heur = HeuristicBot(Rank.TWO)
     greedy = GreedyBot(Rank.TWO)
-    wr = _play_tournament(heur, greedy, n_games=200)
-    assert wr > 0.48, f"Heuristic vs Greedy WR={wr:.1%}, expected >48%"
+    wr = _play_tournament(heur, greedy, n_games=200, seed=42)
+    assert wr > 0.50, f"Heuristic vs Greedy WR={wr:.1%}, expected >50%"
 
 
 def test_strategic_beats_heuristic():
-    """StrategicBot should beat HeuristicBot with >52% win rate."""
+    """StrategicBot should beat HeuristicBot with >54% win rate."""
     strat = StrategicBot(Rank.TWO)
     heur = HeuristicBot(Rank.TWO)
-    wr = _play_tournament(strat, heur, n_games=200)
-    assert wr > 0.52, f"Strategic vs Heuristic WR={wr:.1%}, expected >52%"
+    wr = _play_tournament(strat, heur, n_games=200, seed=42)
+    assert wr > 0.54, f"Strategic vs Heuristic WR={wr:.1%}, expected >54%"
 
 
 def test_greedy_never_bombs_following():

@@ -87,11 +87,11 @@ hard_bot_sampling:
   jidan: 0.40
 
 # ── Stratified replay mix ──
+# Note: hard_bot_loss and yaoji_endgame_coordination_loss buckets were removed
+# from the valid key set; their weights folded into hard_bot_general.
 replay_mix:
   general: 0.55
-  hard_bot_general: 0.15
-  hard_bot_loss: 0.20
-  yaoji_endgame_coordination_loss: 0.10
+  hard_bot_general: 0.45
 
 device: cuda
 use_bf16_learner: true

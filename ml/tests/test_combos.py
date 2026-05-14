@@ -375,3 +375,67 @@ def test_combo_types_from_random_hands():
     }
     missing = expected_common - seen_types
     assert not missing, f"Common combo types never generated: {missing}"
+
+
+# ─── generate_responses() tests ─────────────────────────────────────
+
+
+def test_responses_to_single_include_higher_singles_and_bombs():
+    """Responding to a single: all higher-rank singles must be included, plus bombs."""
+    hand = _hand_from_cards([
+        Card(Rank.FIVE, Suit.SPADE, 0),
+        Card(Rank.KING, Suit.HEART, 0),
+        Card(Rank.THREE, Suit.SPADE, 0),
+        Card(Rank.THREE, Suit.HEART, 0),
+        Card(Rank.THREE, Suit.CLUB, 0),
+        Card(Rank.THREE, Suit.DIAMOND, 0),
+    ])
+    trick = Combo(ComboType.SINGLE, Rank.SEVEN, [])
+    responses = generate_responses(hand, LEVEL_RANK, trick)
+    types = {r.type for r in responses}
+
+    # KING beats SEVEN; THREE (lower) does not → only KING single expected
+    singles = [r for r in responses if r.type == ComboType.SINGLE]
+    assert all(r.key > Rank.SEVEN or r.key == LEVEL_RANK for r in singles if r.key is not None), (
+        "Response singles must all beat the trick or be the level rank"
+    )
+    # Bomb (4× THREE) always allowed as a response
+    assert ComboType.BOMB_4 in types, "generate_responses must always include bombs"
+    # PASS is always present
+    assert ComboType.PASS in types, "generate_responses must always include PASS"
+
+
+def test_responses_to_bomb_only_higher_bombs():
+    """Responding to a bomb: only strictly larger bombs (or joker bomb) are valid."""
+    hand = _hand_from_cards([
+        Card(Rank.FIVE, Suit.SPADE, 0),
+        Card(Rank.FIVE, Suit.HEART, 0),
+        Card(Rank.FIVE, Suit.CLUB, 0),
+        Card(Rank.FIVE, Suit.DIAMOND, 0),
+        Card(Rank.THREE, Suit.SPADE, 0),
+        Card(Rank.THREE, Suit.HEART, 0),
+        Card(Rank.THREE, Suit.CLUB, 0),
+        Card(Rank.THREE, Suit.DIAMOND, 0),
+    ])
+    trick = Combo(ComboType.BOMB_4, Rank.FIVE, [])
+    responses = generate_responses(hand, LEVEL_RANK, trick)
+
+    non_pass = [r for r in responses if r.type != ComboType.PASS]
+    for r in non_pass:
+        assert r.type in BOMB_TYPES, f"Response to a bomb must be a bomb, got {r.type}"
+        assert r.beats(trick), f"Response bomb {r} must beat the trick bomb {trick}"
+
+
+def test_responses_always_include_pass():
+    """PASS is a valid response in all following positions."""
+    hand = _hand_from_cards([Card(Rank.THREE, Suit.SPADE, 0)])
+    for trick_type, trick_rank in [
+        (ComboType.SINGLE, Rank.ACE),
+        (ComboType.PAIR, Rank.KING),
+        (ComboType.BOMB_4, Rank.QUEEN),
+    ]:
+        trick = Combo(trick_type, trick_rank, [])
+        responses = generate_responses(hand, LEVEL_RANK, trick)
+        assert any(r.type == ComboType.PASS for r in responses), (
+            f"PASS must always be a valid response (trick={trick_type})"
+        )

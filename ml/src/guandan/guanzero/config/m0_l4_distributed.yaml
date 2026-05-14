@@ -58,7 +58,7 @@ buffer_min_size: 5000
 epsilon_start: 0.05
 epsilon_final: 0.05
 epsilon_decay_updates: 0
-use_oracle_others_hand: true
+is_partner_visible: true
 
 # L4 throughput
 device: cuda

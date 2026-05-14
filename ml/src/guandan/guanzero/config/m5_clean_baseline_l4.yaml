@@ -10,8 +10,8 @@
 #     --updates 20000 --run-name guanzero_v5_baseline_20k --seed 0
 
 n_actors: 32
-sync_interval_updates: 500
-sync_jitter_updates: 100
+sync_interval_updates: 1000
+sync_jitter_updates: 250
 actor_push_batch_size: 512
 sample_queue_maxsize: 64
 max_drain_batches_per_loop: 16
@@ -41,15 +41,15 @@ target_replay_ratio: 1.0
 max_replay_ratio: 1.25
 max_throttle_sleep_s: 0.05
 
-lr: 1.0e-4
+lr: 3.0e-5
 gamma: 1.0
 batch_size: 4096
 buffer_capacity: 400000
 buffer_capacity_per_player: 100000
 buffer_min_size: 32768
 
-epsilon_start: 0.05
-epsilon_final: 0.02
+epsilon_start: 0.01
+epsilon_final: 0.01
 epsilon_decay_updates: 20000
 epsilon_frozen: 0.00
 is_partner_visible: true

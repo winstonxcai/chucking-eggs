@@ -134,6 +134,12 @@ def _shutdown_processes(
 def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     import multiprocessing as mp
 
+    if cfg.model_type == "shared_heads" and cfg.inference.enabled:
+        raise ValueError(
+            "Inference server not supported for model_type='shared_heads'. "
+            "Set use_inference_server: false in config."
+        )
+
     run_dir    = Path(cfg.resolved_run_dir)
     weight_dir_env = os.environ.get("GUANZERO_WEIGHT_DIR")
     weight_dir = Path(weight_dir_env) if weight_dir_env else run_dir / "weights"

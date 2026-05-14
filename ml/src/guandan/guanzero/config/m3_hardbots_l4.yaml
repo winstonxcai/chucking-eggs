@@ -58,7 +58,7 @@ epsilon_start: 0.02
 epsilon_final: 0.02
 epsilon_decay_updates: 0
 epsilon_frozen: 0.00
-use_oracle_others_hand: true
+is_partner_visible: true
 
 # ── Hard-bot mixed-opponent self-play ──
 # 60% self-play / 40% vs hard bot → ~75% / ~25% sample mix in buffer.

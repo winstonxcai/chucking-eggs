@@ -3,17 +3,9 @@ from __future__ import annotations
 import numpy as np
 
 from guandan.game import GuanDanEnv
-from guandan.guanzero.encoder import (
-    BEHAVIOR_DIM,
-    CARD_ID_DIM,
-    HISTORY_LEN,
-    LEVEL_DIM,
-    RANK_BUCKETS,
-    StateActionEncoder,
-    card_to_id,
-    id_to_card,
-    static_dim,
-)
+from guandan.cards import CARD_ID_DIM, card_to_id, id_to_card
+from guandan.guanzero.encoder import BEHAVIOR_DIM, HISTORY_LEN, LEVEL_DIM, RANK_BUCKETS
+from guandan.guanzero.encoding.base_encoder import StateActionEncoder, static_dim
 
 
 def _fresh_env(seed: int = 0) -> GuanDanEnv:
@@ -64,17 +56,46 @@ def test_static_dim_matches_actual_concat():
         out["remaining_counts_others"].reshape(-1),
         out["level"], out["behavior"], out["candidate_action"],
     ])
-    assert flat.shape[0] == static_dim(use_oracle_others_hand=True)
+    assert flat.shape[0] == static_dim(is_partner_visible=True)
 
 
-def test_oracle_off_zeroes_others_hand():
+def test_partner_hidden_zeroes_others_hand():
     env = _fresh_env()
     p = env.current_player
     legal = env.legal_moves(p)
-    enc = StateActionEncoder(use_oracle_others_hand=False)
+    enc = StateActionEncoder(is_partner_visible=False)
     out = enc.encode_all(env, p, legal)[0]
     assert np.all(out["others_hand"] == 0.0)
     assert out["own_hand"].sum() > 0
+
+
+def test_partner_visible_fills_union_of_3_non_self_hands():
+    env = _fresh_env()
+    p = env.current_player
+    legal = env.legal_moves(p)
+    expected = np.zeros(108, dtype=np.uint8)
+    for seat in range(4):
+        if seat == p:
+            continue
+        for c in env.hands[seat]:
+            expected[card_to_id(c)] = 1
+    enc = StateActionEncoder(is_partner_visible=True)
+    out = enc.encode_all(env, p, legal)[0]
+    assert np.array_equal(out["others_hand"].astype(np.uint8), expected)
+
+
+def test_encode_one_matches_encode_all_for_selected_action():
+    env = _fresh_env(seed=3)
+    p = env.current_player
+    legal = env.legal_moves(p)
+    idx = min(2, len(legal) - 1)
+    enc = StateActionEncoder()
+
+    one = enc.encode_one(env, p, legal[idx], legal)
+    all_rows = enc.encode_all(env, p, legal)
+
+    for key, value in one.items():
+        assert np.array_equal(value, all_rows[idx][key]), key
 
 
 def test_own_hand_count_matches_initial_deal():

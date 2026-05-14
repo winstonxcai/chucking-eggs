@@ -62,7 +62,7 @@ fresh_replay: true
 epsilon_latest: 0.02
 epsilon_bot: 0.00
 
-use_oracle_others_hand: true
+is_partner_visible: true
 
 # ── Hard-bot self-play ──
 latest_vs_latest_frac: 0.50

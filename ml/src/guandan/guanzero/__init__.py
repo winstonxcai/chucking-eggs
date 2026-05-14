@@ -6,19 +6,44 @@ the hyperparameter surface and ``train.train`` for the entry point.
 """
 
 from .actor import play_episode
-from .buffer import ReplayBuffer, collate_encoded
-from .config import EpsilonConfig, InferenceConfig, QNetConfig, TrainConfig
+from .buffer import (
+    ReplayBuffer,
+    RoleAwareReplayBuffer,
+    collate_base_encoded,
+    collate_grouped_encoded,
+    collate_role_encoded,
+)
+from .config import (
+    EpsilonConfig,
+    InferenceConfig,
+    QNetConfig,
+    TrainConfig,
+    shared_head_qnet_config,
+)
 from .encoder import (
     CARD_ID_DIM,
-    ENCODE_CHANNEL_KEYS,
-    ENCODE_CHANNEL_SHAPES,
     HISTORY_LEN,
-    StateActionEncoder,
     card_to_id,
     id_to_card,
+)
+from .encoding.base_encoder import (
+    ENCODE_ACTION_KEYS,
+    ENCODE_CHANNEL_KEYS,
+    ENCODE_CHANNEL_SHAPES,
+    ENCODE_STATE_KEYS,
+    StateActionEncoder,
     static_dim,
 )
-from .q_network import GuanZeroQNet, init_seat_nets
+from .encoding.role_encoder import (
+    REL_NEXT_OPP,
+    REL_PARTNER,
+    REL_PREV_OPP,
+    REL_SELF,
+    RoleAwareStateActionEncoder,
+    absolute_player,
+    relative_role,
+)
+from .q_network import GuanZeroQNet, SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
 from .returns import compute_mc_returns
 
 __all__ = [
@@ -27,21 +52,36 @@ __all__ = [
     "QNetConfig",
     "EpsilonConfig",
     "InferenceConfig",
+    "shared_head_qnet_config",
     # encoder
     "StateActionEncoder",
     "ENCODE_CHANNEL_SHAPES",
     "ENCODE_CHANNEL_KEYS",
+    "ENCODE_STATE_KEYS",
+    "ENCODE_ACTION_KEYS",
     "CARD_ID_DIM",
     "HISTORY_LEN",
     "card_to_id",
     "id_to_card",
     "static_dim",
+    "RoleAwareStateActionEncoder",
+    "relative_role",
+    "absolute_player",
+    "REL_SELF",
+    "REL_NEXT_OPP",
+    "REL_PARTNER",
+    "REL_PREV_OPP",
     # network
     "GuanZeroQNet",
+    "SharedHeadQNet",
+    "SharedHeadQNetConfig",
     "init_seat_nets",
     # data
     "ReplayBuffer",
-    "collate_encoded",
+    "RoleAwareReplayBuffer",
+    "collate_base_encoded",
+    "collate_grouped_encoded",
+    "collate_role_encoded",
     "compute_mc_returns",
     # actor
     "play_episode",

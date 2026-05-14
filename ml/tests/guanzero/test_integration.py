@@ -80,7 +80,7 @@ def test_learner_drains_queue_and_updates():
     from guandan.combos import Combo  # noqa: F401 — ensures game engine is importable
     from guandan.game import GuanDanEnv
     from guandan.guanzero.config import QNetConfig, TrainConfig
-    from guandan.guanzero.encoder import StateActionEncoder
+    from guandan.guanzero.encoding.base_encoder import StateActionEncoder
     from guandan.guanzero.learner import learner_loop, publish_weights
     from guandan.guanzero.q_network import init_seat_nets
 

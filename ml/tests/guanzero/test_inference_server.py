@@ -1,15 +1,17 @@
 """Numerical-equivalence tests for the shared GPU inference server.
 
 The server's chosen action index must match the local-CPU `argmax_q` path
-when given the same q-net weights and the same encoded_list. Phase 1 tests
-the simple in-process path (no subprocess fork) so we can validate the
-batching logic and per-request argmax slicing without IPC complexity.
+when given the same q-net weights and the same encoded_list. These tests run
+the shared-memory path in-process so we can validate batching logic and
+per-request argmax slicing without subprocess scheduling noise.
 """
 
 from __future__ import annotations
 
 import multiprocessing as mp
 import threading
+from contextlib import nullcontext
+from types import SimpleNamespace
 from typing import Mapping
 
 import numpy as np
@@ -17,7 +19,7 @@ import pytest
 import torch
 
 from guandan.guanzero.actor import argmax_q, select_legal
-from guandan.guanzero.encoder import StateActionEncoder
+from guandan.guanzero.encoding.base_encoder import StateActionEncoder
 from guandan.guanzero.inference_server import (
     InferenceClient,
     InferenceServer,
@@ -134,7 +136,7 @@ def _shared_argmaxes(
 
 
 def test_shared_mem_cpu_equivalence():
-    """Phase 2: shared-memory wire format must produce identical argmax to local."""
+    """Shared-memory wire format must produce identical argmax to local."""
     torch.manual_seed(0)
     q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     for net in q_nets.values():
@@ -152,7 +154,7 @@ def test_shared_mem_cpu_equivalence():
 
 
 def test_shared_mem_batched_requests_match_serial():
-    """Phase 2 with forced batching across multiple requests."""
+    """Forced batching across multiple requests still matches serial argmax."""
     torch.manual_seed(1)
     q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     for net in q_nets.values():
@@ -212,6 +214,44 @@ def test_shared_mem_actor_timeout_raises():
         release_shared_buffers(bufs, unlink=True)
 
 
+def test_server_shared_weight_reload_respects_local_version():
+    """Shared-memory refresh skips equal versions and loads newer versions."""
+    torch.manual_seed(4)
+    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    ctx = mp.get_context("spawn")
+    bufs, _ = allocate_shared_buffers(num_slots=1, max_actions=8, n_actors=1, ctx=ctx)
+    stop_event = ctx.Event()
+
+    name, param = next(iter(q_nets[0].state_dict().items()))
+    weights_buf = torch.full((param.numel(),), 7.0, dtype=param.dtype)
+    weights_version = SimpleNamespace(value=5)
+    spec = SimpleNamespace(seat=0, name=name, offset=0, numel=param.numel(), shape=param.shape)
+
+    try:
+        server = InferenceServer(
+            q_nets=q_nets,
+            bufs=bufs,
+            stop_event=stop_event,
+            device="cpu",
+            weights_buf=weights_buf,
+            weights_version=weights_version,
+            weights_lock=nullcontext(),
+            weight_specs=[spec],
+        )
+        original = server.q_nets[0].state_dict()[name].clone()
+
+        server._local_version = 5
+        server._maybe_reload_weights()
+        assert torch.equal(server.q_nets[0].state_dict()[name], original)
+
+        weights_version.value = 6
+        server._maybe_reload_weights()
+        assert server._local_version == 6
+        assert torch.all(server.q_nets[0].state_dict()[name] == 7.0)
+    finally:
+        release_shared_buffers(bufs, unlink=True)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
 def test_cuda_tolerance_argmax_matches_local_or_near_tie():
     """On CUDA, FP differences from kernel choice may flip near-ties.
@@ -234,9 +274,17 @@ def test_cuda_tolerance_argmax_matches_local_or_near_tie():
         if e == a:
             continue
         seat, encoded = decisions[i]
-        from guandan.guanzero.buffer import collate_encoded
+        from guandan.guanzero.buffer import collate_base_encoded
         with torch.no_grad():
-            q = q_nets[seat](collate_encoded(encoded, device="cpu")).cpu().numpy()
+            state_batch, action_batch, repeats = collate_base_encoded(
+                [encoded],
+                device="cpu",
+            )
+            q = q_nets[seat].forward_grouped(
+                state_batch,
+                action_batch,
+                repeats,
+            ).cpu().numpy()
         gap = float(q[e] - q[a])
         assert abs(gap) < 1e-5, (
             f"decision {i}: server picked {a} but local picked {e}; "

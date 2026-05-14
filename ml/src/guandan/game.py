@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import random
 
-from .cards import Card, ComboType, Rank, make_deck
+import numpy as np
+
+from .cards import CARD_ID_DIM, Card, ComboType, Rank, card_to_id, make_deck
 from .combos import Combo, generate_all_leads, generate_responses
 
 
@@ -29,6 +31,17 @@ class GuanDanEnv:
             set(deck[81:108]),
         ]
         self.played: list[set[Card]] = [set() for _ in range(4)]
+        # Incrementally-updated card multi-hots (one row per seat). Maintained
+        # alongside hands/played so the encoder hot path doesn't need to iterate
+        # card sets every decision.
+        self.hand_multihot: np.ndarray = np.zeros((4, CARD_ID_DIM), dtype=np.uint8)
+        self.played_multihot: np.ndarray = np.zeros((4, CARD_ID_DIM), dtype=np.uint8)
+        for seat in range(4):
+            for card in self.hands[seat]:
+                self.hand_multihot[seat, card_to_id(card)] = 1
+        # Per-seat histogram of bomb tiers played so far. 9 tiers: BOMB_4 .. BOMB_JOKER
+        # (ComboType values 8..16). Updated in _handle_play.
+        self.bombs_played: np.ndarray = np.zeros((4, 9), dtype=np.uint8)
         self.current_player: int = random.randint(0, 3)
         if seed is not None:
             random.seed()  # restore global randomness
@@ -166,6 +179,13 @@ class GuanDanEnv:
         for card in combo.cards:
             self.hands[player].discard(card)
             self.played[player].add(card)
+            cid = card_to_id(card)
+            self.hand_multihot[player, cid] = 0
+            self.played_multihot[player, cid] = 1
+        # Bomb tier accounting: BOMB_4=8 .. BOMB_JOKER=16 → tier index 0..8.
+        if ComboType.BOMB_4 <= combo.type <= ComboType.BOMB_JOKER:
+            tier_idx = int(combo.type) - int(ComboType.BOMB_4)
+            self.bombs_played[player, tier_idx] += 1
 
         self.current_trick = combo
         self.trick_winner = player

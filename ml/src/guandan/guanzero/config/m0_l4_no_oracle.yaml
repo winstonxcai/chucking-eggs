@@ -1,5 +1,5 @@
 # GuanZero — distributed actor-learner DMC, tuned for Modal L4 + 32 vCPU.
-# Identical to m0_l4_distributed.yaml except use_oracle_others_hand: false —
+# Identical to m0_l4_distributed.yaml except is_partner_visible: false —
 # the agent gets no privileged info about which specific cards each opponent
 # holds. Used for ablating the oracle channel against a fair baseline.
 # Throughput metric is samples/sec (batch-size-independent).
@@ -58,7 +58,7 @@ buffer_min_size: 5000
 epsilon_start: 0.05
 epsilon_final: 0.05
 epsilon_decay_updates: 0
-use_oracle_others_hand: false
+is_partner_visible: false
 
 # L4 throughput
 device: cuda

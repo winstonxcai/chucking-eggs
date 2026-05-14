@@ -97,3 +97,47 @@ def make_deck() -> list[Card]:
 def is_wild(card: Card, level_rank: int) -> bool:
     """Is this card a wild (♥ of level rank)?"""
     return card.rank == level_rank and card.suit == Suit.HEART
+
+
+# ─── Card-id mapping ─────────────────────────────────────
+# Each of the 108 physical cards in the double deck gets a unique id in [0, 108).
+# Used everywhere we need a stable multi-hot encoding of a card set.
+
+CARD_ID_DIM = 108
+
+
+def _card_lookup_index(card: Card) -> int:
+    return int(card.rank) * 8 + int(card.suit) * 2 + int(card.deck)
+
+
+def _raw_card_to_id(card: Card) -> int:
+    if card.rank == Rank.BLACK_JOKER:
+        return 104 + card.deck
+    if card.rank == Rank.RED_JOKER:
+        return 106 + card.deck
+    rank_idx = card.rank - 2
+    return rank_idx * 8 + card.suit * 2 + card.deck
+
+
+_FULL_DECK = make_deck()
+_CARD_ID_LOOKUP: list[int] = [-1] * (18 * 8)
+for _c in _FULL_DECK:
+    _CARD_ID_LOOKUP[_card_lookup_index(_c)] = _raw_card_to_id(_c)
+
+
+def card_to_id(card: Card) -> int:
+    """Stable id in [0, 108) for each physical card.
+
+    Layout:
+        ranks 2..A (13 ranks) × 4 suits × 2 deck copies = 104  → ids 0..103
+        BLACK_JOKER deck 0/1 → 104, 105
+        RED_JOKER   deck 0/1 → 106, 107
+    """
+    return _CARD_ID_LOOKUP[_card_lookup_index(card)]
+
+
+_ID_TO_CARD: list[Card] = sorted(_FULL_DECK, key=card_to_id)
+
+
+def id_to_card(card_id: int) -> Card:
+    return _ID_TO_CARD[card_id]

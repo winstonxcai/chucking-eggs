@@ -37,8 +37,7 @@ from typing import Any, Mapping, Optional, TypedDict
 import numpy as np
 import torch
 
-from .buffer import collate_encoded
-from .encoder import ENCODE_CHANNEL_SHAPES
+from .encoding.base_encoder import ENCODE_CHANNEL_SHAPES
 from .profiler import PhaseProfiler
 from .q_network import GuanZeroQNet
 
@@ -74,15 +73,15 @@ _STATE_FIELDS: tuple[tuple[str, int], ...] = (
     ("played_cards_others",       _channel_elements("played_cards_others")),
     ("remaining_counts_others",   _channel_elements("remaining_counts_others")),
     ("level",                     _channel_elements("level")),
+    ("behavior",                  _channel_elements("behavior")),
     ("history",                   _channel_elements("history")),
 )
 _ACTION_FIELDS: tuple[tuple[str, int], ...] = (
-    ("behavior",                  _channel_elements("behavior")),
     ("candidate_action",          _channel_elements("candidate_action")),
 )
 
-STATE_SIZE  = sum(n for _, n in _STATE_FIELDS)    # 3226
-ACTION_SIZE = sum(n for _, n in _ACTION_FIELDS)   # 117
+STATE_SIZE  = sum(n for _, n in _STATE_FIELDS)    # 3235
+ACTION_SIZE = sum(n for _, n in _ACTION_FIELDS)   # 108
 
 # Cumulative offsets — built once at import for fast packing/unpacking.
 _STATE_OFFSETS: dict[str, tuple[int, int]] = {}
@@ -581,14 +580,14 @@ class InferenceServer:
                     axis=0,
                 )                                                   # [sum_K, 117] uint8
 
-            # H2D + on-GPU state expansion
-            with prof.time("h2d+expand", sync=True):
+            # H2D + tensor views. The q-net grouped path encodes history once
+            # per request and repeats only cheap flat state features.
+            with prof.time("h2d+unpack", sync=True):
                 state   = torch.from_numpy(state_np).to(self.device, non_blocking=True).float()
                 actions = torch.from_numpy(action_np).to(self.device, non_blocking=True).float()
-                # state[i] repeated K_i times → [sum_K, 3226]
                 repeats = torch.tensor(Ks, device=self.device, dtype=torch.long)
-                state_rows = torch.repeat_interleave(state, repeats, dim=0)
-                batch_dict = self._unpack_to_qnet_dict(state_rows, actions)
+                state_dict = self._unpack_state_to_qnet_dict(state)
+                action_dict = self._unpack_action_to_qnet_dict(actions)
 
             # Forward: GPU compute
             with prof.time("forward", sync=True):
@@ -597,7 +596,9 @@ class InferenceServer:
                     if self.use_bf16 else nullcontext()
                 )
                 with ctx:
-                    q = self.q_nets[seat](batch_dict)               # [sum_K]
+                    q = self.q_nets[seat].forward_grouped(
+                        state_dict, action_dict, repeats,
+                    )                                               # [sum_K]
 
             # Per-request argmax (D2H sync per item)
             with prof.time("argmax+d2h"):
@@ -615,14 +616,30 @@ class InferenceServer:
         state_rows: torch.Tensor,                # [N, 3226] float
         actions:    torch.Tensor,                # [N, 117]  float
     ) -> dict[str, torch.Tensor]:
-        """Slice the flat byte tensors into the named-channel dict that
-        GuanZeroQNet.forward consumes. Pure tensor offset arithmetic — no
-        Python iteration over rows."""
+        """Compatibility unpacker for the per-candidate-row q-net API."""
+        out = self._unpack_state_to_qnet_dict(state_rows)
+        out.update(self._unpack_action_to_qnet_dict(actions))
+        return out
+
+    def _unpack_state_to_qnet_dict(
+        self,
+        state_rows: torch.Tensor,                # [N, 3226] float
+    ) -> dict[str, torch.Tensor]:
+        """Slice flat state rows into q-net state channels."""
         N = state_rows.shape[0]
         out: dict[str, torch.Tensor] = {}
         for name, (lo, hi) in _STATE_OFFSETS.items():
             shape = (N,) + ENCODE_CHANNEL_SHAPES[name]
             out[name] = state_rows[:, lo:hi].reshape(*shape)
+        return out
+
+    def _unpack_action_to_qnet_dict(
+        self,
+        actions: torch.Tensor,                   # [N, 117] float
+    ) -> dict[str, torch.Tensor]:
+        """Slice flat action rows into q-net action channels."""
+        N = actions.shape[0]
+        out: dict[str, torch.Tensor] = {}
         for name, (lo, hi) in _ACTION_OFFSETS.items():
             shape = (N,) + ENCODE_CHANNEL_SHAPES[name]
             out[name] = actions[:, lo:hi].reshape(*shape)
@@ -654,6 +671,7 @@ def run_server(
     events,
     stop_event,
     initial_state_dicts: dict[int, dict] | None = None,
+    initial_version: int = 0,
     weights_lock=None,
     weights_buf=None,
     weights_version=None,
@@ -758,6 +776,7 @@ def run_server(
         weights_version=weights_version,
         weight_specs=weight_specs,
     )
+    server._local_version = int(initial_version)
 
     # ── Disk-based weight refresh thread ──
     # Polls weight_dir/latest.txt on a background thread; reloads q-nets when
@@ -768,20 +787,20 @@ def run_server(
         from pathlib import Path
         from .learner import load_latest_weights
         wd = Path(weight_dir) if weight_dir else None
-        last_version = -1
+        last_version = int(initial_version)
         while not stop_event.is_set() and not refresh_stop.is_set():
             try:
                 if wd is not None:
-                    ver, state_dicts = load_latest_weights(wd)
-                    if ver is not None and ver > last_version:
+                    snapshot = load_latest_weights(wd)
+                    if snapshot is not None and snapshot.version > last_version:
                         for p in range(4):
-                            sd = state_dicts[p]
+                            sd = snapshot.state_dicts[p]
                             q_nets[p].load_state_dict(sd)
                             q_nets[p].to(cfg_device).eval()
                         # Bump server's local_version so future responses tag samples.
-                        server._local_version = ver
-                        last_version = ver
-                        logger.info("server reloaded weights from disk: version=%d", ver)
+                        server._local_version = snapshot.version
+                        last_version = snapshot.version
+                        logger.info("server reloaded weights from disk: version=%d", snapshot.version)
             except Exception as e:
                 logger.warning("disk weight refresh failed: %s", e)
             # Sleep with stop check

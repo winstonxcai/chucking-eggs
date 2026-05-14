@@ -7,9 +7,9 @@ import torch
 from guandan.game import GuanDanEnv
 from guandan.guanzero.data.buffer import collate_base_encoded, collate_role_encoded
 from guandan.guanzero.config import QNetConfig
-from guandan.guanzero.encoding.base_encoder import StateActionEncoder
-from guandan.guanzero.encoding.role_encoder import RoleAwareStateActionEncoder
-from guandan.guanzero.q_network import (
+from guandan.guanzero.model.encoding.base_encoder import StateActionEncoder
+from guandan.guanzero.model.encoding.role_encoder import RoleAwareStateActionEncoder
+from guandan.guanzero.model.q_network import (
     GuanZeroQNet,
     SharedHeadQNet,
     SharedHeadQNetConfig,

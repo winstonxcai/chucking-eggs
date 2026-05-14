@@ -8,14 +8,14 @@ import torch
 
 from guandan.guanzero.data.buffer import RoleAwareReplayBuffer
 from guandan.guanzero.config import QNetConfig
-from guandan.guanzero.encoding.role_encoder import ROLE_ENCODE_CHANNEL_SHAPES
+from guandan.guanzero.model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_SHAPES
 from guandan.guanzero.learner import (
     SharedHeadLearner,
     load_latest_weights,
     publish_weights,
     publish_weights_shared,
 )
-from guandan.guanzero.q_network import SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
+from guandan.guanzero.model.q_network import SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
 from guandan.guanzero.worker import maybe_sync_weights_shared
 
 

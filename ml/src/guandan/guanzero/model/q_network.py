@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .config import QNetConfig
+from ..config import QNetConfig
 from .encoder import CARD_ID_DIM, HISTORY_LEN
 from .encoding.base_encoder import static_dim
 

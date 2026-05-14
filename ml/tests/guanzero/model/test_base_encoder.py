@@ -4,8 +4,8 @@ import numpy as np
 
 from guandan.game import GuanDanEnv
 from guandan.cards import CARD_ID_DIM, card_to_id, id_to_card
-from guandan.guanzero.encoder import BEHAVIOR_DIM, HISTORY_LEN, LEVEL_DIM, RANK_BUCKETS
-from guandan.guanzero.encoding.base_encoder import StateActionEncoder, static_dim
+from guandan.guanzero.model.encoder import BEHAVIOR_DIM, HISTORY_LEN, LEVEL_DIM, RANK_BUCKETS
+from guandan.guanzero.model.encoding.base_encoder import StateActionEncoder, static_dim
 
 
 def _fresh_env(seed: int = 0) -> GuanDanEnv:

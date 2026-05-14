@@ -12,9 +12,9 @@ from guandan.game import GuanDanEnv
 from guandan.guanzero.actor import argmax_q, argmax_q_role, play_episode, select_legal
 from guandan.guanzero.data.buffer import collate_base_encoded, collate_role_encoded
 from guandan.guanzero.config import QNetConfig
-from guandan.guanzero.encoding.base_encoder import StateActionEncoder
-from guandan.guanzero.encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
-from guandan.guanzero.q_network import SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
+from guandan.guanzero.model.encoding.base_encoder import StateActionEncoder
+from guandan.guanzero.model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
+from guandan.guanzero.model.q_network import SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
 from guandan.guanzero.data.returns import TrainSample
 
 

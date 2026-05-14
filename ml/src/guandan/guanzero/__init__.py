@@ -20,13 +20,13 @@ from .config import (
     TrainConfig,
     shared_head_qnet_config,
 )
-from .encoder import (
+from .model.encoder import (
     CARD_ID_DIM,
     HISTORY_LEN,
     card_to_id,
     id_to_card,
 )
-from .encoding.base_encoder import (
+from .model.encoding.base_encoder import (
     ENCODE_ACTION_KEYS,
     ENCODE_CHANNEL_KEYS,
     ENCODE_CHANNEL_SHAPES,
@@ -34,7 +34,7 @@ from .encoding.base_encoder import (
     StateActionEncoder,
     static_dim,
 )
-from .encoding.role_encoder import (
+from .model.encoding.role_encoder import (
     REL_NEXT_OPP,
     REL_PARTNER,
     REL_PREV_OPP,
@@ -43,7 +43,7 @@ from .encoding.role_encoder import (
     absolute_player,
     relative_role,
 )
-from .q_network import GuanZeroQNet, SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
+from .model.q_network import GuanZeroQNet, SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
 from .data.returns import compute_mc_returns
 
 __all__ = [

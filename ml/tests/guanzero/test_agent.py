@@ -10,7 +10,7 @@ from guandan.combos import Combo
 from guandan.game import GuanDanEnv
 from guandan.guanzero.agent import GuanZeroBot
 from guandan.guanzero.config import QNetConfig, TrainConfig
-from guandan.guanzero.q_network import init_seat_nets
+from guandan.guanzero.model.q_network import init_seat_nets
 
 
 def _save_dummy_checkpoint(path: Path) -> None:

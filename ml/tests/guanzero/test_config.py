@@ -13,7 +13,7 @@ from guandan.guanzero.config import (
     load_config_from_yaml,
     shared_head_qnet_config,
 )
-from guandan.guanzero.q_network import SharedHeadQNetConfig
+from guandan.guanzero.model.q_network import SharedHeadQNetConfig
 
 
 def test_from_flat_dict_routes_flat_keys_and_ignores_removed_fields():

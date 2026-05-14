@@ -14,11 +14,11 @@ from ..cards import ComboType
 from ..combos import Combo
 from ..game import GuanDanEnv
 from .data.buffer import collate_base_encoded, collate_role_encoded
-from .encoding.base_encoder import StateActionEncoder
-from .encoding.role_encoder import RoleAwareStateActionEncoder
+from .model.encoding.base_encoder import StateActionEncoder
+from .model.encoding.role_encoder import RoleAwareStateActionEncoder
 from .utils.legal_utils import dedup_strategic
 from .utils.profiler import PhaseProfiler, _k_bucket
-from .q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet
+from .model.q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet
 from .data.returns import TrainSample, compute_mc_returns
 
 

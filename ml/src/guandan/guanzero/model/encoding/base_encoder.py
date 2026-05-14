@@ -26,9 +26,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from ...cards import CARD_ID_DIM, ComboType, card_to_id
-from ...combos import Combo
-from ...game import GuanDanEnv
+from ....cards import CARD_ID_DIM, ComboType, card_to_id
+from ....combos import Combo
+from ....game import GuanDanEnv
 from ..encoder import (
     BEHAVIOR_DIM,
     HISTORY_LEN,

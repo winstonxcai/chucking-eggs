@@ -37,9 +37,9 @@ from typing import Any, Mapping, Optional, TypedDict
 import numpy as np
 import torch
 
-from .encoding.base_encoder import ENCODE_CHANNEL_SHAPES
+from .model.encoding.base_encoder import ENCODE_CHANNEL_SHAPES
 from .utils.profiler import PhaseProfiler
-from .q_network import GuanZeroQNet
+from .model.q_network import GuanZeroQNet
 
 
 logger = logging.getLogger("guanzero.inference_server")
@@ -683,7 +683,7 @@ def run_server(
     from pathlib import Path
     import torch
     from .utils.logging_setup import setup_run_logging
-    from .q_network import init_seat_nets
+    from .model.q_network import init_seat_nets
 
     # Server-side log file on the run volume (so we can pull it after a run).
     # Spawn-context children's stdout/stderr don't reliably propagate to

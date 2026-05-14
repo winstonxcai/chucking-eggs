@@ -5,7 +5,7 @@ from pathlib import Path
 
 from guandan.guanzero.config import QNetConfig
 from guandan.guanzero.learner import publish_weights
-from guandan.guanzero.q_network import init_seat_nets
+from guandan.guanzero.model.q_network import init_seat_nets
 from guandan.guanzero.worker import maybe_sync_weights
 
 

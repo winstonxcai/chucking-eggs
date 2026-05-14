@@ -8,8 +8,8 @@ import numpy as np
 
 from guandan.cards import ComboType
 from guandan.guanzero.actor import _phase, _phase_with_out, _trick_role, play_episode
-from guandan.guanzero.encoding.role_encoder import RoleAwareStateActionEncoder
-from guandan.guanzero.q_network import SharedHeadQNet, SharedHeadQNetConfig
+from guandan.guanzero.model.encoding.role_encoder import RoleAwareStateActionEncoder
+from guandan.guanzero.model.q_network import SharedHeadQNet, SharedHeadQNetConfig
 from guandan.guanzero.data.sample_tags import (
     ACTION_CLASS_BOMB,
     ACTION_CLASS_JOKER_BOMB,

@@ -17,12 +17,12 @@ from ..agents.base import Agent
 from ..combos import Combo
 from ..game import GuanDanEnv
 from .data.buffer import collate_base_encoded, collate_role_encoded
-from .checkpoint import migrate_state_dict
+from .model.checkpoint import migrate_state_dict
 from .config import TrainConfig, shared_head_qnet_config, shared_trick_head_qnet_config
-from .encoding.base_encoder import StateActionEncoder
-from .encoding.role_encoder import RoleAwareStateActionEncoder
+from .model.encoding.base_encoder import StateActionEncoder
+from .model.encoding.role_encoder import RoleAwareStateActionEncoder
 from .utils.legal_utils import dedup_strategic
-from .q_network import SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
+from .model.q_network import SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
 
 
 class GuanZeroBot(Agent):

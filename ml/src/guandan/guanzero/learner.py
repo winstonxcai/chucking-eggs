@@ -21,7 +21,7 @@ import torch
 import torch.nn.functional as F
 
 from .data.buffer import ReplayBuffer, RoleAwareReplayBuffer
-from .checkpoint import (
+from .model.checkpoint import (
     WeightSnapshot,
     migrate_state_dict,
     save_checkpoint_base,
@@ -31,7 +31,7 @@ from .checkpoint import (
 from .utils.logging_setup import setup_run_logging
 from .utils.metrics import jsonl_writer
 from .utils.profiler import PhaseProfiler
-from .q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
+from .model.q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
 from .utils.run_layout import RunLayout
 from .data.sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
 

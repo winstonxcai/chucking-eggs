@@ -20,9 +20,9 @@ from typing import Iterable
 
 import numpy as np
 
-from ..cards import CARD_ID_DIM, Card, ComboType, card_to_id, id_to_card
-from ..combos import Combo
-from ..game import GuanDanEnv
+from ...cards import CARD_ID_DIM, Card, ComboType, card_to_id, id_to_card
+from ...combos import Combo
+from ...game import GuanDanEnv
 
 
 # ─── Channel constants ─────────────────────────────────────

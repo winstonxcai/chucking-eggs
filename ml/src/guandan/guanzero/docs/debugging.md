@@ -7,9 +7,9 @@ construct the model, encoder, replay buffer, and learner directly:
 from guandan.guanzero.actor import play_episode
 from guandan.guanzero.data.buffer import ReplayBuffer
 from guandan.guanzero.config import QNetConfig
-from guandan.guanzero.encoder import StateActionEncoder
+from guandan.guanzero.model.encoder import StateActionEncoder
 from guandan.guanzero.learner import Learner
-from guandan.guanzero.q_network import init_seat_nets
+from guandan.guanzero.model.q_network import init_seat_nets
 
 q_nets = init_seat_nets(QNetConfig(hidden_lstm=64, hidden_mlp=128, n_mlp_layers=3))
 encoder = StateActionEncoder()

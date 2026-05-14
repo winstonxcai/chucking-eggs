@@ -433,7 +433,7 @@ def load_config_from_yaml(path: str | Path) -> TrainConfig:
 
 def shared_head_qnet_config(cfg: TrainConfig):
     """Assemble SharedHeadQNetConfig from TrainConfig flat fields."""
-    from .q_network import SharedHeadQNetConfig
+    from .model.q_network import SharedHeadQNetConfig
 
     return SharedHeadQNetConfig(
         role_d_model=cfg.shared_head_role_d_model,
@@ -452,7 +452,7 @@ def shared_trick_head_qnet_config(cfg: TrainConfig):
     The hyperparameter set is identical to shared_heads; only the routing /
     embedding structure differs (no seat_emb, wider player_blocks).
     """
-    from .q_network import SharedTrickHeadQNetConfig
+    from .model.q_network import SharedTrickHeadQNetConfig
 
     return SharedTrickHeadQNetConfig(
         role_d_model=cfg.shared_head_role_d_model,

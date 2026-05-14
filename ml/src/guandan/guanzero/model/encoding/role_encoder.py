@@ -27,9 +27,9 @@ from typing import Literal
 
 import numpy as np
 
-from ...cards import ComboType
-from ...combos import Combo
-from ...game import GuanDanEnv
+from ....cards import ComboType
+from ....combos import Combo
+from ....game import GuanDanEnv
 from ..encoder import (
     BEHAVIOR_DIM,
     CARD_ID_DIM,

@@ -19,7 +19,7 @@ import pytest
 import torch
 
 from guandan.guanzero.actor import argmax_q, select_legal
-from guandan.guanzero.encoding.base_encoder import StateActionEncoder
+from guandan.guanzero.model.encoding.base_encoder import StateActionEncoder
 from guandan.guanzero.inference_server import (
     InferenceClient,
     InferenceServer,
@@ -27,7 +27,7 @@ from guandan.guanzero.inference_server import (
     release_shared_buffers,
 )
 from guandan.guanzero.config import QNetConfig
-from guandan.guanzero.q_network import GuanZeroQNet, init_seat_nets
+from guandan.guanzero.model.q_network import GuanZeroQNet, init_seat_nets
 from guandan.game import GuanDanEnv
 
 

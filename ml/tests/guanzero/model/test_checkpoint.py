@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import torch
 
-from guandan.guanzero.checkpoint import load_checkpoint, save_checkpoint, unwrap_compiled
+from guandan.guanzero.model.checkpoint import load_checkpoint, save_checkpoint, unwrap_compiled
 from guandan.guanzero.config import QNetConfig, TrainConfig
-from guandan.guanzero.q_network import init_seat_nets
+from guandan.guanzero.model.q_network import init_seat_nets
 
 
 def test_checkpoint_roundtrip_saves_config_and_all_seat_weights(tmp_path):

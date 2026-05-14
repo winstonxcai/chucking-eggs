@@ -13,8 +13,8 @@ from guandan.guanzero.data.buffer import (
     collate_grouped_encoded,
     collate_role_encoded,
 )
-from guandan.guanzero.encoding.base_encoder import ENCODE_CHANNEL_SHAPES
-from guandan.guanzero.encoding.role_encoder import (
+from guandan.guanzero.model.encoding.base_encoder import ENCODE_CHANNEL_SHAPES
+from guandan.guanzero.model.encoding.role_encoder import (
     ROLE_ENCODE_CHANNEL_SHAPES,
     ROLE_ENCODE_TRICK_CHANNEL_SHAPES,
 )

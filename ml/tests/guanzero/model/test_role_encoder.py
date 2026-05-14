@@ -5,8 +5,8 @@ import numpy as np
 from guandan.cards import ComboType
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
-from guandan.guanzero.encoding.base_encoder import StateActionEncoder
-from guandan.guanzero.encoding.role_encoder import (
+from guandan.guanzero.model.encoding.base_encoder import StateActionEncoder
+from guandan.guanzero.model.encoding.role_encoder import (
     REL_PARTNER,
     REL_SELF,
     ROLE_ENCODE_CHANNEL_SHAPES,

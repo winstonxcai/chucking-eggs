@@ -30,13 +30,13 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from ..encoding.base_encoder import (
+from ..model.encoding.base_encoder import (
     ENCODE_ACTION_KEYS,
     ENCODE_CHANNEL_KEYS,
     ENCODE_CHANNEL_SHAPES,
     ENCODE_STATE_KEYS,
 )
-from ..encoding.role_encoder import (
+from ..model.encoding.role_encoder import (
     ROLE_ENCODE_ACTION_KEYS,
     ROLE_ENCODE_CHANNEL_KEYS,
     ROLE_ENCODE_CHANNEL_SHAPES,

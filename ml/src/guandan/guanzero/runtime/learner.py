@@ -20,20 +20,20 @@ from typing import Mapping
 import torch
 import torch.nn.functional as F
 
-from .data.buffer import ReplayBuffer, RoleAwareReplayBuffer
-from .model.checkpoint import (
+from ..data.buffer import ReplayBuffer, RoleAwareReplayBuffer
+from ..model.checkpoint import (
     WeightSnapshot,
     migrate_state_dict,
     save_checkpoint_base,
     save_checkpoint_shared,
     unwrap_compiled,
 )
-from .utils.logging_setup import setup_run_logging
-from .utils.metrics import jsonl_writer
-from .utils.profiler import PhaseProfiler
-from .model.q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
-from .utils.run_layout import RunLayout
-from .data.sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
+from ..utils.logging_setup import setup_run_logging
+from ..utils.metrics import jsonl_writer
+from ..utils.profiler import PhaseProfiler
+from ..model.q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
+from ..utils.run_layout import RunLayout
+from ..data.sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
 
 
 PHASE_KEY_PREFIXES = (
@@ -547,7 +547,7 @@ def learner_loop(
     """
     # Lazy import here — this function runs in a spawned child process where
     # the full guanzero package is re-imported from scratch.
-    from .config import TrainConfig
+    from ..config import TrainConfig
 
     cfg = TrainConfig.from_flat_dict(cfg_dict)
     if cfg.model_type in ("shared_heads", "shared_trick_heads"):
@@ -825,7 +825,7 @@ def _learner_loop_shared(
     class, encoder schema, and replay buffer mode are dispatched on
     ``cfg.model_type``.
     """
-    from .config import shared_head_qnet_config, shared_trick_head_qnet_config
+    from ..config import shared_head_qnet_config, shared_trick_head_qnet_config
 
     trick_path = cfg.model_type == "shared_trick_heads"
 

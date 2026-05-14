@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import torch
 
-from guandan.guanzero.actor import play_episode
+from guandan.guanzero.runtime.actor import play_episode
 from guandan.guanzero.model.encoding.role_encoder import RoleAwareStateActionEncoder
 from guandan.guanzero.utils.profiler import PhaseProfiler
 from guandan.guanzero.model.q_network import SharedHeadQNet, SharedHeadQNetConfig

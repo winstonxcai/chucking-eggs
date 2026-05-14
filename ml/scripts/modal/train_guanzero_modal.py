@@ -1,6 +1,7 @@
 """Modal launcher for GuanZero persistent actor-learner DMC.
 
-Drives the distributed orchestrator (`guandan.guanzero.train`) with
+Drives the distributed orchestrator (`guandan.guanzero.runtime.train`, invoked via
+`python -m guandan.guanzero` through __main__.py) with
 a config tuned for Modal GPU workers with 32 vCPUs. The default worker uses
 an L4 GPU; override `config_path`, `n_actors`, and `updates` for other shapes.
 
@@ -79,7 +80,7 @@ def train_remote(
     run_dir = f"{RUN_VOL}/guanzero/{run_name}"
 
     cmd = [
-        "python", "-m", "guandan.guanzero.train",
+        "python", "-m", "guandan.guanzero",
         "--config",  config_path,
         "--updates", str(updates),
         "--device",  device,

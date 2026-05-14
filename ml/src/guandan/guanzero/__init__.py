@@ -5,7 +5,7 @@ Behavior Regulating* (arXiv:2402.13582). See ``config.TrainConfig`` for
 the hyperparameter surface and ``train.train`` for the entry point.
 """
 
-from .actor import play_episode
+from .runtime.actor import play_episode
 from .data.buffer import (
     ReplayBuffer,
     RoleAwareReplayBuffer,

@@ -18,9 +18,9 @@ import numpy as np
 import pytest
 import torch
 
-from guandan.guanzero.actor import argmax_q, select_legal
+from guandan.guanzero.runtime.actor import argmax_q, select_legal
 from guandan.guanzero.model.encoding.base_encoder import StateActionEncoder
-from guandan.guanzero.inference_server import (
+from guandan.guanzero.runtime.inference_server import (
     InferenceClient,
     InferenceServer,
     allocate_shared_buffers,
@@ -197,7 +197,7 @@ def test_shared_mem_client_rejects_oversize_K():
 
 def test_shared_mem_actor_timeout_raises():
     """If no server is running, the actor's submit() must time out cleanly."""
-    from guandan.guanzero.inference_server import InferenceTimeoutError
+    from guandan.guanzero.runtime.inference_server import InferenceTimeoutError
     torch.manual_seed(3)
     encoder = StateActionEncoder()
     ctx = mp.get_context("spawn")

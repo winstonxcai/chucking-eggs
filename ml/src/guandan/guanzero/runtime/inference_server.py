@@ -37,9 +37,9 @@ from typing import Any, Mapping, Optional, TypedDict
 import numpy as np
 import torch
 
-from .model.encoding.base_encoder import ENCODE_CHANNEL_SHAPES
-from .utils.profiler import PhaseProfiler
-from .model.q_network import GuanZeroQNet
+from ..model.encoding.base_encoder import ENCODE_CHANNEL_SHAPES
+from ..utils.profiler import PhaseProfiler
+from ..model.q_network import GuanZeroQNet
 
 
 logger = logging.getLogger("guanzero.inference_server")
@@ -682,8 +682,8 @@ def run_server(
     """Top-level shared-mem server entry point. Picklable for spawn."""
     from pathlib import Path
     import torch
-    from .utils.logging_setup import setup_run_logging
-    from .model.q_network import init_seat_nets
+    from ..utils.logging_setup import setup_run_logging
+    from ..model.q_network import init_seat_nets
 
     # Server-side log file on the run volume (so we can pull it after a run).
     # Spawn-context children's stdout/stderr don't reliably propagate to
@@ -700,7 +700,7 @@ def run_server(
     torch.set_num_threads(1)
 
     try:
-        from .config import TrainConfig
+        from ..config import TrainConfig
         cfg             = TrainConfig.from_flat_dict(cfg_dict)
         cfg_device      = cfg.inference.device
         max_requests    = cfg.inference.batch_max_requests

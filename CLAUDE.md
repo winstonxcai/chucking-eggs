@@ -8,8 +8,14 @@ Guan Dan (掼蛋) RL agent — full game engine + paper-spec Deep Monte Carlo tr
 ml/src/guandan/       — Python package (pip-installable via hatch)
   cards.py, combos.py, game.py  — Core game engine
   agents/             — Rule-based agent hierarchy (random, greedy, heuristic, strategic, yaoji, jidan, …)
-  guanzero/           — Active training stack (actor, learner, buffer, encoder, q_network, train)
-ml/scripts/           — eval/ and modal/ subfolders (training entry is `python -m guandan.guanzero.train`)
+  guanzero/           — Active training stack, organized as:
+                          model/   — q_network, encoder, encoding/, checkpoint
+                          data/    — buffer, returns, sample_tags
+                          runtime/ — actor, worker, learner, inference_server, train
+                          utils/   — logging_setup, profiler, schedules, metrics, …
+                          agent.py / config.py — public surface
+                          configs/ — YAML experiment recipes (Phase 5)
+ml/scripts/           — eval/ and modal/ subfolders (training entry is `python -m guandan.guanzero`)
 ml/tests/             — Engine + guanzero pytest tests
 ml/runs/              — Experiment outputs (gitignored)
 ml/data/              — Training data (gitignored)
@@ -22,7 +28,7 @@ docs/                 — Architecture and design docs
 # Common Commands
 
 - Run tests: `uv run pytest`
-- Train (local): `PYTHONPATH=ml/src .venv/bin/python -m guandan.guanzero.train --config <config.yaml>`
+- Train (local): `PYTHONPATH=ml/src .venv/bin/python -m guandan.guanzero --config <config.yaml>`
 - Train (Modal GPU): `modal run --detach ml/scripts/modal/train_guanzero_modal.py`
 - Evaluate checkpoint: `PYTHONPATH=ml/src python ml/scripts/eval/eval_guanzero.py --checkpoint <path>`
 - Head-to-head eval: `PYTHONPATH=ml/src python ml/scripts/eval/bots.py --agent1 <a> --agent2 <b> --games 200`

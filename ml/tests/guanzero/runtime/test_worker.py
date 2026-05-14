@@ -4,9 +4,9 @@ import tempfile
 from pathlib import Path
 
 from guandan.guanzero.config import QNetConfig
-from guandan.guanzero.learner import publish_weights
+from guandan.guanzero.runtime.learner import publish_weights
 from guandan.guanzero.model.q_network import init_seat_nets
-from guandan.guanzero.worker import maybe_sync_weights
+from guandan.guanzero.runtime.worker import maybe_sync_weights
 
 
 def test_maybe_sync_weights_no_op_when_not_newer():

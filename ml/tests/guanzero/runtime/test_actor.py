@@ -9,7 +9,7 @@ from guandan.agents import make_agent
 from guandan.cards import Card, ComboType, Rank, Suit
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
-from guandan.guanzero.actor import argmax_q, argmax_q_role, play_episode, select_legal
+from guandan.guanzero.runtime.actor import argmax_q, argmax_q_role, play_episode, select_legal
 from guandan.guanzero.data.buffer import collate_base_encoded, collate_role_encoded
 from guandan.guanzero.config import QNetConfig
 from guandan.guanzero.model.encoding.base_encoder import StateActionEncoder

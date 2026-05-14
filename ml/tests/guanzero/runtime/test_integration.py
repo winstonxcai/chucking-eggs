@@ -18,9 +18,9 @@ def test_actor_loop_single_episode():
     import multiprocessing as mp
 
     from guandan.guanzero.config import QNetConfig, TrainConfig
-    from guandan.guanzero.learner import publish_weights
+    from guandan.guanzero.runtime.learner import publish_weights
     from guandan.guanzero.model.q_network import init_seat_nets
-    from guandan.guanzero.worker import actor_loop
+    from guandan.guanzero.runtime.worker import actor_loop
 
     cfg = TrainConfig(
         qnet=QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2),
@@ -81,7 +81,7 @@ def test_learner_drains_queue_and_updates():
     from guandan.game import GuanDanEnv
     from guandan.guanzero.config import QNetConfig, TrainConfig
     from guandan.guanzero.model.encoding.base_encoder import StateActionEncoder
-    from guandan.guanzero.learner import learner_loop, publish_weights
+    from guandan.guanzero.runtime.learner import learner_loop, publish_weights
     from guandan.guanzero.model.q_network import init_seat_nets
 
     cfg = TrainConfig(

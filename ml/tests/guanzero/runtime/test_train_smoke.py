@@ -14,7 +14,7 @@ import pytest
 
 from guandan.guanzero.config import EpsilonConfig, QNetConfig, TrainConfig
 from guandan.guanzero.utils.metrics import METRICS_SCHEMA_VERSION
-from guandan.guanzero.train import train
+from guandan.guanzero.runtime.train import train
 
 
 pytestmark = pytest.mark.slow

@@ -16,10 +16,10 @@ import numpy as np
 import torch
 
 from .actor import play_episode
-from .model.encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
-from .model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
-from .utils.profiler import PhaseProfiler
-from .data.sample_tags import (
+from ..model.encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
+from ..model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
+from ..utils.profiler import PhaseProfiler
+from ..data.sample_tags import (
     EPISODE_MODE_SELF_PLAY,
     EPISODE_MODE_VS_CHECKPOINT,
     EPISODE_MODE_VS_HARD_BOT,
@@ -124,11 +124,11 @@ def actor_loop(
     GPU inference server; the actor skips local q-net initialization entirely.
     """
     # Lazy imports — spawned child re-imports the full package from scratch.
-    from .config import TrainConfig
-    from .utils.schedules import epsilon_linear
-    from .model.q_network import SharedHeadQNet
-    from .model.q_network import init_seat_nets
-    from .config import shared_head_qnet_config
+    from ..config import TrainConfig
+    from ..utils.schedules import epsilon_linear
+    from ..model.q_network import SharedHeadQNet
+    from ..model.q_network import init_seat_nets
+    from ..config import shared_head_qnet_config
 
     torch.set_num_threads(1)
 
@@ -151,8 +151,8 @@ def actor_loop(
     inference_client = _build_inference_client(actor_id, inference_args, cfg) if inference_args else None
     if shared_path:
         if trick_path:
-            from .model.q_network import SharedTrickHeadQNet
-            from .config import shared_trick_head_qnet_config
+            from ..model.q_network import SharedTrickHeadQNet
+            from ..config import shared_trick_head_qnet_config
             q_nets = SharedTrickHeadQNet(shared_trick_head_qnet_config(cfg))
         else:
             q_nets = SharedHeadQNet(shared_head_qnet_config(cfg))
@@ -192,12 +192,12 @@ def actor_loop(
     )
     if population_active:
         if trick_path:
-            from .model.checkpoint import load_frozen_trick_qnet
+            from ..model.checkpoint import load_frozen_trick_qnet
             qnet_cfg_for_pool = shared_trick_head_qnet_config(cfg)
             for ckpt_path in cfg.population_pool:
                 frozen_nets.append(load_frozen_trick_qnet(ckpt_path, qnet_cfg_for_pool, device="cpu"))
         else:
-            from .model.checkpoint import load_frozen_shared_qnet
+            from ..model.checkpoint import load_frozen_shared_qnet
             qnet_cfg_for_pool = shared_head_qnet_config(cfg)
             for ckpt_path in cfg.population_pool:
                 frozen_nets.append(load_frozen_shared_qnet(ckpt_path, qnet_cfg_for_pool, device="cpu"))
@@ -221,7 +221,7 @@ def actor_loop(
     pair_names: list[str] = []
     pair_weights: list[float] = []
     if hard_bot_active:
-        from ..agents import make_agent
+        from ...agents import make_agent
         for bot_name in cfg.hard_bot_pool:
             hard_bots_pool.append((bot_name, make_agent(bot_name)))
         hard_bots_by_name = {n: agent for n, agent in hard_bots_pool}

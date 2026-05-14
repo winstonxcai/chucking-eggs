@@ -1,4 +1,4 @@
-from .train import main
+from .runtime.train import main
 
 if __name__ == "__main__":
     main()

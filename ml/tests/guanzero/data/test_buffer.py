@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from guandan.guanzero.buffer import (
+from guandan.guanzero.data.buffer import (
     ReplayBuffer,
     RoleAwareReplayBuffer,
     collate_base_encoded,
@@ -18,7 +18,7 @@ from guandan.guanzero.encoding.role_encoder import (
     ROLE_ENCODE_CHANNEL_SHAPES,
     ROLE_ENCODE_TRICK_CHANNEL_SHAPES,
 )
-from guandan.guanzero.returns import TrainSample
+from guandan.guanzero.data.returns import TrainSample
 
 
 def _sample(player: int, val: float) -> TrainSample:

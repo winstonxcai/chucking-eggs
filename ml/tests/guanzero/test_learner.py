@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from guandan.guanzero.buffer import RoleAwareReplayBuffer
+from guandan.guanzero.data.buffer import RoleAwareReplayBuffer
 from guandan.guanzero.config import QNetConfig
 from guandan.guanzero.encoding.role_encoder import ROLE_ENCODE_CHANNEL_SHAPES
 from guandan.guanzero.learner import (

@@ -20,7 +20,7 @@ from typing import Mapping
 import torch
 import torch.nn.functional as F
 
-from .buffer import ReplayBuffer, RoleAwareReplayBuffer
+from .data.buffer import ReplayBuffer, RoleAwareReplayBuffer
 from .checkpoint import (
     WeightSnapshot,
     migrate_state_dict,
@@ -33,7 +33,7 @@ from .utils.metrics import jsonl_writer
 from .utils.profiler import PhaseProfiler
 from .q_network import GuanZeroQNet, SharedHeadQNet, SharedTrickHeadQNet, init_seat_nets
 from .utils.run_layout import RunLayout
-from .sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
+from .data.sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
 
 
 PHASE_KEY_PREFIXES = (

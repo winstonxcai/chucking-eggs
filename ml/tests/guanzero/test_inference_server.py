@@ -274,7 +274,7 @@ def test_cuda_tolerance_argmax_matches_local_or_near_tie():
         if e == a:
             continue
         seat, encoded = decisions[i]
-        from guandan.guanzero.buffer import collate_base_encoded
+        from guandan.guanzero.data.buffer import collate_base_encoded
         with torch.no_grad():
             state_batch, action_batch, repeats = collate_base_encoded(
                 [encoded],

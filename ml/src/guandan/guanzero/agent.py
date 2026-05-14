@@ -16,7 +16,7 @@ import torch
 from ..agents.base import Agent
 from ..combos import Combo
 from ..game import GuanDanEnv
-from .buffer import collate_base_encoded, collate_role_encoded
+from .data.buffer import collate_base_encoded, collate_role_encoded
 from .checkpoint import migrate_state_dict
 from .config import TrainConfig, shared_head_qnet_config, shared_trick_head_qnet_config
 from .encoding.base_encoder import StateActionEncoder

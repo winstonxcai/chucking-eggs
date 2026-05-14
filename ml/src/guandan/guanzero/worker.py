@@ -19,7 +19,7 @@ from .actor import play_episode
 from .encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from .encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
 from .utils.profiler import PhaseProfiler
-from .sample_tags import (
+from .data.sample_tags import (
     EPISODE_MODE_SELF_PLAY,
     EPISODE_MODE_VS_CHECKPOINT,
     EPISODE_MODE_VS_HARD_BOT,

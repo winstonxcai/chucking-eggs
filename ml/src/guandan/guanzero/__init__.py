@@ -6,7 +6,7 @@ the hyperparameter surface and ``train.train`` for the entry point.
 """
 
 from .actor import play_episode
-from .buffer import (
+from .data.buffer import (
     ReplayBuffer,
     RoleAwareReplayBuffer,
     collate_base_encoded,
@@ -44,7 +44,7 @@ from .encoding.role_encoder import (
     relative_role,
 )
 from .q_network import GuanZeroQNet, SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
-from .returns import compute_mc_returns
+from .data.returns import compute_mc_returns
 
 __all__ = [
     # config

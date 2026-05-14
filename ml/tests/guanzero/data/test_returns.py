@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from guandan.guanzero.returns import (
+from guandan.guanzero.data.returns import (
     TERMINAL_REWARD_SCALE,
     compute_mc_returns,
     normalize_terminal_rewards,

@@ -5,7 +5,7 @@ construct the model, encoder, replay buffer, and learner directly:
 
 ```python
 from guandan.guanzero.actor import play_episode
-from guandan.guanzero.buffer import ReplayBuffer
+from guandan.guanzero.data.buffer import ReplayBuffer
 from guandan.guanzero.config import QNetConfig
 from guandan.guanzero.encoder import StateActionEncoder
 from guandan.guanzero.learner import Learner

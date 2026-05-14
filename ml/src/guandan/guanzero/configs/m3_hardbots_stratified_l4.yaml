@@ -1,18 +1,26 @@
-# Targeted yaoji/jidan endgame coordination replay
-# Branches from guanzero_hardbots_25k @ 45k
+# Stratified-replay continuation, branched from guanzero_hardbots_25k @ 45k.
 #
-# Per-sample bucket tagging replaces the previous per-episode 4-bucket scheme.
-# Sampling buckets use overlapping inclusion rules:
-#   general              -> all samples (uniform)
-#   hard_bot_general     -> samples with bucket >= 1 (any vs-hard-bot)
-#   coordination_endgame -> samples tagged as endgame coord (bucket == 2;
-#                           computed per-sample on yaoji/jidan loss episodes)
+# Pairs experiment (45k→55k) failed: yaoji regressed to 47.6% (below coin-flip).
+# Root cause: mixed-pair distribution shift induced catastrophic forgetting.
+#
+# This run restarts from 45k with a fresh optimizer + fresh replay buffer and
+# introduces stratified replay sampling to oversample hard-bot loss episodes —
+# especially losses to yaoji (the persistent bottleneck at ~55.7% since phase B).
+#
+# Bucket mix at 0.50/0.50 with ~50% latest WR:
+#   ~50% of buffer rows are vs-hard-bot.
+#   Of those: ~50% are yaoji episodes (yaoji=0.45 of hard-bot sampling).
+#   → ~22% of buffer rows are yaoji episodes total.
+#   Stratified replay oversamples losses: hard_bot_loss (20%) +
+#   yaoji_endgame_coordination_loss (10%) together are 30% of each minibatch
+#   but represent a smaller share of buffer rows — roughly 2-3× oversampling
+#   of loss situations vs uniform.
 #
 # Launch:
 #   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
-#     --config-path /root/ml/src/guandan/guanzero/config/m3_coord_endgame_l4.yaml \
+#     --config-path /root/ml/src/guandan/guanzero/configs/m3_hardbots_stratified_l4.yaml \
 #     --updates 50000 \
-#     --run-name guanzero_coord_endgame \
+#     --run-name guanzero_hardbots_stratified \
 #     --resume /runs/guanzero/guanzero_hardbots_25k/checkpoints/update_00045000.pt \
 #     --seed 0
 
@@ -64,10 +72,9 @@ epsilon_bot: 0.00
 
 is_partner_visible: true
 
-# ── Hard-bot self-play ──
+# ── Hard-bot self-play, yaoji-heavy ──
 latest_vs_latest_frac: 0.50
 latest_vs_hard_bot_frac: 0.50
-latest_odd_probability: 0.60
 
 hard_bot_pool:
   - strategic
@@ -75,15 +82,16 @@ hard_bot_pool:
   - jidan
 
 hard_bot_sampling:
-  strategic: 0.10
-  yaoji: 0.50
+  strategic: 0.15
+  yaoji: 0.45
   jidan: 0.40
 
-# ── Stratified replay mix (overlapping inclusion rules) ──
+# ── Stratified replay mix ──
 replay_mix:
-  general: 0.65
+  general: 0.55
   hard_bot_general: 0.15
-  coordination_endgame: 0.20
+  hard_bot_loss: 0.20
+  yaoji_endgame_coordination_loss: 0.10
 
 device: cuda
 use_bf16_learner: true

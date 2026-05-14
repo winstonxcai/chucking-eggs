@@ -103,7 +103,7 @@ def main(
     updates: int = 1000,
     run_name: str = "guanzero_l4_bench",
     seed: int = 0,
-    config_path: str = "/root/ml/src/guandan/guanzero/config/m0_l4_distributed.yaml",
+    config_path: str = "/root/ml/src/guandan/guanzero/configs/m0_l4_distributed.yaml",
     n_actors: int | None = None,
     device: str = "cuda",
     profile: bool = False,

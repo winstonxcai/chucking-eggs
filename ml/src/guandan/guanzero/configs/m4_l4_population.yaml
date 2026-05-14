@@ -8,7 +8,7 @@
 #
 # Launch:
 #   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
-#     --config-path /root/ml/src/guandan/guanzero/config/m4_l4_population.yaml \
+#     --config-path /root/ml/src/guandan/guanzero/configs/m4_l4_population.yaml \
 #     --updates 30000 \
 #     --run-name guanzero_m4_population_30k \
 #     --resume /runs/guanzero/guanzero_m3_10k_no_server/checkpoints/update_00020000.pt \

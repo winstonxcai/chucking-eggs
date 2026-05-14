@@ -6,7 +6,7 @@
 #
 # Launch (from scratch, 20k):
 #   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
-#     --config-path /root/ml/src/guandan/guanzero/config/m5_clean_baseline_l4.yaml \
+#     --config-path /root/ml/src/guandan/guanzero/configs/m5_clean_baseline_l4.yaml \
 #     --updates 20000 --run-name guanzero_v5_baseline_20k --seed 0
 
 n_actors: 32

@@ -16,7 +16,7 @@
 #
 # Launch:
 #   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
-#     --config-path /root/ml/src/guandan/guanzero/config/m3_hardbots_pairs_l4.yaml \
+#     --config-path /root/ml/src/guandan/guanzero/configs/m3_hardbots_pairs_l4.yaml \
 #     --updates 55000 \
 #     --run-name guanzero_hardbots_pairs \
 #     --resume /runs/guanzero/guanzero_hardbots_25k/checkpoints/update_00045000.pt \

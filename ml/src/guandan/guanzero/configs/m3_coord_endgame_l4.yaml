@@ -1,14 +1,18 @@
-# Pure self-play continuation from guanzero_hardbots_25k @ 45k.
+# Targeted yaoji/jidan endgame coordination replay
+# Branches from guanzero_hardbots_25k @ 45k
 #
-# Diagnostic run: strip all hard-bot complexity and run pure self-play
-# to see if the network can continue improving from the 45k peak without
-# the distribution shift introduced by vs-hard-bot episodes.
+# Per-sample bucket tagging replaces the previous per-episode 4-bucket scheme.
+# Sampling buckets use overlapping inclusion rules:
+#   general              -> all samples (uniform)
+#   hard_bot_general     -> samples with bucket >= 1 (any vs-hard-bot)
+#   coordination_endgame -> samples tagged as endgame coord (bucket == 2;
+#                           computed per-sample on yaoji/jidan loss episodes)
 #
 # Launch:
 #   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
-#     --config-path /root/ml/src/guandan/guanzero/config/m3_selfplay_45k_l4.yaml \
+#     --config-path /root/ml/src/guandan/guanzero/configs/m3_coord_endgame_l4.yaml \
 #     --updates 50000 \
-#     --run-name guanzero_selfplay_45k \
+#     --run-name guanzero_coord_endgame \
 #     --resume /runs/guanzero/guanzero_hardbots_25k/checkpoints/update_00045000.pt \
 #     --seed 0
 
@@ -54,13 +58,32 @@ buffer_min_size: 8192
 fresh_optimizer: true
 fresh_replay: true
 
-epsilon_start: 0.02
-epsilon_final: 0.02
-epsilon_decay_updates: 0
+# ── Epsilon ──
+epsilon_latest: 0.02
+epsilon_bot: 0.00
+
 is_partner_visible: true
 
-latest_vs_latest_frac: 1.0
-latest_vs_hard_bot_frac: 0.0
+# ── Hard-bot self-play ──
+latest_vs_latest_frac: 0.50
+latest_vs_hard_bot_frac: 0.50
+latest_odd_probability: 0.60
+
+hard_bot_pool:
+  - strategic
+  - yaoji
+  - jidan
+
+hard_bot_sampling:
+  strategic: 0.10
+  yaoji: 0.50
+  jidan: 0.40
+
+# ── Stratified replay mix (overlapping inclusion rules) ──
+replay_mix:
+  general: 0.65
+  hard_bot_general: 0.15
+  coordination_endgame: 0.20
 
 device: cuda
 use_bf16_learner: true

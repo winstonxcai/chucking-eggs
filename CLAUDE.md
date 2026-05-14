@@ -47,4 +47,4 @@ docs/                 — Architecture and design docs
 - All agents implement `Agent.act(env, player) -> Combo`.
 - Training outputs go to `ml/runs/<run_name>/` with `config.json`, `metrics.jsonl`, `train.log`.
 - `uv run` is the standard runner; `PYTHONPATH=ml/src` needed when invoking modules directly.
-- Guanzero training is configured via YAML (`ml/src/guandan/guanzero/config/*.yaml`).
+- Guanzero training is configured via YAML (`ml/src/guandan/guanzero/configs/*.yaml`).

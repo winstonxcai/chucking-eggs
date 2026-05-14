@@ -10,7 +10,7 @@
 #
 # Launch:
 #   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
-#     --config-path /root/ml/src/guandan/guanzero/config/m3_trick_head_l4.yaml \
+#     --config-path /root/ml/src/guandan/guanzero/configs/m3_trick_head_l4.yaml \
 #     --updates 10000 \
 #     --run-name guanzero_trick_head_10k \
 #     --seed 0

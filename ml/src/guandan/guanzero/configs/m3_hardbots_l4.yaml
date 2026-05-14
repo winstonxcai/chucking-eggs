@@ -1,19 +1,17 @@
-# Yaoji-focused continuation branched from guanzero_hardbots_25k @ 35k.
+# Hard-bot mixed-opponent self-play branched from M3 20k.
 #
-# 60% vs hard bot, 40% self-play (was 40/60 in m3_hardbots_l4). Hard-bot
-# sampling weighted toward yaoji + jidan (the two opponents where DMC
-# stalled around coin-flip): yaoji 40%, jidan 40%, strategic 20%.
-#
-# Sample-mix math: 4·0.40 self-play units + 2·0.60 vs-hard-bot units
-# → 57% self-play / 43% vs-hard-bot in the buffer; of that 43%,
-# yaoji and jidan each get ~17%, strategic ~9%.
+# 60% episodes are pure self-play (all 4 seats use the latest network).
+# 40% episodes pit the latest network on one team against a heuristic bot
+# (uniform over {strategic, yaoji, jidan}) on the opposing team. Hard-bot
+# seats act via Agent.act and skip trajectory recording — only latest-team
+# samples enter the buffer. Buffer mix: ~75% self-play / ~25% vs-hard-bot.
 #
 # Launch:
 #   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
-#     --config-path /root/ml/src/guandan/guanzero/config/m3_hardbots_yaoji_l4.yaml \
-#     --updates 45000 \
+#     --config-path /root/ml/src/guandan/guanzero/configs/m3_hardbots_l4.yaml \
+#     --updates 25000 \
 #     --run-name guanzero_hardbots_25k \
-#     --resume /runs/guanzero/guanzero_hardbots_25k/checkpoints/update_00035000.pt \
+#     --resume /runs/guanzero/guanzero_m3_10k_no_server/checkpoints/update_00020000.pt \
 #     --seed 0
 
 n_actors: 32
@@ -55,24 +53,22 @@ buffer_capacity: 400000
 buffer_capacity_per_player: 100000
 buffer_min_size: 8192
 
-# ── Epsilon (latest only; bots are deterministic Agent.act calls) ──
+# ── Epsilon (latest only; bots are deterministic) ──
 epsilon_start: 0.02
 epsilon_final: 0.02
 epsilon_decay_updates: 0
 epsilon_frozen: 0.00
 is_partner_visible: true
 
-# ── Hard-bot mixed-opponent self-play, yaoji/jidan-focused ──
-latest_vs_latest_frac: 0.40
-latest_vs_hard_bot_frac: 0.60
+# ── Hard-bot mixed-opponent self-play ──
+# 60% self-play / 40% vs hard bot → ~75% / ~25% sample mix in buffer.
+# If signal is partial, escalate to 0.50 / 0.50 (≈67/33 sample mix).
+latest_vs_latest_frac: 0.60
+latest_vs_hard_bot_frac: 0.40
 hard_bot_pool:
   - strategic
   - yaoji
   - jidan
-hard_bot_sampling:
-  strategic: 0.20
-  yaoji: 0.40
-  jidan: 0.40
 
 device: cuda
 use_bf16_learner: true

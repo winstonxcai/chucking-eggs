@@ -1,19 +1,15 @@
-# GuanZero M3 — pure self-play, from scratch, partner-only visibility.
+# GuanZero M4 — pure self-play with improved sampling.
 #
-# Diagnostic baseline for the visibility-rename experiment. The previous full-
-# oracle (use_oracle_others_hand=True) mode was removed; the network now only
-# sees its own hand and its partner's hand. Opponents' hands are zero-filled.
+# Resumes from v3 base (guanzero_trick_head_10k update_00010000).
+# Changes vs v3: K=1 forced moves excluded from trajectory,
+# stratified replay mix (pivotal/coordination/bomb oversampling).
+# No population pool — 100% latest-vs-latest self-play.
 #
-# 10k updates pure self-play, no hard bots, no frozen seats, no resume.
-# epsilon held flat at 0.02. max_replay_ratio 1.5 to allow brief learner runs
-# ahead when actor throughput dips.
-#
-# Launch:
+# v1 launch (10k → 15k):
 #   modal run --detach ml/scripts/modal/train_guanzero_modal.py \
-#     --config-path /root/ml/src/guandan/guanzero/config/m3_partner_10k_l4.yaml \
-#     --updates 10000 \
-#     --run-name guanzero_partner_10k \
-#     --seed 0
+#     --config-path /root/ml/src/guandan/guanzero/configs/m4_selfplay_l4.yaml \
+#     --updates 15000 --run-name guanzero_v4_selfplay \
+#     --resume /runs/guanzero/guanzero_trick_head_10k/checkpoints/update_00010000.pt --seed 0
 
 n_actors: 32
 sync_interval_updates: 500
@@ -26,7 +22,7 @@ checkpoint_every_updates: 2500
 log_every_updates: 10
 updates_per_learner_step: 1
 
-model_type: shared_heads
+model_type: shared_trick_heads
 shared_head_role_d_model: 128
 shared_head_history_hidden: 256
 shared_head_global_hidden: 128
@@ -54,13 +50,20 @@ buffer_capacity: 400000
 buffer_capacity_per_player: 100000
 buffer_min_size: 32768
 
-epsilon_start: 0.10
-epsilon_final: 0.03
-epsilon_decay_updates: 50000
+epsilon_start: 0.02
+epsilon_final: 0.02
+epsilon_decay_updates: 5000
+epsilon_frozen: 0.00
 is_partner_visible: true
 
 latest_vs_latest_frac: 1.0
 latest_vs_hard_bot_frac: 0.0
+
+replay_mix:
+  general: 0.55
+  pivotal_qgap: 0.25
+  partner_active_coordination: 0.15
+  bomb_decision: 0.05
 
 device: cuda
 use_bf16_learner: true

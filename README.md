@@ -1,38 +1,107 @@
 # Guan Dan RL Agent — Development Log
 
-**Guan Dan (掼蛋)** is a 4-player, 2v2 team trick-taking card game played with a 108-card double deck. This project builds a competitive RL agent from scratch — full game engine with correct rules, Deep Monte Carlo training with LSTM Q-network, GNN hand structure encoding, QMIX team coordination, and a playable web app with 12 difficulty tiers calibrated by Glicko-2 ratings.
+**Guan Dan (掼蛋)** is a 4-player, 2v2 team trick-taking card game played with a 108-card double deck. This project builds a competitive RL agent from scratch — full game engine with correct Guan Dan rules, distributed Deep Monte Carlo training (LSTM Q-network, 32 actors + 1 learner), and a playable web app with 13 difficulty tiers calibrated by Glicko-2.
 
-**Current state** (Apr 2, 2026): RL agent is Elo #1 (1786) across 13 bots. Web app supports solo + duo + quad multiplayer with full accounts, Elo ratings, profiles, and leaderboard. Live at [chucking-eggs.fly.dev](https://chucking-eggs.fly.dev). 25 Playwright e2e tests, 90 pytest unit tests.
+**Current state** (May 2026): GuanZero (DMC, 135k+ updates on L4 GPU) is Elo #1 across 13 bots including NJUPT 2020 competition winners. Web app supports solo + duo + quad multiplayer with accounts, Elo ratings, profiles, and leaderboard. Live at [chucking-eggs.fly.dev](https://chucking-eggs.fly.dev).
 
-**Author**: Winston | Tsinghua SIGS
+**Author**: Winston Cai
 
 ## Quick Start
 
 ```bash
+# Install (Python 3.10+, requires uv)
+git clone https://github.com/PoohTheWinnie/chucking-eggs && cd chucking-eggs
+uv sync
+
 # Run tests
-uv run pytest tests/ -v
+uv run pytest ml/tests/
 
-# Smoke train (~4-5h on M1 Pro)
-PYTHONPATH=src python -m guandan.training.train --quick
+# Train locally (CPU, M1 config — ~6h for meaningful results)
+PYTHONPATH=ml/src python -m guandan.guanzero \
+    --config ml/src/guandan/guanzero/configs/m0_m1_distributed.yaml \
+    --updates 10000 --run-name my_run
 
-# Full train (50K episodes)
-PYTHONPATH=src python -m guandan.training.train --episodes 50000
+# Train on Modal L4 GPU (~$2.89/hr)
+modal run --detach ml/scripts/modal/train_guanzero_modal.py \
+    --updates 50000 --run-name my_run
 
-# Evaluate checkpoint
-PYTHONPATH=src python scripts/eval.py --checkpoint <path> --opponent heuristic --games 500
+# Evaluate a checkpoint (paired fixed-deck eval, variance-reduced)
+PYTHONPATH=ml/src python ml/scripts/eval/eval_guanzero.py \
+    --checkpoint ml/runs/my_run/checkpoints/update_00050000.pt \
+    --opponent strategic --games 200
 
-# Ladder eval (all opponents)
-PYTHONPATH=src python scripts/ladder.py --checkpoint <path>
+# Win-rate matrix + Glicko-2 ratings across all rule-based bots
+PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200
 
-# WR matrix + Glicko-2 calibration
-PYTHONPATH=src python scripts/wr_matrix.py --games 200 --agents all
-
-# Web app (local dev)
-cd web && docker compose up
-
-# Modal GPU train
-./scripts/run_e2e.sh --modal
+# Web app (local dev — frontend talks to backend at localhost:8000)
+cd web/backend && uvicorn app.main:app --reload &
+cd web/frontend && npm install && npm run dev
+# Open http://localhost:3000
 ```
+
+## Adding Your Own Bot
+
+Any `Agent` subclass with a single `act(env, player) -> Combo` method works:
+
+```python
+from guandan.agents.base import Agent
+from guandan.game import GuanDanEnv
+from guandan.combos import Combo
+
+class MyBot(Agent):
+    def act(self, env: GuanDanEnv, player: int) -> Combo:
+        moves = env.legal_moves()
+        return moves[0]  # replace with your logic
+```
+
+Register it in `ml/src/guandan/agents/__init__.py`:
+
+```python
+from .my_bot import MyBot
+AGENT_REGISTRY["mybot"] = MyBot
+```
+
+Then use it anywhere:
+
+```bash
+PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --agents mybot,strategic,jidan
+```
+
+Or pass it directly to the training config (`hard_bot_pool: [mybot]`) to train against it.
+
+## GuanZero Architecture
+
+```mermaid
+flowchart LR
+    subgraph Actors["Actor Processes (×32 on L4)"]
+        A0["Actor 0\nself-play / vs hard bot"] 
+        A1["Actor 1"]
+        AN["Actor N"]
+    end
+
+    subgraph Encoding["Per-Move Encoding"]
+        ENC["RoleAwareEncoder\nown hand · partner hand\nopponent counts · history\n+ candidate action"]
+    end
+
+    subgraph Queue["Shared Sample Queue"]
+        Q["mp.Queue[bytes]\nserialized TrainSamples\n~512 samples/batch"]
+    end
+
+    subgraph Learner["Learner Process (GPU)"]
+        BUF["Replay Buffer\n400K samples"]
+        QNET["SharedHeadQNet\nLSTM + 4 trick-position heads\nBF16 on CUDA"]
+        OPT["Adam optimizer\nbatch 4096"]
+    end
+
+    subgraph WeightSync["Weight Sync"]
+        WD["weight_dir/\natomic os.replace\npublish every 200 updates"]
+    end
+
+    A0 & A1 & AN --> ENC --> Q --> BUF --> OPT --> QNET
+    QNET --> WD --> A0 & A1 & AN
+```
+
+**Model:** 4 shared Q-heads (one per trick position: leading / 1st-resp / across / last-resp). LSTM over move history, role-normalized state encoding, partner hand visible during training.
 
 ---
 
@@ -570,6 +639,19 @@ flowchart TB
 #### Methods
 
 Ported 8 NJUPT competition bots using vendor+wrap pattern: original source sits verbatim in `_vendor/{team}/`, thin adapter handles Card/Combo ↔ competition format conversion. This isolates their assumptions from our engine. Fixed bugs: relative imports, de-singleton Strategy pattern, empty if-blocks, missing method forwarding. Discovered and fixed critical lalala bug: `_follow()` passed `pass_num=0` (always) instead of `self._pass_num` (cumulative) — the bot's conservative-play threshold (`pass_num >= 7`) never triggered. Ran full 13-bot round-robin (200 games per matchup = 31,200 games, ~3h) and derived Glicko-2 ratings with 30 convergence passes. Ordered all bots into 12 website difficulty tiers.
+
+**Sources** — [1st NJUPT Guan Dan AI Competition (2020), bot index](http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html)
+
+| Bot | Prize | Author | School | Download |
+|-----|-------|--------|--------|----------|
+| lalala | 1st | Li Jing | SEU | [.rar](http://gameai.njupt.edu.cn/Guandan_machine_codes/一等奖-东南大学-李菁-lalala-人机大赛.rar) |
+| liuzha | 2nd | Yan Hui | SEU | [.rar](http://gameai.njupt.edu.cn/Guandan_machine_codes/二等奖-东南大学-严辉-小子六炸同花顺-人机大赛.rar) |
+| noai | 2nd | Chen Yuguan | Fudan | [.rar](http://gameai.njupt.edu.cn/Guandan_machine_codes/二等奖-复旦大学陈羽观-不会AI怎么办-人机大赛.rar) |
+| jidan | 2nd | Sun Hailong | NUAA | [.rar](http://gameai.njupt.edu.cn/Guandan_machine_codes/二等奖-南航-孙海龙-鸡蛋灌饼-人机大赛.rar) |
+| hulalala | 3rd | Yang Xinyan | SEU | [.rar](http://gameai.njupt.edu.cn/Guandan_machine_codes/三等奖-东南大学-杨欣妍-hulalala-人机大赛.rar) |
+| ez | 3rd | Wu Jun | HYIT | [.rar](http://gameai.njupt.edu.cn/Guandan_machine_codes/三等奖-淮阴工学院-吴俊-ez-人机大赛.rar) |
+| yaoji | 3rd | Zenghui Qian | NUAA | [.rar](http://gameai.njupt.edu.cn/Guandan_machine_codes/三等奖-南航-钱增辉-幺鸡小分队-人机大赛.rar) |
+| wjsd | 3rd | Liang Kai | SAU | [.rar](http://gameai.njupt.edu.cn/Guandan_machine_codes/三等奖-沈航-梁凯-我就是掼蛋-人机大赛.rar) |
 
 #### Results
 

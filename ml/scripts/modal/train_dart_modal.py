@@ -1,0 +1,135 @@
+"""Modal launcher for Dart persistent actor-learner DMC.
+
+Drives the distributed orchestrator (`guandan.dart.runtime.train`, invoked via
+`python -m guandan.dart` through __main__.py) with
+a config tuned for Modal GPU workers with 32 vCPUs. The default worker uses
+an L4 GPU; actor count and all other hyperparameters are controlled by the YAML config.
+
+Sanity smoke (~5 min, ~$0.25):
+    modal run ml/scripts/modal/train_dart_modal.py \\
+        --updates 2000 --run-name dart_l4_sanity
+
+Benchmark (~10 min, ~$0.50) — primary perf-tuning target:
+    modal run ml/scripts/modal/train_dart_modal.py \\
+        --updates 4000 --run-name dart_l4_bench
+
+Streamed stdout shows learner.log; metrics_learner.jsonl on the volume
+carries upd_per_sec, queue_depth, gpu_mem_gb, drained_since_last_log.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import modal
+
+app = modal.App("dart-train")
+vol = modal.Volume.from_name("pvguan-runs", create_if_missing=True)
+hf_cache = modal.Volume.from_name("hf-cache", create_if_missing=True)
+RUN_VOL = "/runs"
+
+_root = Path(__file__).resolve().parent.parent.parent.parent  # repo root
+
+image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("curl", "gcc", "libssl-dev", "pkg-config", "build-essential")
+    .run_commands(
+        "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable",
+    )
+    .pip_install("torch", "numpy", "pyyaml", "tqdm", "maturin==1.7.0")
+    .add_local_dir(str(_root / "ml" / "src"),     remote_path="/root/ml/src", copy=True)
+    .add_local_dir(str(_root / "ml" / "scripts"), remote_path="/root/ml/scripts", copy=True)
+    .run_commands(
+        ". $HOME/.cargo/env && cd /root/ml/src/guandan_rs"
+        " && maturin build --release -i python3"
+        " && pip install target/wheels/*.whl",
+    )
+)
+
+
+@app.function(
+    image=image,
+    gpu="L4",
+    cpu=32,
+    memory=20 * 1024,   # peak observed 16.89 GB; 20 GB leaves ~3 GB headroom
+    timeout=3600 * 10,  # 10-hour cap per CLAUDE.md
+    volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
+    secrets=[modal.Secret.from_name("huggingface-token")],
+)
+def train_remote(
+    updates:     int,
+    run_name:    str,
+    seed:        int,
+    config_path: str,
+    device:      str,
+    profile:     bool = False,
+    resume:      str | None = None,
+) -> str:
+    import os
+    import subprocess
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = "/root/ml/src:" + env.get("PYTHONPATH", "")
+    # Stream learner/train logs to stdout so `modal run` shows live progress.
+    env["DART_STREAM_LOGS"] = "1"
+    # Keep weight publish/sync IO off the network-attached Modal volume.
+    env["DART_WEIGHT_DIR"] = "/tmp/dart_weights"
+    if profile:
+        env["DART_SERVER_PROFILE"] = "1"
+        env["DART_ACTOR_PROFILE"]  = "1"
+        env["DART_LEARNER_PROFILE"] = "1"
+    # Pin BLAS thread pools to 1 — actor processes already set torch.set_num_threads(1)
+    # but numpy/MKL/OpenBLAS are separate and would otherwise contend across vCPUs.
+    env["OMP_NUM_THREADS"] = "1"
+    env["MKL_NUM_THREADS"] = "1"
+    env["OPENBLAS_NUM_THREADS"] = "1"
+    env["NUMEXPR_NUM_THREADS"] = "1"
+
+    run_dir = f"{RUN_VOL}/dart/{run_name}"
+
+    cmd = [
+        "python", "-m", "guandan.dart",
+        "--config",  config_path,
+        "--updates", str(updates),
+        "--device",  device,
+        "--seed",    str(seed),
+        "--run-dir", run_dir,
+    ]
+    if resume:
+        cmd.extend(["--resume", resume])
+
+    print("Running:", " ".join(cmd))
+    subprocess.run(cmd, env=env, check=True)
+    vol.commit()
+    return f"{run_dir}/checkpoints/final.pt"
+
+
+@app.local_entrypoint()
+def main(
+    updates: int = 1000,
+    run_name: str = "dart_l4_bench",
+    seed: int = 0,
+    config_path: str = "/root/ml/src/guandan/dart/configs/m0_l4_distributed.yaml",
+    device: str = "cuda",
+    profile: bool = False,
+    resume: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    if dry_run:
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
+        from guandan.dart.config import load_config_from_yaml
+        cfg = load_config_from_yaml(config_path)
+        print(f"Config OK: model_type={cfg.model_type}, n_actors={cfg.n_actors}, updates={updates}")
+        return
+
+    fn = train_remote.spawn(
+        updates=updates,
+        run_name=run_name,
+        seed=seed,
+        config_path=config_path,
+        device=device,
+        profile=profile,
+        resume=resume,
+    )
+    print(f"Spawned function call id: {fn.object_id}")

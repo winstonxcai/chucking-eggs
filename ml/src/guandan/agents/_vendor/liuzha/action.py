@@ -10,7 +10,6 @@ from .utils import *
 
 
 from random import random
-import logging
 
 ENG2CH = {
     "Single": "单张",
@@ -30,11 +29,6 @@ class Action(object):
     def __init__(self,name):
         self.action = []
         self.act_range = -1
-        LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-        DATE_FORMAT = "%m/%d/%Y %H:%M:%S %p"
-        logging.basicConfig(filename=name + '.log', level=logging.INFO, format=LOG_FORMAT, datefmt=DATE_FORMAT)
-        self.logger = logging.getLogger()
-        self.logger.info("*" * 80)
 
     def Single(self,actionList,curAction,rank_card,handcards,numofplayers,rest_cards,card_val,myPos,greaterPos,pass_num,my_pass_num):
 

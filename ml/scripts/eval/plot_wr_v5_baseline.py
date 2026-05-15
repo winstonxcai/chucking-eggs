@@ -1,8 +1,8 @@
 """Plot M5 baseline WR per opponent from 0 to 135k updates.
 
 0-70k data is hand-curated from LOGBOOK; 72.5k+ is loaded from
-ml/runs/guanzero_v5_baseline_150k/eval/*.json and
-ml/runs/guanzero_v5_baseline_135k/eval/*.json.
+ml/runs/dart_v5_baseline_150k/eval/*.json and
+ml/runs/dart_v5_baseline_135k/eval/*.json.
 """
 
 from __future__ import annotations
@@ -49,8 +49,8 @@ EARLY = {
 }
 
 EVAL_DIRS = [
-    Path("ml/runs/guanzero_v5_baseline_150k/eval"),
-    Path("ml/runs/guanzero_v5_baseline_135k/eval"),
+    Path("ml/runs/dart_v5_baseline_150k/eval"),
+    Path("ml/runs/dart_v5_baseline_135k/eval"),
 ]
 data: dict[int, list[float]] = dict(EARLY)
 for eval_dir in EVAL_DIRS:
@@ -91,6 +91,6 @@ ax.grid(True, alpha=0.3)
 ax.legend(loc="lower right", ncol=2, fontsize=9)
 plt.tight_layout()
 
-out = Path("ml/runs/guanzero_v5_baseline_150k/wr_plot_135k.png")
+out = Path("ml/runs/dart_v5_baseline_150k/wr_plot_135k.png")
 plt.savefig(out, dpi=130)
 print(f"saved {out}")

@@ -1,12 +1,14 @@
-# Guan Dan RL Agent — Development Log
+# DART — Guan Dan RL Agent
 
-**Guan Dan (掼蛋)** is a 4-player, 2v2 team trick-taking card game played with a 108-card double deck. Unlike Go or Chess, the state space explodes in three compounding directions: **108-card double deck** (vs 52 for most card games), **wild cards that shift each round** (the "level card" changes every hand, so suit relationships are non-stationary), and **2v2 team play** where the optimal move for your seat often depends on sacrificing your own position to set up your partner. Standard single-agent RL doesn't handle this cleanly. This project builds a competitive RL agent from scratch — full game engine, distributed Deep Monte Carlo training (32 actors + 1 GPU learner), and a playable web app with calibrated difficulty tiers.
+**DART** (Dynamic Action-Relative Routing for Tricks) is a distributed Deep Monte Carlo RL agent for **Guan Dan (掼蛋)**, a 4-player, 2v2 team trick-taking card game played with a 108-card double deck.
+
+Guan Dan is harder than it looks: **108 cards** (vs 52 for most card games), **wild cards that change every round** (the "level card" shifts which rank is wild each hand, making suit relationships non-stationary), and **2v2 team play** where the optimal move often means sacrificing your own position to set up your partner. Standard single-agent RL doesn't handle this cleanly. DART trains a shared Q-network across 32 parallel actors with trick-position-relative heads — routing each decision by the actor's role in the current trick (leading, 1st responder, across, last) rather than absolute seat.
 
 **Author**: Winston Cai
 
 ## Results
 
-GuanZero (DMC, 135k updates on L4 GPU) vs rule-based bots — 1000-game paired fixed-deck eval:
+DART (DMC, 135k updates on L4 GPU) vs rule-based bots — 1000-game paired fixed-deck eval:
 
 | Opponent | Win Rate | Notes |
 |----------|----------|-------|
@@ -18,11 +20,11 @@ GuanZero (DMC, 135k updates on L4 GPU) vs rule-based bots — 1000-game paired f
 | Greedy | 98.9% ± 0.3% | |
 | Random | 99.6% ± 0.2% | |
 
-Glicko-2 ratings from 5000-game round-robin across all 12 rule-based bots (GuanZero not in this run — partial matchup data puts it above Jidan):
+Glicko-2 ratings from 5000-game round-robin across all 12 rule-based bots (DART not in this run — partial matchup data puts it above Jidan):
 
 | Bot | Glicko-2 | Source |
 |-----|----------|--------|
-| **GuanZero** | **#1** | This project |
+| **DART** | **#1** | This project |
 | Jidan | 1891 | NJUPT 2020 2nd place (NUAA) |
 | Yaoji | 1870 | NJUPT 2020 3rd place (NUAA) |
 | Strategic | 1729 | Hand-written heuristic |
@@ -54,8 +56,8 @@ uv run pytest ml/tests/
 Runs 6 actor processes + 1 learner on CPU. Meaningful results (~50% vs strategic) in ~6h on an M1 Pro.
 
 ```bash
-PYTHONPATH=ml/src python -m guandan.guanzero \
-    --config ml/src/guandan/guanzero/configs/m0_m1_distributed.yaml \
+PYTHONPATH=ml/src python -m guandan.dart \
+    --config ml/src/guandan/dart/configs/m0_m1_distributed.yaml \
     --updates 10000 --run-name my_run
 ```
 
@@ -69,25 +71,25 @@ Outputs go to `ml/runs/my_run/` — `train.log`, `metrics_learner.jsonl`, `check
 
 ```bash
 # Dry-run — validates config without billing
-python ml/scripts/modal/train_guanzero_modal.py --dry-run \
-    --config-path /root/ml/src/guandan/guanzero/configs/m5_clean_baseline_l4.yaml
+python ml/scripts/modal/train_dart_modal.py --dry-run \
+    --config-path /root/ml/src/guandan/dart/configs/m5_clean_baseline_l4.yaml
 
 # Full run (~50k updates, ~2h, ~$6)
-modal run --detach ml/scripts/modal/train_guanzero_modal.py \
+modal run --detach ml/scripts/modal/train_dart_modal.py \
     --updates 50000 --run-name my_run \
-    --config-path /root/ml/src/guandan/guanzero/configs/m5_clean_baseline_l4.yaml
+    --config-path /root/ml/src/guandan/dart/configs/m5_clean_baseline_l4.yaml
 ```
 
 Download the checkpoint when done:
 ```bash
-modal volume get pvguan-runs guanzero/my_run/checkpoints/update_00050000.pt .
+modal volume get pvguan-runs dart/my_run/checkpoints/update_00050000.pt .
 ```
 
 ### Evaluation
 
 ```bash
 # Win rate vs a specific opponent (1000 games, paired fixed-deck)
-PYTHONPATH=ml/src python ml/scripts/eval/eval_guanzero.py \
+PYTHONPATH=ml/src python ml/scripts/eval/eval_dart.py \
     --checkpoint ml/runs/my_run/checkpoints/update_00050000.pt \
     --opponent strategic --games 1000 --out results.json
 
@@ -138,7 +140,7 @@ PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --agents mybot,strategic,j
 
 Or pass it directly to the training config (`hard_bot_pool: [mybot]`) to train against it.
 
-## GuanZero Architecture
+## DART Architecture
 
 ```mermaid
 flowchart LR
@@ -170,5 +172,5 @@ flowchart LR
     QNET --> WD --> A0 & A1 & AN
 ```
 
-**Model:** 4 shared Q-heads (one per trick position: leading / 1st-resp / across / last-resp). LSTM over move history, role-normalized state encoding, partner hand visible during training.
+**DART** (**D**ynamic **A**ction-**R**elative routing for **T**ricks) — 4 shared Q-heads (one per trick position: leading / 1st-resp / across / last-resp). LSTM over move history, role-normalized state encoding, partner hand visible during training.
 

@@ -33,7 +33,8 @@ from _eval_worker import play_n_games
 
 DEFAULT_AGENTS = [
     "random", "greedy", "heuristic", "strategic",
-    "xingdream", "yaoji", "jidan",
+    "xingdream", "lalala", "liuzha", "hulalala",
+    "yaoji", "jidan", "ez", "wjsd",
 ]
 
 MatchupResult = dict[str, Any]

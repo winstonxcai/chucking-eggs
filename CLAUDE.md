@@ -1,6 +1,6 @@
 # Project Overview
 
-Guan Dan (掼蛋) RL agent — full game engine + paper-spec Deep Monte Carlo training (LSTM Q-network, distributed actors + learner, optional shared-memory inference server). See `ml/src/guandan/guanzero/` for the active pipeline.
+Guan Dan (掼蛋) RL agent — full game engine + paper-spec Deep Monte Carlo training (LSTM Q-network, distributed actors + learner, optional shared-memory inference server). See `ml/src/guandan/dart/` for the active pipeline.
 
 # Repo Structure
 
@@ -8,15 +8,15 @@ Guan Dan (掼蛋) RL agent — full game engine + paper-spec Deep Monte Carlo tr
 ml/src/guandan/       — Python package (pip-installable via hatch)
   cards.py, combos.py, game.py  — Core game engine
   agents/             — Rule-based agent hierarchy (random, greedy, heuristic, strategic, yaoji, jidan, …)
-  guanzero/           — Active training stack, organized as:
+  dart/           — Active training stack, organized as:
                           model/   — q_network, encoder, encoding/, checkpoint
                           data/    — buffer, returns, sample_tags
                           runtime/ — actor, worker, learner, inference_server, train
                           utils/   — logging_setup, profiler, schedules, metrics, …
                           agent.py / config.py — public surface
                           configs/ — YAML experiment recipes (Phase 5)
-ml/scripts/           — eval/ and modal/ subfolders (training entry is `python -m guandan.guanzero`)
-ml/tests/             — Engine + guanzero pytest tests
+ml/scripts/           — eval/ and modal/ subfolders (training entry is `python -m guandan.dart`)
+ml/tests/             — Engine + dart pytest tests
 ml/runs/              — Experiment outputs (gitignored)
 ml/data/              — Training data (gitignored)
 ml/checkpoints/       — Model checkpoints (gitignored)
@@ -28,9 +28,9 @@ docs/                 — Architecture and design docs
 # Common Commands
 
 - Run tests: `uv run pytest`
-- Train (local): `PYTHONPATH=ml/src .venv/bin/python -m guandan.guanzero --config <config.yaml>`
-- Train (Modal GPU): `modal run --detach ml/scripts/modal/train_guanzero_modal.py`
-- Evaluate checkpoint: `PYTHONPATH=ml/src python ml/scripts/eval/eval_guanzero.py --checkpoint <path>`
+- Train (local): `PYTHONPATH=ml/src .venv/bin/python -m guandan.dart --config <config.yaml>`
+- Train (Modal GPU): `modal run --detach ml/scripts/modal/train_dart_modal.py`
+- Evaluate checkpoint: `PYTHONPATH=ml/src python ml/scripts/eval/eval_dart.py --checkpoint <path>`
 - Head-to-head eval: `PYTHONPATH=ml/src python ml/scripts/eval/bots.py --agent1 <a> --agent2 <b> --games 200`
 - WR matrix (Glicko-2): `PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200`
 
@@ -47,4 +47,4 @@ docs/                 — Architecture and design docs
 - All agents implement `Agent.act(env, player) -> Combo`.
 - Training outputs go to `ml/runs/<run_name>/` with `config.json`, `metrics.jsonl`, `train.log`.
 - `uv run` is the standard runner; `PYTHONPATH=ml/src` needed when invoking modules directly.
-- Guanzero training is configured via YAML (`ml/src/guandan/guanzero/configs/*.yaml`).
+- Guanzero training is configured via YAML (`ml/src/guandan/dart/configs/*.yaml`).

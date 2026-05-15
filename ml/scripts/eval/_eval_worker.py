@@ -2,7 +2,7 @@
 
 Provides ``play_n_games`` — a single function that runs N games with agent A
 on seats {0, 2} and agent B on seats {1, 3} and returns win/loss counts. Both
-``eval_guanzero.py`` and ``wr_matrix.py`` import from here so the game-loop
+``eval_dart.py`` and ``wr_matrix.py`` import from here so the game-loop
 logic has one canonical implementation.
 """
 

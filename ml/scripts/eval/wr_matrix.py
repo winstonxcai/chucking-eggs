@@ -62,13 +62,18 @@ def run_all_matchups(
     level_rank: Rank,
     n_workers: int,
     checkpoint: str | None = None,
+    preloaded: dict[str, dict[str, MatchupResult]] | None = None,
 ) -> dict[str, dict[str, MatchupResult]]:
-    """Run all directed matchups in round-robin order, returning a nested result dict."""
+    """Run all directed matchups in round-robin order, returning a nested result dict.
+
+    Matchups already present in `preloaded` are skipped.
+    """
+    preloaded = preloaded or {}
     tasks: list[tuple[str, str, int, Rank, str | None]] = [
         (a, b, n_games, level_rank, checkpoint)
         for a in live_names
         for b in live_names
-        if a != b
+        if a != b and b not in preloaded.get(a, {})
     ]
     n_matchups = len(tasks)
     matrix: dict[str, dict[str, MatchupResult]] = {n: {} for n in live_names}
@@ -228,6 +233,10 @@ def main() -> None:
         "--checkpoint", type=str, default=None,
         help="Path to a DART checkpoint .pt file. Adds 'dart' to the agent list.",
     )
+    parser.add_argument(
+        "--load-matrix", type=str, default=None,
+        help="Path to a prior results JSON. Existing matchups are reused; only missing pairs are run.",
+    )
     args = parser.parse_args()
 
     agent_names: list[str] = args.agents.split(",") if args.agents else DEFAULT_AGENTS[:]
@@ -241,13 +250,27 @@ def main() -> None:
             agent_names.append(inj_name)
             injected_only.add(inj_name)
 
+    # Seed matrix from a prior results file; existing pairs won't be re-run.
+    preloaded: dict[str, dict[str, MatchupResult]] = {}
+    if args.load_matrix:
+        prior = json.loads(Path(args.load_matrix).read_text())
+        for a, row in prior["matrix"].items():
+            if a not in agent_names:
+                agent_names.append(a)
+            for b, result in row.items():
+                preloaded.setdefault(a, {})[b] = {**result, "injected": True}
+        print(f"Loaded {args.load_matrix} — {sum(len(v) for v in preloaded.values())} preloaded matchups")
+
     level_rank = Rank.TWO
     live_names = [n for n in agent_names if n not in injected_only]
-    n_matchups = len(live_names) * (len(live_names) - 1)
-    total_games = n_matchups * args.games
+    n_new = sum(
+        1 for a in live_names for b in live_names
+        if a != b and b not in preloaded.get(a, {})
+    )
+    total_games = n_new * args.games
 
     print(
-        f"Round-robin: {len(live_names)} live agents, {n_matchups} matchups, "
+        f"Round-robin: {len(live_names)} live agents, {n_new} new matchups, "
         f"{total_games} total games @ {args.games}/matchup  (workers={args.workers})"
     )
     if injected_only:
@@ -257,9 +280,13 @@ def main() -> None:
     matrix: dict[str, dict[str, MatchupResult]] = {a: {} for a in agent_names}
     for a, row in injected_matrix.items():
         matrix.setdefault(a, {}).update(row)
+    for a, row in preloaded.items():
+        matrix.setdefault(a, {}).update(row)
 
     t_start = time.monotonic()
-    live_matrix = run_all_matchups(live_names, args.games, level_rank, args.workers, args.checkpoint)
+    live_matrix = run_all_matchups(
+        live_names, args.games, level_rank, args.workers, args.checkpoint, preloaded
+    )
     elapsed = time.monotonic() - t_start
 
     for a, row in live_matrix.items():

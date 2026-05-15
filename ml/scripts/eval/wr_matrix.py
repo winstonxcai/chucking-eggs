@@ -47,12 +47,12 @@ def run_matchup(agent_a: Any, agent_b: Any, n_games: int) -> MatchupResult:
 
 
 def _matchup_worker(
-    task: tuple[str, str, int, Rank],
+    task: tuple[str, str, int, Rank, str | None],
 ) -> tuple[str, str, MatchupResult]:
     """Top-level worker for ProcessPoolExecutor; constructs agents in-process."""
-    a_name, b_name, n_games, level_rank = task
-    agent_a = make_agent(a_name, level_rank=level_rank)
-    agent_b = make_agent(b_name, level_rank=level_rank)
+    a_name, b_name, n_games, level_rank, checkpoint = task
+    agent_a = make_agent(a_name, level_rank=level_rank, checkpoint=checkpoint)
+    agent_b = make_agent(b_name, level_rank=level_rank, checkpoint=checkpoint)
     return a_name, b_name, run_matchup(agent_a, agent_b, n_games)
 
 
@@ -61,10 +61,11 @@ def run_all_matchups(
     n_games: int,
     level_rank: Rank,
     n_workers: int,
+    checkpoint: str | None = None,
 ) -> dict[str, dict[str, MatchupResult]]:
     """Run all directed matchups in round-robin order, returning a nested result dict."""
-    tasks: list[tuple[str, str, int, Rank]] = [
-        (a, b, n_games, level_rank)
+    tasks: list[tuple[str, str, int, Rank, str | None]] = [
+        (a, b, n_games, level_rank, checkpoint)
         for a in live_names
         for b in live_names
         if a != b
@@ -223,9 +224,15 @@ def main() -> None:
         "--rating-passes", type=int, default=30,
         help="Glicko-2 convergence passes",
     )
+    parser.add_argument(
+        "--checkpoint", type=str, default=None,
+        help="Path to a DART checkpoint .pt file. Adds 'dart' to the agent list.",
+    )
     args = parser.parse_args()
 
     agent_names: list[str] = args.agents.split(",") if args.agents else DEFAULT_AGENTS[:]
+    if args.checkpoint and "dart" not in agent_names:
+        agent_names.insert(0, "dart")
 
     injected_matrix = parse_inject(args.inject)
     injected_only: set[str] = set()
@@ -252,7 +259,7 @@ def main() -> None:
         matrix.setdefault(a, {}).update(row)
 
     t_start = time.monotonic()
-    live_matrix = run_all_matchups(live_names, args.games, level_rank, args.workers)
+    live_matrix = run_all_matchups(live_names, args.games, level_rank, args.workers, args.checkpoint)
     elapsed = time.monotonic() - t_start
 
     for a, row in live_matrix.items():

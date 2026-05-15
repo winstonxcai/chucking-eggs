@@ -64,7 +64,16 @@ AGENT_REGISTRY: dict[str, type[Agent]] = {
 }
 
 
-def make_agent(name: str, level_rank: int = Rank.TWO, **kwargs) -> Agent:
+def make_agent(
+    name: str,
+    level_rank: int = Rank.TWO,
+    checkpoint: str | None = None,
+) -> Agent:
+    if name == "dart":
+        if checkpoint is None:
+            raise ValueError("make_agent('dart') requires a checkpoint= path")
+        from guandan.dart.agent import DartBot  # lazy: avoids torch import for rule-based runs
+        return DartBot.load(checkpoint)
     cls = AGENT_REGISTRY[name]
     if name == "random":
         return cls()

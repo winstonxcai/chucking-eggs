@@ -36,29 +36,35 @@ from _eval_worker import play_n_games
 
 # ─── Worker (top-level so spawn can pickle it) ───────────────────────────────
 
+# Per-worker-process cache: load the bot once via initializer, then handle many
+# (opponent, seeds) tasks against the same bot. Saves N opponents * spawn cost.
+_BOT = None
 
-def _worker(args: tuple) -> tuple[int, int, int, int]:
-    """Play a slice of games. Returns (wins_even, n_even, wins_odd, n_odd)."""
-    checkpoint, opponent_name, device, even_seeds, odd_seeds = args
 
+def _init_worker(checkpoint: Path, device: str) -> None:
+    global _BOT
     import torch
-    # One thread per worker — let the OS run all workers in parallel without
-    # internal thread contention dragging total throughput down.
     torch.set_num_threads(1)
+    from guandan.guanzero.agent import GuanZeroBot
+    _BOT = GuanZeroBot.load(checkpoint, device=device)
+
+
+def _worker(args: tuple) -> tuple[str, int, int, int, int]:
+    """Play a slice of games against one opponent.
+
+    Returns (opponent_name, wins_even, n_even, wins_odd, n_odd).
+    """
+    opponent_name, even_seeds, odd_seeds = args
 
     from guandan.agents import make_agent
-    from guandan.game import GuanDanEnv
-    from guandan.guanzero.agent import GuanZeroBot
 
-    bot = GuanZeroBot.load(checkpoint, device=device)
     opp = make_agent(opponent_name)
-
     # even seating: bot on {0,2}, opp on {1,3}
-    r_even = play_n_games(bot, opp, len(even_seeds), seeds=even_seeds)
+    r_even = play_n_games(_BOT, opp, len(even_seeds), seeds=even_seeds)
     # odd seating: opp on {0,2}, bot on {1,3} — wins_o counts opp wins so invert
-    r_odd  = play_n_games(opp, bot, len(odd_seeds),  seeds=odd_seeds)
+    r_odd  = play_n_games(opp, _BOT, len(odd_seeds),  seeds=odd_seeds)
     wins_o = r_odd["losses"]  # bot wins = opp losses
-    return r_even["wins"], len(even_seeds), wins_o, len(odd_seeds)
+    return opponent_name, r_even["wins"], len(even_seeds), wins_o, len(odd_seeds)
 
 
 # ─── Driver ──────────────────────────────────────────────────────────────────
@@ -80,12 +86,17 @@ def _split(seq: list, n: int) -> list[list]:
 
 def run_eval(
     checkpoint: Path,
-    opponent_name: str,
+    opponents: list[str],
     n_games: int,
     device: str,
     workers: int,
     seed: int,
-) -> dict:
+) -> dict[str, dict]:
+    """Evaluate `checkpoint` against each opponent in `opponents`.
+
+    Returns {opponent_name: {"even": {...}, "odd": {...}}}. Workers load the
+    model once via initializer and reuse it across all opponents.
+    """
     if n_games % 2 != 0:
         raise ValueError(f"--games must be even for paired fixed-deck eval, got {n_games}")
 
@@ -98,35 +109,43 @@ def run_eval(
     even_chunks = _split(deck_seeds, workers)
     odd_chunks  = _split(deck_seeds, workers)
     tasks = [
-        (checkpoint, opponent_name, device, e, o)
+        (opp, e, o)
+        for opp in opponents
         for e, o in zip(even_chunks, odd_chunks)
     ]
 
-    wins_e = wins_o = 0
-    n_e = n_o = 0
+    agg = {opp: {"we": 0, "ne": 0, "wo": 0, "no": 0} for opp in opponents}
     ctx = mp.get_context("spawn")
-    desc = f"vs {opponent_name} ({n_games} games, {workers} workers)"
-    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+    desc = f"{len(opponents)} opp x {n_games} games ({workers}w)"
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=ctx,
+        initializer=_init_worker,
+        initargs=(checkpoint, device),
+    ) as pool:
         futures = [pool.submit(_worker, t) for t in tasks]
         for f in tqdm(as_completed(futures), total=len(futures), desc=desc, unit="chunk"):
-            we, ne, wo, no = f.result()
-            wins_e += we; n_e += ne
-            wins_o += wo; n_o += no
+            opp, we, ne, wo, no = f.result()
+            agg[opp]["we"] += we; agg[opp]["ne"] += ne
+            agg[opp]["wo"] += wo; agg[opp]["no"] += no
 
-    out: dict = {}
-    if n_e:
-        wr = wins_e / n_e; se = math.sqrt(wr * (1 - wr) / n_e)
-        out["even"] = {"games": n_e, "wins": wins_e, "win_rate": wr, "se": se}
-    if n_o:
-        wr = wins_o / n_o; se = math.sqrt(wr * (1 - wr) / n_o)
-        out["odd"]  = {"games": n_o, "wins": wins_o, "win_rate": wr, "se": se}
-    return out
+    results: dict[str, dict] = {}
+    for opp, a in agg.items():
+        out: dict = {}
+        if a["ne"]:
+            wr = a["we"] / a["ne"]; se = math.sqrt(wr * (1 - wr) / a["ne"])
+            out["even"] = {"games": a["ne"], "wins": a["we"], "win_rate": wr, "se": se}
+        if a["no"]:
+            wr = a["wo"] / a["no"]; se = math.sqrt(wr * (1 - wr) / a["no"])
+            out["odd"]  = {"games": a["no"], "wins": a["wo"], "win_rate": wr, "se": se}
+        results[opp] = out
+    return results
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--checkpoint", required=True, type=Path)
-    p.add_argument("--opponent", default="random",
+    p.add_argument("--opponent", nargs="+", default=["random"],
                    choices=[
                        "random",
                        "greedy",
@@ -135,7 +154,9 @@ def main() -> None:
                        "xingdream",
                        "yaoji",
                        "jidan",
-                   ])
+                   ],
+                   help="One or more opponents. Workers load the model once and "
+                        "play against each opponent in sequence.")
     p.add_argument("--games", type=int, default=200,
                    help="Total games (must be even). n/2 unique decks, each played twice "
                         "— once with GuanZero on (0,2), once on (1,3).")
@@ -149,31 +170,34 @@ def main() -> None:
                    help="Optional path to save structured JSON results.")
     args = p.parse_args()
 
-    result = run_eval(args.checkpoint, args.opponent, args.games, args.device,
-                      args.workers, args.seed)
+    all_results = run_eval(args.checkpoint, args.opponent, args.games, args.device,
+                           args.workers, args.seed)
     print()
-    total_w = total_n = 0
-    for label, r in result.items():
-        print(f"  {args.checkpoint.name}  vs {args.opponent}  ({label}): "
-              f"{r['win_rate']:.1%} ± {r['se']:.1%}  ({r['wins']}/{r['games']})")
-        total_w += r["wins"]; total_n += r["games"]
-    if len(result) > 1:
-        wr = total_w / total_n
-        se = math.sqrt(wr * (1 - wr) / total_n)
-        print(f"  {args.checkpoint.name}  vs {args.opponent}  (combined): "
-              f"{wr:.1%} ± {se:.1%}  ({total_w}/{total_n})")
-
-    if args.out is not None:
-        combined_wr = total_w / total_n if total_n else 0.0
-        combined_se = math.sqrt(combined_wr * (1 - combined_wr) / total_n) if total_n else 0.0
-        out_data = {
-            "checkpoint": str(args.checkpoint),
-            "opponent": args.opponent,
+    summary: dict[str, dict] = {}
+    for opp_name, result in all_results.items():
+        total_w = total_n = 0
+        for label, r in result.items():
+            print(f"  {args.checkpoint.name}  vs {opp_name}  ({label}): "
+                  f"{r['win_rate']:.1%} ± {r['se']:.1%}  ({r['wins']}/{r['games']})")
+            total_w += r["wins"]; total_n += r["games"]
+        if len(result) > 1:
+            wr = total_w / total_n
+            se = math.sqrt(wr * (1 - wr) / total_n)
+            print(f"  {args.checkpoint.name}  vs {opp_name}  (combined): "
+                  f"{wr:.1%} ± {se:.1%}  ({total_w}/{total_n})")
+        summary[opp_name] = {
             "n_games": total_n,
             "wins": total_w,
-            "wr": round(combined_wr, 4),
-            "se": round(combined_se, 4),
+            "wr": round(total_w / total_n, 4) if total_n else 0.0,
+            "se": round(math.sqrt((total_w / total_n) * (1 - total_w / total_n) / total_n), 4) if total_n else 0.0,
             **{f"wr_{label}": round(r["win_rate"], 4) for label, r in result.items()},
+        }
+
+    if args.out is not None:
+        out_data = {
+            "checkpoint": str(args.checkpoint),
+            "opponents": args.opponent,
+            "results": summary,
         }
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(out_data, indent=2))

@@ -3898,7 +3898,9 @@ lr=3e-5, epsilon=0.01 flat (run: `guanzero_v5_baseline_75k`).
 Runs: `guanzero_v5_baseline_20k` (0→20k), `guanzero_v5_baseline_70k` (20k→60k),
 `guanzero_v5_baseline_75k` (60k→75k, ongoing). 1000 games × 8 workers per checkpoint.
 
-### Combined WR — M5 baseline 0–67.5k
+### Combined WR — M5 baseline 0–135k
+
+Bolded cells = all-time-high WR per column.
 
 | upd   | random | greedy | heuristic | xingdream | strategic | yaoji | jidan |
 |------:|-------:|-------:|----------:|----------:|----------:|------:|------:|
@@ -3915,7 +3917,7 @@ Runs: `guanzero_v5_baseline_20k` (0→20k), `guanzero_v5_baseline_70k` (20k→60
 | 27.5k | 99.4%  | 98.4%  | 88.9%     | 89.7%     | 65.1%     | 41.2% | 53.2% |
 |   30k | 99.5%  | 97.9%  | 85.0%     | 89.7%     | 62.0%     | 39.4% | 49.8% |
 | 32.5k | 99.6%  | 98.8%  | 89.7%     | 91.6%     | 69.0%     | 42.7% | 50.5% |
-|   35k | 99.3%  | 98.4%  | 90.1%     | 89.4%     | 69.2%     | 46.4% | 52.6% |
+|   35k | 99.3%  | 98.4%  | **90.1%** | 89.4%     | 69.2%     | 46.4% | 52.6% |
 | 37.5k | 99.6%  | 98.9%  | 85.9%     | 89.3%     | 68.5%     | 43.9% | 52.8% |
 |   40k | 99.6%  | 98.4%  | 87.0%     | 89.1%     | 69.8%     | 45.7% | 53.0% |
 | 42.5k | 99.2%  | 98.1%  | 88.8%     | 89.9%     | 66.7%     | 45.7% | 51.1% |
@@ -3927,34 +3929,65 @@ Runs: `guanzero_v5_baseline_20k` (0→20k), `guanzero_v5_baseline_70k` (20k→60
 | 57.5k | 99.2%  | 98.4%  | 87.8%     | 90.5%     | 66.0%     | 43.5% | 52.0% |
 |   60k | 99.6%  | 97.8%  | 84.2%     | 89.0%     | 62.0%     | 40.2% | 48.8% |
 | 62.5k | 99.5%  | 99.0%  | 86.8%     | 91.1%     | 68.1%     | 47.3% | 55.3% |
-|   65k | 99.8%  | 98.6%  | 88.3%     | 91.0%     | 66.3%     | 48.0% | **56.5%** |
-| 67.5k | 99.8%  | 98.7%  | 89.4%     | 91.5%     | 68.7%     | **50.6%** | 54.8% |
-|   70k | 99.5%  | 98.9%  | 87.7%     | **92.7%** | 68.5%     | 46.8% | 55.6% |
+|   65k | 99.8%  | 98.6%  | 88.3%     | 91.0%     | 66.3%     | 48.0% | 56.5% |
+| 67.5k | 99.8%  | 98.7%  | 89.4%     | 91.5%     | 68.7%     | 50.6% | 54.8% |
+|   70k | 99.5%  | 98.9%  | 87.7%     | 92.7%     | 68.5%     | 46.8% | 55.6% |
+| 72.5k | 99.2%  | 99.5%  | 88.9%     | 93.3%     | 68.9%     | 48.1% | 57.7% |
+|   75k | 99.4%  | 98.6%  | 89.5%     | 92.1%     | 71.0%     | 48.8% | 57.9% |
+| 77.5k | 99.8%  | 99.4%  | 87.6%     | 91.4%     | 66.2%     | 44.9% | 56.4% |
+|   80k | 99.7%  | 99.2%  | 88.9%     | 93.4%     | 69.3%     | 49.1% | 54.3% |
+| 82.5k | 99.2%  | 99.0%  | 87.1%     | 91.6%     | 67.4%     | 47.9% | 57.2% |
+|   85k | 99.7%  | 98.7%  | 87.3%     | 93.0%     | 66.7%     | 48.7% | 56.1% |
+| 87.5k | **99.9%** | **99.6%** | 87.8% | 90.5%   | 66.4%     | 47.9% | 56.1% |
+|   90k | 99.4%  | 98.7%  | 86.3%     | 92.0%     | 66.1%     | 46.9% | 59.0% |
+| 92.5k | 99.7%  | 99.0%  | 87.0%     | 91.8%     | 67.3%     | 46.3% | 57.7% |
+|   95k | 99.7%  | 98.3%  | 85.9%     | 90.5%     | 69.7%     | 47.0% | **60.3%** |
+| 97.5k | 99.6%  | 98.7%  | 88.9%     | 93.0%     | 66.4%     | 47.4% | 59.9% |
+|  100k | 99.7%  | 98.7%  | 88.8%     | 91.6%     | 66.5%     | 48.6% | 59.3% |
+|102.5k | 99.6%  | 98.9%  | 88.8%     | 91.7%     | 70.7%     | 49.6% | 59.8% |
+|  105k | 99.9%  | 98.6%  | 89.2%     | **95.4%** | 69.8%     | 49.4% | 58.2% |
+|107.5k | 99.1%  | 98.8%  | 88.8%     | 93.1%     | 68.5%     | 49.2% | 58.3% |
+|  110k | 99.5%  | 99.0%  | 86.7%     | 92.7%     | 69.7%     | 50.1% | 57.5% |
+|112.5k | 99.6%  | 98.7%  | 90.0%     | 92.0%     | 68.0%     | 48.7% | 58.7% |
+|  115k | 99.5%  | 99.0%  | 89.8%     | 92.1%     | 69.2%     | 49.2% | 55.4% |
+|117.5k | 99.8%  | 99.5%  | 89.0%     | 92.3%     | 68.9%     | 46.0% | 59.1% |
+|  120k | 99.6%  | 99.0%  | 90.0%     | 92.8%     | 70.9%     | 49.0% | 59.5% |
+|122.5k | 99.5%  | 99.5%  | 89.5%     | 92.0%     | 69.9%     | 49.6% | 58.4% |
+|  125k | 99.6%  | 99.1%  | 89.3%     | 92.4%     | 68.9%     | **51.8%** | 59.8% |
+| 127.5k | 99.6% | 99.2%  | **90.6%** | 93.6%     | 71.1%     | 49.0% | 58.4% |
+|  130k | 99.1%  | 98.7%  | 88.8%     | 91.4%     | 68.0%     | 48.6% | 59.5% |
+| 132.5k | 99.8% | 99.1%  | 88.7%     | 93.5%     | **71.5%** | 48.9% | 58.3% |
+|  135k | 99.6%  | 98.9%  | 88.3%     | 92.1%     | 68.6%     | 48.4% | 59.4% |
 
-*60k→75k continuation uses lr=3e-5, epsilon=0.01 flat.*
+*60k→135k continuation uses lr=3e-5, epsilon=0.01 flat.*
 
 ### Key observations
 
-**Jidan:** Strongest and most consistent positive trend. Starts at 35.5% (2.5k),
-climbs steadily, reaches **56.5% peak at 65k** — new all-time high. First crossed
-50% at ~25k. The fine-tune LR (60k+) appears to help: 48.8% at 60k → 55.3/56.5/54.8%
-at 62.5k/65k/67.5k. Noisy but clearly above the 50k plateau.
+**Jidan:** Strongest sustained learner. 35.5% (2.5k) → **60.3% peak at 95k**, then
+58–60% band through 135k. Crossed 50% at ~25k, 55% at ~62.5k, 60% at ~95k.
+Slope flat 95k→135k — pure-self-play ceiling reached.
 
-**Yaoji:** High variance throughout (34–51%), never sustainably above 47.4% until
-67.5k where it hits **50.6%** — first time crossing 50% in pure self-play.
-Pattern: periodic spikes followed by regression. Requires curriculum to stabilize.
+**Yaoji:** Slow-but-real improvement. Early band 35–47% (0–60k); broke 50% first at
+67.5k; current peak **51.8% at 125k**. Extension to 135k shows regression (48–49%)
+— the 125k peak may be noise at the ceiling. Clearest candidate for curriculum.
 
-**Strategic:** Noisy band of 59.5–69.8%. No clear trend; plateaued after ~15k.
-Even/odd gap persists (opponent-side asymmetry, not fixed by trick routing).
+**Strategic:** New all-time high **71.5% at 132.5k** (beats prior 71.0% at 75k).
+125k→135k oscillates 68–71.5% — the ceiling is moving but slowly. Still the
+most volatile column; even/odd asymmetry persists.
 
-**Xingdream:** Steady improvement 79.7% → ~91% by 25k, then flat. Ceiling reached early.
+**Xingdream:** **95.4% at 105k** remains the peak; 125k–135k band 91–94%. Near
+absolute ceiling.
 
-**Heuristic:** Similar: 81.3% → 88–90%, flat after 15k.
+**Heuristic:** New all-time high **90.6% at 127.5k** (beats 90.1% at 35k held for
+~90k updates). Still plateaued overall at 85–91%; the new record is marginal.
 
-**Conclusion:** Pure self-play plateaus for strategic/yaoji/heuristic after ~20–25k.
-Jidan is the exception — still trending up at 67.5k, suggesting the low-epsilon
-fine-tune benefits endgame coordination specifically. Recommend curriculum
-(league or hard-bot mix) for strategic and yaoji once the 75k run completes.
+**Random / greedy:** Saturated. Random 99.9% peak at 87.5k, greedy 99.6% at 87.5k.
+
+**Conclusion:** The 125k→135k extension produced a new strategic peak (+0.5pp) and
+broke the heuristic record by 0.5pp, but no movement on jidan or yaoji. Self-play
+is exhausted for the bottom three opponents. Curriculum (league or hard-bot mix)
+is the next lever for
+strategic and a likely accelerator for yaoji.
 
 ---
 
@@ -4030,4 +4063,41 @@ differences are nearly invisible in the total.
 The scorer closure is the only Python touchpoint. Epsilon-greedy, model dispatch,
 `forward_grouped` fast path (state trunk runs once, action head runs k times) —
 all inside the closure. Rust is model-agnostic.
+
+---
+
+## 2026-05-15 — Full 12-bot WR matrix (5000 games/matchup)
+
+Round-robin across all rule-based agents (excluding noai): 132 ordered matchups,
+660K total games, 8 parallel workers. Runtime: 37 min.
+Results saved to `ml/runs/wr_matrix/results_0515_1629.json`.
+
+### Glicko-2 ratings
+
+| Rank | Bot       | Rating | RD |
+|------|-----------|--------|----|
+| 1    | jidan     | 1891   | 42 |
+| 2    | yaoji     | 1870   | 42 |
+| 3    | strategic | 1729   | 38 |
+| 4    | xingdream | 1622   | 37 |
+| 5    | lalala    | 1557   | 36 |
+| 5    | heuristic | 1557   | 36 |
+| 7    | greedy    | 1523   | 36 |
+| 8    | liuzha    | 1321   | 37 |
+| 9    | hulalala  | 1320   | 37 |
+| 10   | random    | 1317   | 37 |
+| 11   | wjsd      | 1250   | 38 |
+| 12   | ez        | 1031   | 46 |
+
+### Key findings
+
+- **jidan ≈ yaoji**: head-to-head 50.8% / 49.9% — effectively dead even. Both
+  comfortably above strategic (~75% WR vs strategic from either seat).
+- **liuzha / hulalala** rate at ~1320, barely above random — not useful as
+  meaningful training benchmarks.
+- **lalala and heuristic** tied at 1557 despite lalala losing 62% head-to-head
+  (seat asymmetry + different matchup profiles produce the same aggregate rating).
+- **ez** is the weakest (0% vs strategic/jidan); **wjsd** underperforms
+  expectations, sitting below random in rating.
+- Target for trained agent remains: ≥85% vs strategic, yaoji, jidan.
 

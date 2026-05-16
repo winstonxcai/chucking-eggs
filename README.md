@@ -71,7 +71,7 @@ Outputs go to `ml/runs/my_run/` — `train.log`, `metrics_learner.jsonl`, `check
 
 ```bash
 # Dry-run — validates config without billing
-python ml/scripts/modal/train_dart_modal.py --dry-run \
+uv run ml/scripts/modal/train_dart_modal.py --dry-run \
     --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml
 
 # Full run (~50k updates, ~8h, ~$20 at ~1.8 upd/s steady-state)

@@ -93,12 +93,12 @@ phase (0→20k) is slower at ~1.4 upd/s.
 
 ```bash
 # Win rate vs a specific opponent (1000 games, paired fixed-deck)
-uv run python ml/scripts/eval/eval_dart.py \
+uv run ml/scripts/eval/eval_dart.py \
     --checkpoint ml/runs/my_run/checkpoints/update_00050000.pt \
     --opponent strategic --games 1000 --out results.json
 
 # Full Glicko-2 leaderboard across all rule-based bots
-uv run python ml/scripts/eval/wr_matrix.py --games 200
+uv run ml/scripts/eval/wr_matrix.py --games 200
 ```
 
 ### Web App (local)
@@ -148,7 +148,7 @@ AGENT_REGISTRY["mybot"] = MyBot
 Then use it anywhere:
 
 ```bash
-uv run python ml/scripts/eval/wr_matrix.py --agents mybot,strategic,jidan
+uv run ml/scripts/eval/wr_matrix.py --agents mybot,strategic,jidan
 ```
 
 Or pass it directly to the training config (`hard_bot_pool: [mybot]`) to train against it.

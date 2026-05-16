@@ -42,22 +42,22 @@ DEFAULT_AGENTS = [
 MatchupResult = dict[str, Any]
 
 
-def run_matchup(agent_a: Any, agent_b: Any, n_games: int, label: str = "") -> MatchupResult:
+def run_matchup(agent_a: Any, agent_b: Any, n_games: int, label: str = "", log_every: int = 0) -> MatchupResult:
     """Run n_games with agent_a on seats {0,2} vs agent_b on seats {1,3}."""
-    result = play_n_games(agent_a, agent_b, n_games, label=label, progress=1000)
+    result = play_n_games(agent_a, agent_b, n_games, label=label, progress=log_every)
     return {**result, "injected": False}
 
 
 def _matchup_worker(
-    task: tuple[str, str, int, Rank, str | None],
+    task: tuple[str, str, int, Rank, str | None, int],
 ) -> tuple[str, str, MatchupResult]:
     """Top-level worker for ProcessPoolExecutor; constructs agents in-process."""
-    a_name, b_name, n_games, level_rank, checkpoint = task
+    a_name, b_name, n_games, level_rank, checkpoint, log_every = task
     label = f"{a_name} vs {b_name}"
     print(f"→ {label}", flush=True)
     agent_a = make_agent(a_name, level_rank=level_rank, checkpoint=checkpoint)
     agent_b = make_agent(b_name, level_rank=level_rank, checkpoint=checkpoint)
-    return a_name, b_name, run_matchup(agent_a, agent_b, n_games, label=label)
+    return a_name, b_name, run_matchup(agent_a, agent_b, n_games, label=label, log_every=log_every)
 
 
 def run_all_matchups(
@@ -67,14 +67,15 @@ def run_all_matchups(
     n_workers: int,
     checkpoint: str | None = None,
     preloaded: dict[str, dict[str, MatchupResult]] | None = None,
+    log_every: int = 0,
 ) -> dict[str, dict[str, MatchupResult]]:
     """Run all directed matchups in round-robin order, returning a nested result dict.
 
     Matchups already present in `preloaded` are skipped.
     """
     preloaded = preloaded or {}
-    tasks: list[tuple[str, str, int, Rank, str | None]] = [
-        (a, b, n_games, level_rank, checkpoint)
+    tasks: list[tuple[str, str, int, Rank, str | None, int]] = [
+        (a, b, n_games, level_rank, checkpoint, log_every)
         for a in live_names
         for b in live_names
         if a != b and b not in preloaded.get(a, {})
@@ -239,6 +240,10 @@ def main() -> None:
         "--load-matrix", type=str, default=None,
         help="Path to a prior results JSON. Existing matchups are reused; only missing pairs are run.",
     )
+    parser.add_argument(
+        "--log-every", type=int, default=0,
+        help="Print per-worker progress every N games within a matchup (0 = off).",
+    )
     args = parser.parse_args()
 
     agent_names: list[str] = args.agents.split(",") if args.agents else DEFAULT_AGENTS[:]
@@ -291,7 +296,7 @@ def main() -> None:
 
     t_start = time.monotonic()
     live_matrix = run_all_matchups(
-        live_names, args.games, level_rank, args.workers, args.checkpoint, preloaded
+        live_names, args.games, level_rank, args.workers, args.checkpoint, preloaded, args.log_every
     )
     elapsed = time.monotonic() - t_start
 

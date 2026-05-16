@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+
+import tqdm
 import multiprocessing
 import sys
 import time
@@ -81,28 +83,26 @@ def run_all_matchups(
     matrix: dict[str, dict[str, MatchupResult]] = {n: {} for n in live_names}
     t0 = time.monotonic()
 
+    bar = tqdm.tqdm(total=n_matchups, unit="matchup", dynamic_ncols=True)
+
     if n_workers == 1:
-        for i, task in enumerate(tasks, 1):
+        for task in tasks:
             a_name, b_name, result = _matchup_worker(task)
             matrix[a_name][b_name] = result
             elapsed = time.monotonic() - t0
-            print(
-                f"  [{i:3d}/{n_matchups}] {a_name:>14} vs {b_name:<14}  "
-                f"WR={result['winrate']:.1%}  ({elapsed:.1f}s)"
-            )
+            bar.set_postfix_str(f"{a_name} vs {b_name} WR={result['winrate']:.1%} ({elapsed:.0f}s)")
+            bar.update(1)
     else:
-        completed = 0
         with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as pool:
             futures = {pool.submit(_matchup_worker, task): task for task in tasks}
             for future in concurrent.futures.as_completed(futures):
                 a_name, b_name, result = future.result()
                 matrix[a_name][b_name] = result
-                completed += 1
                 elapsed = time.monotonic() - t0
-                print(
-                    f"  [{completed:3d}/{n_matchups}] {a_name:>14} vs {b_name:<14}  "
-                    f"WR={result['winrate']:.1%}  (+{elapsed:.0f}s)"
-                )
+                bar.set_postfix_str(f"{a_name} vs {b_name} WR={result['winrate']:.1%} ({elapsed:.0f}s)")
+                bar.update(1)
+
+    bar.close()
 
     return matrix
 

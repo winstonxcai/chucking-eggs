@@ -1,15 +1,12 @@
-# Dart M5 — clean self-play baseline. From scratch, 20k updates.
-# Reverts curriculum interventions: no league pool, no hard-bot mix,
-# no stratified replay. Keeps shared_trick_heads + partner-only.
-# K=1 forced moves KEPT in buffer; capped at 5% per batch via
-# max_forced_k1_replay_frac.
+# Dart — local MPS training (6 CPU actors, MPS learner).
+# Actor-bound. ~50% vs strategic in ~6h on M1 Pro.
 #
-# Launch (from scratch, 20k):
-#   modal run --detach ml/scripts/modal/train_dart_modal.py \
-#     --config-path /root/ml/src/guandan/dart/configs/m5_clean_baseline_l4.yaml \
-#     --updates 20000 --run-name dart_v5_baseline_20k --seed 0
+# Launch:
+#   uv run python -m guandan.dart \
+#     --config ml/src/guandan/dart/configs/dart_mps.yaml \
+#     --updates 10000 --run-name dart_mps_10k
 
-n_actors: 32
+n_actors: 6
 sync_interval_updates: 1000
 sync_jitter_updates: 250
 actor_push_batch_size: 512
@@ -30,7 +27,7 @@ shared_head_trunk_layers: 4
 dropout: 0.0
 
 use_inference_server: false
-inference_device: cuda
+inference_device: mps
 inference_batch_max_requests: 32
 inference_batch_max_action_rows: 4096
 inference_batch_timeout_ms: 5.0
@@ -43,7 +40,7 @@ max_throttle_sleep_s: 0.05
 
 lr: 3.0e-5
 gamma: 1.0
-batch_size: 4096
+batch_size: 2048
 buffer_capacity: 400000
 buffer_capacity_per_player: 100000
 buffer_min_size: 32768
@@ -60,6 +57,6 @@ population_pool: []
 
 max_forced_k1_replay_frac: 0.05
 
-device: cuda
-use_bf16_learner: true
-compile_mode: reduce-overhead
+device: mps
+use_bf16_learner: false
+compile_mode: default

@@ -57,7 +57,7 @@ Runs 6 CPU actor processes + 1 MPS learner. Meaningful results (~50% vs strategi
 
 ```bash
 uv run python -m guandan.dart \
-    --config ml/src/guandan/dart/configs/m0_m1_distributed.yaml \
+    --config ml/src/guandan/dart/configs/dart_mps.yaml \
     --updates 10000 --run-name my_run
 ```
 
@@ -72,12 +72,12 @@ Outputs go to `ml/runs/my_run/` — `train.log`, `metrics_learner.jsonl`, `check
 ```bash
 # Dry-run — validates config without billing
 python ml/scripts/modal/train_dart_modal.py --dry-run \
-    --config-path /root/ml/src/guandan/dart/configs/m5_clean_baseline_l4.yaml
+    --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml
 
 # Full run (~50k updates, ~8h, ~$20 at ~1.8 upd/s steady-state)
 modal run --detach ml/scripts/modal/train_dart_modal.py \
     --updates 50000 --run-name my_run \
-    --config-path /root/ml/src/guandan/dart/configs/m5_clean_baseline_l4.yaml
+    --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml
 ```
 
 Download the checkpoint when done:

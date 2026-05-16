@@ -115,9 +115,9 @@ docker compose up
 Or run services separately:
 
 ```bash
-# Backend (FastAPI + game engine)
+# Backend (FastAPI + game engine) — from repo root
 uv pip install -r web/backend/requirements.txt
-cd web/backend && uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload --app-dir web/backend
 
 # Frontend (Next.js) — in a separate terminal
 cd web/frontend && npm install && npm run dev

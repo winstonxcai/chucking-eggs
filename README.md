@@ -115,9 +115,9 @@ docker compose up
 Or run services separately:
 
 ```bash
-# Backend (FastAPI + game engine)
-cd web/backend && pip install -r requirements.txt
-PYTHONPATH=../../ml/src uvicorn app.main:app --reload
+# Backend (FastAPI + game engine) — from repo root
+uv pip install -r web/backend/requirements.txt
+uv run uvicorn app.main:app --reload --app-dir web/backend
 
 # Frontend (Next.js) — in a separate terminal
 cd web/frontend && npm install && npm run dev

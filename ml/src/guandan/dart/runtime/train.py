@@ -359,13 +359,20 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
     args = p.parse_args()
 
     resume = Path(args.resume) if args.resume else None
+
+    # When resuming without an explicit --run-dir, infer run_dir from the checkpoint
+    # so that metrics_learner.jsonl, train.log, and actor logs all append in place.
+    run_dir = args.run_dir
+    if resume and not run_dir:
+        run_dir = str(resume.resolve().parent.parent)
+
     cfg = load_config_from_cli(
         args.config,
         n_actors=args.n_actors,
         total_updates_target=args.updates,
         device=args.device,
         seed=args.seed,
-        run_dir=args.run_dir,
+        run_dir=run_dir,
     )
     return cfg, resume
 

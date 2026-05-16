@@ -63,7 +63,7 @@ uv run python -m guandan.dart \
 
 Outputs go to `ml/runs/my_run/` — `train.log`, `metrics_learner.jsonl`, `checkpoints/`.
 
-### Training — Modal GPU (L4, ~$2.50/hr)
+### Training — Modal GPU (L4 learner + 32 vCPU actors, ~$2.50/hr)
 
 1. [Create a Modal account](https://modal.com) and install the CLI: `pip install modal && modal setup`
 2. Create a volume for run outputs: `modal volume create pvguan-runs`

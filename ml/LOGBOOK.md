@@ -3938,10 +3938,10 @@ Bolded cells = all-time-high WR per column.
 |   80k | 99.7%  | 99.2%  | 88.9%     | 93.4%     | 69.3%     | 49.1% | 54.3% |
 | 82.5k | 99.2%  | 99.0%  | 87.1%     | 91.6%     | 67.4%     | 47.9% | 57.2% |
 |   85k | 99.7%  | 98.7%  | 87.3%     | 93.0%     | 66.7%     | 48.7% | 56.1% |
-| 87.5k | **99.9%** | **99.6%** | 87.8% | 90.5%   | 66.4%     | 47.9% | 56.1% |
+| 87.5k | **99.9%** | 99.6%  | 87.8%     | 90.5%     | 66.4%     | 47.9% | 56.1% |
 |   90k | 99.4%  | 98.7%  | 86.3%     | 92.0%     | 66.1%     | 46.9% | 59.0% |
 | 92.5k | 99.7%  | 99.0%  | 87.0%     | 91.8%     | 67.3%     | 46.3% | 57.7% |
-|   95k | 99.7%  | 98.3%  | 85.9%     | 90.5%     | 69.7%     | 47.0% | **60.3%** |
+|   95k | 99.7%  | 98.3%  | 85.9%     | 90.5%     | 69.7%     | 47.0% | 60.3% |
 | 97.5k | 99.6%  | 98.7%  | 88.9%     | 93.0%     | 66.4%     | 47.4% | 59.9% |
 |  100k | 99.7%  | 98.7%  | 88.8%     | 91.6%     | 66.5%     | 48.6% | 59.3% |
 |102.5k | 99.6%  | 98.9%  | 88.8%     | 91.7%     | 70.7%     | 49.6% | 59.8% |
@@ -3953,40 +3953,84 @@ Bolded cells = all-time-high WR per column.
 |117.5k | 99.8%  | 99.5%  | 89.0%     | 92.3%     | 68.9%     | 46.0% | 59.1% |
 |  120k | 99.6%  | 99.0%  | 90.0%     | 92.8%     | 70.9%     | 49.0% | 59.5% |
 |122.5k | 99.5%  | 99.5%  | 89.5%     | 92.0%     | 69.9%     | 49.6% | 58.4% |
-|  125k | 99.6%  | 99.1%  | 89.3%     | 92.4%     | 68.9%     | **51.8%** | 59.8% |
-| 127.5k | 99.6% | 99.2%  | **90.6%** | 93.6%     | 71.1%     | 49.0% | 58.4% |
+|  125k | 99.6%  | 99.1%  | 89.3%     | 92.4%     | 68.9%     | 51.8% | 59.8% |
+| 127.5k | 99.6% | 99.2%  | 90.6%     | 93.6%     | 71.1%     | 49.0% | 58.4% |
 |  130k | 99.1%  | 98.7%  | 88.8%     | 91.4%     | 68.0%     | 48.6% | 59.5% |
-| 132.5k | 99.8% | 99.1%  | 88.7%     | 93.5%     | **71.5%** | 48.9% | 58.3% |
+| 132.5k | 99.8% | 99.1%  | 88.7%     | 93.5%     | 71.5%     | 48.9% | 58.3% |
 |  135k | 99.6%  | 98.9%  | 88.3%     | 92.1%     | 68.6%     | 48.4% | 59.4% |
+| 137.5k | 99.7% | 99.1%  | 89.5%     | 92.1%     | 72.4%     | 50.0% | 57.4% |
+|  140k | 99.8%  | 99.0%  | 87.9%     | 92.1%     | 68.9%     | 49.1% | 56.1% |
+| 142.5k | 99.7% | **99.9%** | 88.9% | 92.4%     | 69.9%     | **52.8%** | 58.2% |
+|  145k | 99.5%  | 98.9%  | 89.6%     | 92.8%     | 72.0%     | 49.9% | 57.9% |
+| 147.5k | 99.6% | 99.2%  | 88.3%     | 93.0%     | 70.5%     | 50.9% | 58.7% |
+|  150k | 99.7%  | 99.4%  | 91.2%     | 91.5%     | 69.7%     | 49.9% | 59.9% |
+| 152.5k | 99.7% | 99.3%  | 89.2%     | 92.6%     | 70.4%     | 47.5% | 56.7% |
+|  155k | 99.5%  | 99.4%  | 90.0%     | 92.3%     | **73.7%** | 49.4% | 58.9% |
+| 157.5k | 99.5% | 98.8%  | 88.6%     | 93.6%     | 69.3%     | 49.9% | 58.8% |
+|  160k | 99.8%  | 98.6%  | 88.5%     | 92.2%     | 70.5%     | 51.8% | 59.0% |
+| 162.5k | 99.8% | 98.7%  | 90.9%     | 92.9%     | 70.1%     | 47.5% | **62.7%** |
+|  165k | 99.3%  | 99.4%  | 91.5%     | 93.0%     | 70.7%     | 50.5% | 58.3% |
+| 167.5k | 99.6% | 98.5%  | 89.8%     | 92.9%     | 70.3%     | 52.0% | 60.5% |
+|  170k | 99.8%  | 99.1%  | **92.1%** | 92.0%     | 67.7%     | 49.6% | 58.7% |
+| 172.5k | 99.7% | 98.8%  | 90.4%     | 92.2%     | 69.5%     | 51.4% | 60.6% |
+|  175k | 99.8%  | 98.8%  | 85.0%     | 92.6%     | 67.4%     | 49.1% | 60.3% |
+| 177.5k | 99.7% | 98.6%  | 90.4%     | 92.7%     | 71.8%     | 50.2% | 60.1% |
+|  180k | 99.7%  | 99.1%  | 91.1%     | 93.3%     | 68.3%     | 50.7% | 56.5% |
+| 182.5k | 99.7% | 99.3%  | 89.7%     | 93.6%     | 72.1%     | 52.5% | 59.3% |
+|  185k | 99.5%  | 99.2%  | 89.6%     | 92.5%     | 70.8%     | 51.4% | 60.6% |
+| 187.5k | 99.9% | 99.0%  | 88.6%     | 94.0%     | 72.9%     | 51.2% | 60.9% |
+|  190k | 99.6%  | 99.4%  | 88.9%     | 92.3%     | 71.5%     | 52.1% | 60.2% |
+| 192.5k | 99.6% | 99.0%  | 89.2%     | 92.0%     | 67.6%     | 49.6% | 59.4% |
+|  195k | 99.6%  | 99.3%  | 89.9%     | 92.7%     | 71.9%     | 52.4% | 60.7% |
+| 197.5k | 99.8% | 99.3%  | 91.2%     | 91.1%     | 72.2%     | 50.9% | 60.5% |
+|  200k | 99.8%  | 99.1%  | 88.3%     | 92.3%     | 69.6%     | 51.0% | 62.7% |
 
-*60k→135k continuation uses lr=3e-5, epsilon=0.01 flat.*
+*60k→200k continuation uses lr=3e-5, epsilon=0.01 flat.*
+
+### Training cost (Modal L4, ~$2.50/hr)
+
+| Phase             | Updates | upd/s   | Hours | Cost   |
+|-------------------|--------:|--------:|------:|-------:|
+| 0→20k (cold)      |    20k  | ~1.4    |  ~4.0 |   $10  |
+| 20k→60k           |    40k  | ~2.7    |  ~4.1 |   $10  |
+| 60k→125k (measured) | 65k   | ~1.8    |  10.0 |   $25  |
+| 125k→135k         |    10k  | ~1.8    |  ~1.5 |    $4  |
+| 135k→200k         |    65k  | ~1.8    | ~10.0 |   $25  |
+| **Total**         | **200k**|         | **~30** | **~$75** |
+
+The 20k→60k phase was anomalously fast (~2.7 upd/s) — likely host-CPU lottery; not
+reliably reproducible. Steady-state is ~1.8 upd/s on L4 with the m5 config.
 
 ### Key observations
 
-**Jidan:** Strongest sustained learner. 35.5% (2.5k) → **60.3% peak at 95k**, then
-58–60% band through 135k. Crossed 50% at ~25k, 55% at ~62.5k, 60% at ~95k.
-Slope flat 95k→135k — pure-self-play ceiling reached.
+**Jidan:** Breakthrough. **62.7% peak at 162.5k** (tied at 200k) — first sustained
+break above the 60.3% ceiling that held from 95k→135k. 137.5k onward sits in a
+58–63% band with multiple 60%+ readings. Crossed 50% at ~25k, 55% at ~62.5k,
+60% at ~95k, 62%+ at 162.5k. Still trending — self-play may have headroom.
 
-**Yaoji:** Slow-but-real improvement. Early band 35–47% (0–60k); broke 50% first at
-67.5k; current peak **51.8% at 125k**. Extension to 135k shows regression (48–49%)
-— the 125k peak may be noise at the ceiling. Clearest candidate for curriculum.
+**Yaoji:** New high **52.8% at 142.5k**; 142.5k→200k stays in a 49–53% band with
+several readings ≥52%. Less choppy than the early phase. The ceiling moved
+slightly but the column remains the slowest-improving.
 
-**Strategic:** New all-time high **71.5% at 132.5k** (beats prior 71.0% at 75k).
-125k→135k oscillates 68–71.5% — the ceiling is moving but slowly. Still the
-most volatile column; even/odd asymmetry persists.
+**Strategic:** New all-time high **73.7% at 155k** (beats 71.5% at 132.5k).
+155k→200k oscillates 67–73% — peak moved but variance high. The 60k resume +
+extension to 200k did break the previous plateau.
 
-**Xingdream:** **95.4% at 105k** remains the peak; 125k–135k band 91–94%. Near
+**Xingdream:** **95.4% at 105k** still the peak; 137.5k→200k band 91–94%. Near
 absolute ceiling.
 
-**Heuristic:** New all-time high **90.6% at 127.5k** (beats 90.1% at 35k held for
-~90k updates). Still plateaued overall at 85–91%; the new record is marginal.
+**Heuristic:** New all-time high **92.1% at 170k** (beats 90.6% at 127.5k).
+Multiple 90%+ readings 150k→197.5k indicate a genuine shift upward, not a single
+spike.
 
-**Random / greedy:** Saturated. Random 99.9% peak at 87.5k, greedy 99.6% at 87.5k.
+**Random:** **99.9% at 87.5k** held; tied at 187.5k. **Greedy:** new high
+**99.9% at 142.5k** (beats 99.6% at 87.5k). Both essentially saturated.
 
-**Conclusion:** The 125k→135k extension produced a new strategic peak (+0.5pp) and
-broke the heuristic record by 0.5pp, but no movement on jidan or yaoji. Self-play
-is exhausted for the bottom three opponents. Curriculum (league or hard-bot mix)
-is the next lever for
+**Conclusion:** The 135k→200k extension produced new highs in 5 of 7 columns
+(greedy, heuristic, strategic, yaoji, jidan). The previous "self-play exhausted"
+verdict from 135k was premature — the low-epsilon fine-tune phase has continued
+yielding gains, especially on jidan (+2.4pp) and strategic (+2.2pp). Curriculum
+(league or hard-bot mix) remains the right next lever for
 strategic and a likely accelerator for yaoji.
 
 ---

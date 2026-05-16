@@ -1,8 +1,9 @@
-"""Plot M5 baseline WR per opponent from 0 to 135k updates.
+"""Plot M5 baseline WR per opponent from 0 to 200k updates.
 
 0-70k data is hand-curated from LOGBOOK; 72.5k+ is loaded from
-ml/runs/dart_v5_baseline_150k/eval/*.json and
-ml/runs/dart_v5_baseline_135k/eval/*.json.
+ml/runs/guanzero_v5_baseline_150k/eval/*.json,
+ml/runs/guanzero_v5_baseline_135k/eval/*.json, and
+ml/runs/dart_v5_baseline_200k/eval/*.json.
 """
 
 from __future__ import annotations
@@ -49,8 +50,9 @@ EARLY = {
 }
 
 EVAL_DIRS = [
-    Path("ml/runs/dart_v5_baseline_150k/eval"),
-    Path("ml/runs/dart_v5_baseline_135k/eval"),
+    Path("ml/runs/guanzero_v5_baseline_150k/eval"),
+    Path("ml/runs/guanzero_v5_baseline_135k/eval"),
+    Path("ml/runs/dart_v5_baseline_200k/eval"),
 ]
 data: dict[int, list[float]] = dict(EARLY)
 for eval_dir in EVAL_DIRS:
@@ -79,18 +81,18 @@ for opp in OPPONENTS:
     xs_k = [x / 1000 for x in xs]
     ax.plot(xs_k, ys_per_opp[opp], label=opp, color=colors[opp], linewidth=1.6, marker="o", markersize=3)
 
-for x_res, label in [(20, "20k"), (60, "60k"), (70, "70k")]:
+for x_res, label in [(20, "20k"), (60, "60k"), (70, "70k"), (125, "125k"), (135, "135k")]:
     ax.axvline(x_res, color="black", linestyle=":", linewidth=0.8, alpha=0.5)
     ax.text(x_res, 32, f" {label} resume", fontsize=8, color="black", alpha=0.6)
 ax.set_xlabel("Updates (×1000)")
 ax.set_ylabel("Win rate (%)")
 ax.set_title("M5 baseline — WR per opponent (1000 games / opp / ckpt)")
 ax.set_ylim(30, 101)
-ax.set_xlim(0, 137)
+ax.set_xlim(0, 205)
 ax.grid(True, alpha=0.3)
 ax.legend(loc="lower right", ncol=2, fontsize=9)
 plt.tight_layout()
 
-out = Path("ml/runs/dart_v5_baseline_150k/wr_plot_135k.png")
+out = Path("ml/runs/dart_v5_baseline_200k/wr_plot_200k.png")
 plt.savefig(out, dpi=130)
 print(f"saved {out}")

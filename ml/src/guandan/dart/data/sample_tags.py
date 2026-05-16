@@ -5,9 +5,9 @@ Constants and helpers shared across the actor (which emits tags), the worker
 (which aggregates loss by tag). Kept in a single module to avoid circular
 imports and to keep the bucket boundaries discoverable.
 
-The 13-field tag set is documented in
-``ml/.../dart/docs/`` plan; this module is the single source of truth for
-opponent IDs, episode modes, action-class collapse, and bucket boundaries.
+The 14-field tag set is defined in ``data/buffer.py`` (``_TAG_FIELDS``);
+this module is the single source of truth for opponent IDs, episode modes,
+action-class collapse, and bucket boundaries.
 """
 
 from __future__ import annotations

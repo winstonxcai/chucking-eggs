@@ -52,7 +52,7 @@ image = (
     gpu="L4",
     cpu=32,
     memory=20 * 1024,   # peak observed 16.89 GB; 20 GB leaves ~3 GB headroom
-    timeout=3600 * 10,  # 10-hour cap per CLAUDE.md
+    timeout=3600 * 12,  # 12-hour cap
     volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
     secrets=[modal.Secret.from_name("huggingface-token")],
 )

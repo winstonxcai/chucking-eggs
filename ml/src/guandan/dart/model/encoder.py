@@ -1,7 +1,7 @@
 """Shared encoder utilities for Dart.
 
-This module is the home of code shared between the M0/M1 base encoder
-(``encoding.base_encoder``) and the M3 role-aware encoder
+This module is the home of code shared between the base encoder
+(``encoding.base_encoder``) and the role-aware encoder
 (``encoding.role_encoder``):
 
 - channel constants (``HISTORY_LEN``, ``LEVEL_DIM``, ``RANK_BUCKETS``, ``BEHAVIOR_DIM``)

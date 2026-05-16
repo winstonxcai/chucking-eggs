@@ -1,4 +1,4 @@
-"""Base Dart state-action encoder (M0/M1 paper-original schema).
+"""Base Dart state-action encoder (paper-original schema).
 
 Outputs a dict of channels keyed by ``ENCODE_CHANNEL_KEYS``. Paper-faithful
 layout: behavior flags live in the state branch; the action branch is just the

@@ -12,10 +12,8 @@ by default. The figure is a 2x2 panel:
                  with the configured max_replay cap as a horizontal line)
 
 Usage:
-    PYTHONPATH=ml/src ~/miniconda3/bin/python -m guandan.dart.analyze \
-        --run ml/runs/dart_m0_20260503_1337
-    PYTHONPATH=ml/src ~/miniconda3/bin/python -m guandan.dart.analyze \
-        --run <dir> --out /tmp/loss.png
+    uv run python -m guandan.dart.analyze --run ml/runs/dart_20260503_1337
+    uv run python -m guandan.dart.analyze --run <dir> --out /tmp/loss.png
 """
 
 from __future__ import annotations
@@ -62,9 +60,9 @@ def load_metrics(metrics_path: Path) -> RunMetrics:
 
     def _seat_loss(r: dict, p: int) -> float:
         d = r["loss"]
-        # M0/M1: keys are "0","1","2","3"
-        # M3 shared-head: keys are "loss_seat_0","loss_seat_1",...
-        # M3 trick-head: keys are "loss_trick_head_0","loss_trick_head_1",...
+        # legacy: keys are "0","1","2","3"
+        # shared-head: keys are "loss_seat_0","loss_seat_1",...
+        # trick-head: keys are "loss_trick_head_0","loss_trick_head_1",...
         return d.get(str(p), d.get(f"loss_seat_{p}", d.get(f"loss_trick_head_{p}", float("nan"))))
 
     losses = {

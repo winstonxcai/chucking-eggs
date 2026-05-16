@@ -325,7 +325,7 @@ class TrainConfig:
         if self.run_dir:
             return self.run_dir
         ts = datetime.now().strftime("%Y%m%d_%H%M")
-        return f"ml/runs/dart_m0_{ts}"
+        return f"ml/runs/dart_{ts}"
 
     @classmethod
     def from_flat_dict(cls, d: dict[str, Any]) -> "TrainConfig":

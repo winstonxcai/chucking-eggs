@@ -1,23 +1,22 @@
 "use client";
 
 const DIFFICULTY_ORDER = [
-  "easy", "medium", "casual", "hard", "expert", "master",
-  "yaoji", "jidan", "competition", "wjsd", "liuzha", "hulalala",
+  "ez", "wjsd", "random", "hulalala", "liuzha",
+  "greedy", "lalala", "heuristic", "xingdream", "strategic", "noai",
+  "yaoji", "jidan",
+  // legacy keys (old game records)
+  "easy", "casual", "hard", "competition", "master",
 ];
 
 const DIFFICULTY_LABEL: Record<string, string> = {
-  easy: "Easy",
-  medium: "Medium",
-  casual: "Casual",
-  hard: "Hard",
-  expert: "Expert",
-  master: "Master",
-  yaoji: "Yaoji",
-  jidan: "Jidan",
-  competition: "Competition",
-  wjsd: "Wjsd",
-  liuzha: "Liuzha",
-  hulalala: "Hulalala",
+  ez: "Ez", wjsd: "Wjsd", random: "Random",
+  hulalala: "Hulalala", liuzha: "Liuzha",
+  greedy: "Greedy", lalala: "Lalala", heuristic: "Heuristic",
+  xingdream: "Xingdream", strategic: "Strategic", noai: "NoAI",
+  yaoji: "Yaoji", jidan: "Jidan",
+  // legacy
+  easy: "Easy (legacy)", casual: "Casual (legacy)",
+  hard: "Hard (legacy)", competition: "Competition (legacy)", master: "Master (legacy)",
 };
 
 interface GameDoc {

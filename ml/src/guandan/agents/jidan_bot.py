@@ -26,6 +26,11 @@ from .base import Agent
 class JidanBot(Agent):
     """NUAA 2nd Prize — weighted card value scoring (Reyn_AI 2.0)."""
 
+    label = "Jidan"
+    description = "NUAA 2nd Prize · 2020 NJUPT entry."
+    source = "NUAA"
+    award = "2nd Prize"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
 

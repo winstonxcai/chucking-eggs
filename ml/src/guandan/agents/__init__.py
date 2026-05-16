@@ -6,7 +6,8 @@ Usage:
     agent = make_agent("strategic", level_rank=Rank.TWO)
     combo = agent.act(env, player)
 
-All RL/ML/search agents are archived under ``ml/_archive/`` as of 2026-04-24.
+RL/ML/search agents (DartBot and predecessors) were removed as of 2026-04-24;
+use ``make_agent("dart", checkpoint=<path>)`` to load a trained DartBot.
 See ``ml/LOGBOOK.md`` for the chronology of prior training attempts.
 """
 
@@ -28,8 +29,10 @@ from .wjsd_bot import WjsdBot
 from .xingdream_bot import XingDreamBot
 from .yaoji_bot import YaojiBot
 
+
 __all__ = [
     "Agent",
+    "AGENT_META",
     "AGENT_REGISTRY",
     "make_agent",
     "RandomBot",
@@ -61,6 +64,16 @@ AGENT_REGISTRY: dict[str, type[Agent]] = {
     "jidan": JidanBot,
     "ez": EzBot,
     "wjsd": WjsdBot,
+}
+
+AGENT_META: dict[str, dict] = {
+    name: {
+        "label": cls.label,
+        "description": cls.description,
+        "source": cls.source,
+        **({"award": cls.award} if cls.award is not None else {}),
+    }
+    for name, cls in AGENT_REGISTRY.items()
 }
 
 

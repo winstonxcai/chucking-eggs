@@ -12,7 +12,7 @@ import json
 import pytest
 from httpx import AsyncClient
 
-DIFFICULTIES = ["easy", "hard"]
+DIFFICULTIES = ["greedy", "strategic"]
 
 
 # ---------------------------------------------------------------------------
@@ -31,11 +31,12 @@ class TestSoloBotHTTP:
         assert "reconnect_token" in data
 
     @pytest.mark.asyncio
-    async def test_hard_agent_loaded(self, client: AsyncClient):
-        """Hard difficulty should map to a named agent — not None."""
+    @pytest.mark.asyncio
+    async def test_strategic_agent_loaded(self, client: AsyncClient):
+        """Strategic difficulty should map to a named agent — not None."""
         from app.main import game_manager
         ai = game_manager.ai_service
-        agent_name = ai.get_agent_name("hard")
+        agent_name = ai.get_agent_name("strategic")
         assert agent_name is not None
         assert isinstance(agent_name, str)
         assert len(agent_name) > 0

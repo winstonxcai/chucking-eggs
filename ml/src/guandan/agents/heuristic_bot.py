@@ -185,6 +185,10 @@ def heuristic_follow(
 class HeuristicBot(Agent):
     """Rule-based Guan Dan agent."""
 
+    label = "Heuristic"
+    description = "Intermediate rule-based play."
+    source = "In-house"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
 

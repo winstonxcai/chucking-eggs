@@ -26,6 +26,11 @@ from .base import Agent
 class YaojiBot(Agent):
     """NUAA 3rd Prize — gain/possibility/value scoring with partner awareness."""
 
+    label = "Yaoji"
+    description = "NUAA 3rd Prize · 2020 NJUPT entry."
+    source = "NUAA"
+    award = "3rd Prize"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
 

@@ -327,6 +327,11 @@ def main() -> None:
     out_file.write_text(json.dumps(results, indent=2))
     print(f"Results saved to {out_file}")
 
+    elo_path = Path(__file__).resolve().parents[2] / "src" / "guandan" / "elos.json"
+    elo_export = {name: round(ratings[name].rating) for name in agent_names}
+    elo_path.write_text(json.dumps(elo_export, indent=2) + "\n")
+    print(f"ELOs exported to {elo_path}")
+
 
 if __name__ == "__main__":
     main()

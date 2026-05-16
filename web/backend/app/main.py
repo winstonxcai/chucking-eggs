@@ -17,7 +17,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from .ai_service import AIService
+from .ai_service import AGENT_INFO, AIService
 from .game_manager import GameManager, LOBBY_TIMEOUT
 from .redis_client import close_redis
 from . import db
@@ -66,7 +66,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 class CreateGameRequest(BaseModel):
-    difficulty: str = "easy"
+    difficulty: str = "greedy"
 
 
 class CreateGameResponse(BaseModel):
@@ -76,7 +76,7 @@ class CreateGameResponse(BaseModel):
 
 class CreateRoomRequest(BaseModel):
     mode: str = "solo"       # "solo" | "duo" | "quad"
-    difficulty: str = "easy"
+    difficulty: str = "greedy"
     seed: int | None = None
 
 
@@ -118,6 +118,15 @@ class ClaimUsernameRequest(BaseModel):
 
 class SetDifficultyRequest(BaseModel):
     difficulty: str
+
+
+# ---------------------------------------------------------------------------
+# Bots
+# ---------------------------------------------------------------------------
+
+@app.get("/api/bots")
+async def list_bots():
+    return AGENT_INFO
 
 
 # ---------------------------------------------------------------------------
@@ -233,9 +242,8 @@ async def get_leaderboard():
 @app.post("/api/game/create", response_model=CreateGameResponse)
 async def create_game(req: CreateGameRequest):
     assert game_manager is not None
-    if req.difficulty not in ("easy", "wjsd", "casual", "competition", "hard",
-         "yaoji", "jidan", "hulalala", "liuzha", "master"):
-        req.difficulty = "easy"
+    if req.difficulty not in AGENT_INFO:
+        req.difficulty = "greedy"
     room = await game_manager.create_game(req.difficulty)
     return CreateGameResponse(
         game_id=room.game_id,
@@ -252,9 +260,8 @@ async def create_room(req: CreateRoomRequest, x_player_id: str | None = Header(N
     assert game_manager is not None
     if req.mode not in ("solo", "duo", "quad"):
         req.mode = "solo"
-    if req.difficulty not in ("easy", "wjsd", "casual", "competition", "hard",
-         "yaoji", "jidan", "hulalala", "liuzha", "master"):
-        req.difficulty = "easy"
+    if req.difficulty not in AGENT_INFO:
+        req.difficulty = "greedy"
     try:
         room = await game_manager.create_room(req.mode, req.difficulty, seed=req.seed, creator_player_id=x_player_id)
     except ValueError:
@@ -276,9 +283,7 @@ async def set_room_difficulty(game_id: str, req: SetDifficultyRequest):
         raise HTTPException(status_code=404, detail="Room not found")
     if room.started:
         raise HTTPException(status_code=400, detail="Game already started")
-    valid = ("easy", "wjsd", "casual", "competition", "hard",
-             "yaoji", "jidan", "hulalala", "liuzha", "master")
-    if req.difficulty not in valid:
+    if req.difficulty not in AGENT_INFO:
         raise HTTPException(status_code=400, detail="Invalid difficulty")
     room.set_difficulty(req.difficulty)
     return {"ok": True}

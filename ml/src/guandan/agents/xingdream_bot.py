@@ -17,6 +17,11 @@ from .base import Agent
 class XingDreamBot(Agent):
     """Heuristic bot based on xingdream/guandan strategy."""
 
+    label = "Xingdream"
+    description = "8th Place · 2020 NJUPT entry."
+    source = "2020 NJUPT"
+    award = "8th Place"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
 

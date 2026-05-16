@@ -20,7 +20,7 @@ function GameContent() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [playingAgain, setPlayingAgain] = useState(false);
 
-  const difficulty = searchParams.get("difficulty") || "easy";
+  const difficulty = searchParams.get("difficulty") || "greedy";
 
   useEffect(() => {
     // URL params take priority (from lobby navigation)

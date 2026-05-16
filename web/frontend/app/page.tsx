@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DIFFICULTY_INFO, OUR_BOTS, COMPETITION_BOTS } from "@/lib/bots";
+import { OUR_BOTS, type BotInfo } from "@/lib/bots";
+import { BotAvatar } from "@/components/BotAvatar";
 import { useActiveGame } from "@/hooks/useActiveGame";
 import { usePlayer } from "@/hooks/usePlayer";
 
@@ -16,6 +17,15 @@ export default function Home() {
   const { player } = usePlayer();
   const [forfeitConfirm, setForfeitConfirm] = useState(false);
   const [forfeiting, setForfeiting] = useState(false);
+  const [botInfo, setBotInfo] = useState<Record<string, BotInfo>>({});
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/bots`).then(r => r.json()).then(setBotInfo);
+  }, []);
+
+  const competitionBots = Object.keys(botInfo).filter(
+    k => !(OUR_BOTS as readonly string[]).includes(k)
+  );
 
   async function handleCreateRoom(mode: "duo" | "quad", difficulty: string) {
     setCreatingRoom(mode);
@@ -135,7 +145,8 @@ export default function Home() {
                 <span className="text-[10px] font-semibold text-text-secondary tracking-widest uppercase">Our Bots</span>
               </div>
               {OUR_BOTS.map((diff, i) => {
-                const info = DIFFICULTY_INFO[diff];
+                const info = botInfo[diff];
+                if (!info) return null;
                 return (
                   <button
                     key={diff}
@@ -144,7 +155,7 @@ export default function Home() {
                     }`}
                     onClick={() => router.push(`/game?difficulty=${diff}`)}
                   >
-                    <span className="text-xl w-7 shrink-0">{info.emoji}</span>
+                    <BotAvatar name={info.label} size={28} />
                     <span className="text-sm font-semibold text-foreground group-hover:text-accent transition-colors duration-150 w-24 shrink-0">
                       {info.label}
                     </span>
@@ -157,17 +168,18 @@ export default function Home() {
               <div className="px-4 py-1.5 bg-surface border-t border-b border-border">
                 <span className="text-[10px] font-semibold text-text-secondary tracking-widest uppercase">Competition Bots</span>
               </div>
-              {COMPETITION_BOTS.map((diff, i) => {
-                const info = DIFFICULTY_INFO[diff];
+              {competitionBots.map((diff, i) => {
+                const info = botInfo[diff];
+                if (!info) return null;
                 return (
                   <button
                     key={diff}
                     className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-background transition-colors duration-150 text-left group ${
-                      i < COMPETITION_BOTS.length - 1 ? "border-b border-border" : ""
+                      i < competitionBots.length - 1 ? "border-b border-border" : ""
                     }`}
                     onClick={() => router.push(`/game?difficulty=${diff}`)}
                   >
-                    <span className="text-xl w-7 shrink-0">{info.emoji}</span>
+                    <BotAvatar name={info.label} size={28} />
                     <span className="text-sm font-semibold text-foreground group-hover:text-accent transition-colors duration-150 w-24 shrink-0">
                       {info.label}
                     </span>
@@ -188,14 +200,14 @@ export default function Home() {
           <div className="flex gap-3">
             <button
               className="flex-1 py-3 bg-background border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent hover:bg-accent/5 transition-all duration-150 ease-out disabled:opacity-50"
-              onClick={() => handleCreateRoom("duo", "easy")}
+              onClick={() => handleCreateRoom("duo", "greedy")}
               disabled={creatingRoom !== null || isInGame}
             >
               {creatingRoom === "duo" ? "Creating…" : "2-Player"}
             </button>
             <button
               className="flex-1 py-3 bg-background border border-border rounded-xl text-sm font-semibold text-foreground hover:border-accent hover:text-accent hover:bg-accent/5 transition-all duration-150 ease-out disabled:opacity-50"
-              onClick={() => handleCreateRoom("quad", "easy")}
+              onClick={() => handleCreateRoom("quad", "greedy")}
               disabled={creatingRoom !== null || isInGame}
             >
               {creatingRoom === "quad" ? "Creating…" : "4-Player"}

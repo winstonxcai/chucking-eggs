@@ -19,6 +19,10 @@ _LEVEL_ORDER_TYPES = frozenset({
 class GreedyBot(Agent):
     """Always play the cheapest legal option. No strategy, just economy."""
 
+    label = "Greedy"
+    description = "Plays it safe."
+    source = "In-house"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
 

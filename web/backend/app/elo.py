@@ -6,33 +6,20 @@ Bot Elo anchors are calibrated Glicko-2 ratings from a 13-bot WR matrix.
 
 from __future__ import annotations
 
-# Bot Elo anchors by difficulty (calibrated, fixed — bots never update).
-# Values sourced from BOT_POOLS in ai_service.py.
-BOT_ELOS: dict[str, int] = {
-    "wjsd": 1212,
-    "liuzha": 1260,
-    "hulalala": 1264,
-    "easy": 1415,
-    "competition": 1464,
-    "casual": 1523,
-    "hard": 1621,
-    "master": 1726,
-    "yaoji": 1772,
-    "jidan": 1779,
-    "expert": 1786,
-}
+from .ai_service import AGENT_INFO
 
-# Bot entries injected server-side into the leaderboard.
-BOT_LEADERBOARD_ENTRIES: list[dict] = [
-    {"username": "Jidan", "elo": 1779, "games_played": None, "is_bot": True},
-    {"username": "Yaoji", "elo": 1772, "games_played": None, "is_bot": True},
-    {"username": "NoAI", "elo": 1726, "games_played": None, "is_bot": True},
-    {"username": "Tiger / Falcon / Leopard", "elo": 1621, "games_played": None, "is_bot": True},
-    {"username": "Panda / Owl / Cat", "elo": 1523, "games_played": None, "is_bot": True},
-    {"username": "Lalala", "elo": 1464, "games_played": None, "is_bot": True},
-    {"username": "Koala / Turtle / Lamb", "elo": 1415, "games_played": None, "is_bot": True},
-    {"username": "Wjsd", "elo": 1212, "games_played": None, "is_bot": True},
-]
+# Bot Elo anchors by agent name — derived from AGENT_INFO so they stay in sync.
+BOT_ELOS: dict[str, int] = {name: info["elo"] for name, info in AGENT_INFO.items()}
+
+# Bot entries injected server-side into the leaderboard, sorted by ELO descending.
+BOT_LEADERBOARD_ENTRIES: list[dict] = sorted(
+    [
+        {"username": info["label"], "elo": info["elo"], "games_played": None, "is_bot": True}
+        for info in AGENT_INFO.values()
+    ],
+    key=lambda x: x["elo"],
+    reverse=True,
+)
 
 
 def _k_factor(games_played: int) -> float:

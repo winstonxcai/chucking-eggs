@@ -468,9 +468,14 @@ class Myfunc1014(object):
         return ls[0]
 
     def getindex(self,actionlist,color):
+        # Sorted comparison: the adapter and the vendor build card lists in
+        # different suit orders, so exact list equality misses every match.
         index=0
+        if color is None:
+            return index
+        target = sorted(color) if isinstance(color, list) else color
         for i in actionlist:
-            if color==i[2]:
+            if isinstance(i[2], list) and sorted(i[2]) == target:
                 index=actionlist.index(i)
         return  index
 

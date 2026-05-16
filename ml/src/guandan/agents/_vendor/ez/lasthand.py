@@ -473,9 +473,14 @@ class lasthand(object):
                 # pass  #print(index)
         return index
     def getindex(self,actionlist,color):
+        # Sorted comparison: card-list ordering produced by getcolor doesn't
+        # match the adapter's actionList ordering, so exact equality misses.
         index=0
+        if color is None:
+            return index
+        target = sorted(color) if isinstance(color, list) else color
         for i in actionlist:
-            if color==i[2]:
+            if isinstance(i[2], list) and sorted(i[2]) == target:
                 index=actionlist.index(i)
         return  index
 

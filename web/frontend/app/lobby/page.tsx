@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { RoomStatus, RoomMode } from "@/lib/types";
-import { DIFFICULTY_INFO, OUR_BOTS, COMPETITION_BOTS } from "@/lib/bots";
+import { OUR_BOTS, type BotInfo } from "@/lib/bots";
 import { STORAGE_KEYS } from "@/lib/storage-keys";
 import StatusScreen from "@/components/layout/StatusScreen";
 
@@ -45,7 +45,16 @@ function LobbyContent() {
 
   const [status, setStatus] = useState<RoomStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [difficulty, setDifficulty] = useState("medium");
+  const [difficulty, setDifficulty] = useState("greedy");
+  const [botInfo, setBotInfo] = useState<Record<string, BotInfo>>({});
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/bots`).then(r => r.json()).then(setBotInfo);
+  }, []);
+
+  const competitionBots = Object.keys(botInfo).filter(
+    k => !(OUR_BOTS as readonly string[]).includes(k)
+  );
   const [countdown, setCountdown] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -173,20 +182,22 @@ function LobbyContent() {
             >
               <optgroup label="Our Bots">
                 {OUR_BOTS.map((diff) => {
-                  const info = DIFFICULTY_INFO[diff];
+                  const info = botInfo[diff];
+                  if (!info) return null;
                   return (
                     <option key={diff} value={diff}>
-                      {info.emoji} {info.label} — {info.description}
+                      {info.label} — {info.description}
                     </option>
                   );
                 })}
               </optgroup>
               <optgroup label="Competition Bots">
-                {COMPETITION_BOTS.map((diff) => {
-                  const info = DIFFICULTY_INFO[diff];
+                {competitionBots.map((diff) => {
+                  const info = botInfo[diff];
+                  if (!info) return null;
                   return (
                     <option key={diff} value={diff}>
-                      {info.emoji} {info.label} — {info.description}
+                      {info.label} — {info.description}
                     </option>
                   );
                 })}

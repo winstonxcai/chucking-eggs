@@ -67,6 +67,10 @@ def estimate_moves_to_empty(hand: set, level_rank: int) -> int:
 class StrategicBot(Agent):
     """Strong amateur agent with hand planning and opponent awareness."""
 
+    label = "Strategic"
+    description = "Reads the table."
+    source = "In-house"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
 

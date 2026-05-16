@@ -52,6 +52,11 @@ def _build_remaincards(hand_strings: list[str]) -> dict:
 class HulalalaBot(Agent):
     """SEU 3rd Prize — per-type heuristic with active()/passive() dispatch."""
 
+    label = "Hulalala"
+    description = "SEU 3rd Prize · 2020 NJUPT entry."
+    source = "SEU"
+    award = "3rd Prize"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
         self._last_history_len = -1
@@ -68,6 +73,9 @@ class HulalalaBot(Agent):
             self._pass_num = 0
             self._my_pass_num = 0
         self._last_history_len = history_len
+
+        if env.current_trick is None:
+            self._my_pass_num = 0
 
         rank_str = rank_to_string(self.level_rank)
         hand_strings = cards_to_strings(env.hands[player])
@@ -113,6 +121,12 @@ class HulalalaBot(Agent):
                 self._pass_num, self._my_pass_num,
                 None,
             )
-            return idx if idx is not None else 0
+            result = idx if idx is not None else 0
+            if result == 0:
+                self._pass_num += 1
+                self._my_pass_num += 1
+            return result
         except Exception:
+            self._pass_num += 1
+            self._my_pass_num += 1
             return 0

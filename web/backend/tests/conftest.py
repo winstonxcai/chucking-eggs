@@ -29,7 +29,7 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
             yield c
 
 
-async def create_game(client: AsyncClient, difficulty: str = "easy") -> dict:
+async def create_game(client: AsyncClient, difficulty: str = "greedy") -> dict:
     """Helper: POST /api/game/create and return response JSON."""
     res = await client.post("/api/game/create", json={"difficulty": difficulty})
     assert res.status_code == 200

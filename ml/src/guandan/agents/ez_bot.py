@@ -28,14 +28,25 @@ from .base import Agent
 class EzBot(Agent):
     """HYIT 3rd Prize — combo analysis with team-aware action selection."""
 
+    label = "Ez"
+    description = "HYIT 3rd Prize · 2020 NJUPT entry."
+    source = "HYIT"
+    award = "3rd Prize"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
         self._action = Action()
+        self._last_history_len = -1
 
     def act(self, env, player: int):
         legal = env.legal_moves(player)
         if len(legal) == 1:
             return legal[0]
+
+        history_len = len(env.move_history)
+        if history_len < self._last_history_len or self._last_history_len == -1:
+            self._action = Action()
+        self._last_history_len = history_len
 
         rank_str = rank_to_string(self.level_rank)
         hand_strings = cards_to_strings(env.hands[player])

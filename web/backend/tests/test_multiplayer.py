@@ -21,7 +21,7 @@ from .conftest import create_game
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def create_room(client: AsyncClient, mode: str = "duo", difficulty: str = "easy") -> dict:
+async def create_room(client: AsyncClient, mode: str = "duo", difficulty: str = "greedy") -> dict:
     res = await client.post("/api/room/create", json={"mode": mode, "difficulty": difficulty})
     assert res.status_code == 200, res.text
     return res.json()

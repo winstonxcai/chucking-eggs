@@ -28,7 +28,7 @@ def _plays_by_seat(snap: dict) -> dict:
 async def _create_room(client: AsyncClient):
     """POST /api/game/create and return the room object."""
     from app.main import game_manager
-    res = await client.post("/api/game/create", json={"difficulty": "easy"})
+    res = await client.post("/api/game/create", json={"difficulty": "greedy"})
     assert res.status_code == 200
     return game_manager.get_room(res.json()["game_id"])
 

@@ -30,6 +30,11 @@ from .base import Agent
 class NoAIBot(Agent):
     """Fudan 2nd Prize — value-based heuristic with RV system."""
 
+    label = "NoAI"
+    description = "Fudan 2nd Prize · Chen Yuguan."
+    source = "Fudan"
+    award = "2nd Prize · Chen Yuguan"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
         self._strategy = Strategy()

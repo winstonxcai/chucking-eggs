@@ -61,6 +61,11 @@ def _build_remaincards(hand_strings: list[str]) -> dict:
 class LalalaBot(Agent):
     """SEU 1st Prize — heuristic with next-player optimization."""
 
+    label = "Lalala"
+    description = "SEU 1st Prize · Li Jing (2020)."
+    source = "SEU"
+    award = "1st Prize · Li Jing"
+
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
         self._action = Action("lalala_bot")

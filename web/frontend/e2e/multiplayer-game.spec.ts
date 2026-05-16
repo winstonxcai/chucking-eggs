@@ -98,7 +98,7 @@ test("duo game: full game completes via AFK — requires HUMAN_TURN_TIMEOUT_S=5"
   try {
     // Create room via API with seed=42 for deterministic deal
     const roomRes = await request.post(`${API_BASE}/api/room/create`, {
-      data: { mode: "duo", difficulty: "easy", seed: 42 },
+      data: { mode: "duo", difficulty: "greedy", seed: 42 },
     });
     const room = await roomRes.json();
 

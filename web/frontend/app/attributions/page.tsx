@@ -1,20 +1,26 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { OUR_BOTS, type BotInfo } from "@/lib/bots";
 
-const OUR_BOTS = [
-  { name: "Easy",   elo: 1415, source: "Strategic heuristic agent" },
-  { name: "Medium", elo: 1523, source: "Strategic heuristic agent" },
-  { name: "Hard",   elo: 1621, source: "Strategic heuristic agent" },
-];
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const COMPETITION_BOTS = [
-  { name: "Wjsd",        elo: 1212, source: "SAU",   award: "3rd Prize" },
-  { name: "Competition", elo: 1464, source: "SEU",   award: "1st Prize · Li Jing" },
-  { name: "Master",      elo: 1726, source: "Fudan", award: "2nd Prize · Chen Yuguan" },
-  { name: "Yaoji",       elo: 1772, source: "NUAA",  award: "3rd Prize" },
-  { name: "Jidan",       elo: 1779, source: "NUAA",  award: "2nd Prize" },
-];
+type FullBotInfo = BotInfo & { source: string; award?: string };
 
 export default function AttributionsPage() {
+  const [botInfo, setBotInfo] = useState<Record<string, FullBotInfo>>({});
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/bots`).then(r => r.json()).then(setBotInfo);
+  }, []);
+
+  const ourBotKeys = OUR_BOTS as readonly string[];
+  const ourBots = ourBotKeys.map(k => ({ key: k, ...botInfo[k] })).filter(b => b.label);
+  const competitionBots = Object.entries(botInfo)
+    .filter(([k]) => !ourBotKeys.includes(k))
+    .map(([k, v]) => ({ key: k, ...v }));
+
   return (
     <div className="max-w-2xl mx-auto px-6 py-10 flex flex-col gap-10">
       {/* How to Play */}
@@ -50,7 +56,7 @@ export default function AttributionsPage() {
         <div className="flex flex-col gap-1">
           <h2 className="text-xl font-bold text-foreground tracking-tight">Bot Opponents</h2>
           <p className="text-xs text-text-secondary">
-            Elo ratings calibrated via a 31,200-game round-robin (200 games per matchup).
+            Elo ratings calibrated via a round-robin WR matrix (200 games per matchup).
           </p>
         </div>
 
@@ -61,16 +67,16 @@ export default function AttributionsPage() {
             <div className="grid grid-cols-[112px_56px_1fr] gap-3 px-4 py-2.5 bg-background border-b border-border">
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Bot</span>
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider text-right">Elo</span>
-              <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Type</span>
+              <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Source</span>
             </div>
-            {OUR_BOTS.map((bot, i) => (
+            {ourBots.map((bot, i) => (
               <div
-                key={bot.name}
+                key={bot.key}
                 className={`grid grid-cols-[112px_56px_1fr] gap-3 px-4 py-3 items-center ${
-                  i < OUR_BOTS.length - 1 ? "border-b border-border" : ""
+                  i < ourBots.length - 1 ? "border-b border-border" : ""
                 }`}
               >
-                <span className="text-sm font-semibold text-foreground">{bot.name}</span>
+                <span className="text-sm font-semibold text-foreground">{bot.label}</span>
                 <span className="text-sm font-mono text-text-secondary text-right">{bot.elo}</span>
                 <span className="text-sm text-text-secondary">{bot.source}</span>
               </div>
@@ -93,16 +99,18 @@ export default function AttributionsPage() {
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider text-right">Elo</span>
               <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">University · Award</span>
             </div>
-            {COMPETITION_BOTS.map((bot, i) => (
+            {competitionBots.map((bot, i) => (
               <div
-                key={bot.name}
+                key={bot.key}
                 className={`grid grid-cols-[112px_56px_1fr] gap-3 px-4 py-3 items-center ${
-                  i < COMPETITION_BOTS.length - 1 ? "border-b border-border" : ""
+                  i < competitionBots.length - 1 ? "border-b border-border" : ""
                 }`}
               >
-                <span className="text-sm font-semibold text-foreground">{bot.name}</span>
+                <span className="text-sm font-semibold text-foreground">{bot.label}</span>
                 <span className="text-sm font-mono text-text-secondary text-right">{bot.elo}</span>
-                <span className="text-sm text-text-secondary">{bot.source} · {bot.award}</span>
+                <span className="text-sm text-text-secondary">
+                  {bot.award ? `${bot.source} · ${bot.award}` : bot.source}
+                </span>
               </div>
             ))}
           </div>

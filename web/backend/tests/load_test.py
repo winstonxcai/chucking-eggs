@@ -31,7 +31,7 @@ import aiohttp
 DEFAULT_URL = "http://localhost:8000"
 DEFAULT_CONCURRENT = 10
 DEFAULT_TOTAL = 20
-DEFAULT_DIFFICULTY = "easy"
+DEFAULT_DIFFICULTY = "greedy"
 DEFAULT_MODE = "solo"
 
 MSG_TIMEOUT = 60  # seconds to wait for any single WS message

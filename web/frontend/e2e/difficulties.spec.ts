@@ -9,20 +9,21 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-// All 12 difficulty tiers ordered by calibrated Glicko-2 ELO (see runs/wr_matrix_v2/)
+// All 13 agents ordered by calibrated ELO (see runs/wr_matrix/elos.json)
 const difficulties = [
+  "ez",
   "wjsd",
-  "liuzha",
+  "random",
   "hulalala",
-  "easy",
-  "medium",
-  "competition",
-  "casual",
-  "hard",
-  "master",
+  "liuzha",
+  "greedy",
+  "lalala",
+  "heuristic",
+  "xingdream",
+  "strategic",
+  "noai",
   "yaoji",
   "jidan",
-  "expert",
 ];
 
 for (const difficulty of difficulties) {

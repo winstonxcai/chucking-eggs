@@ -251,13 +251,17 @@ def main() -> None:
             injected_only.add(inj_name)
 
     # Seed matrix from a prior results file; existing pairs won't be re-run.
+    # Only matchups between agents already in agent_names are loaded — others are ignored.
     preloaded: dict[str, dict[str, MatchupResult]] = {}
     if args.load_matrix:
         prior = json.loads(Path(args.load_matrix).read_text())
+        agent_set = set(agent_names)
         for a, row in prior["matrix"].items():
-            if a not in agent_names:
-                agent_names.append(a)
+            if a not in agent_set:
+                continue
             for b, result in row.items():
+                if b not in agent_set:
+                    continue
                 preloaded.setdefault(a, {})[b] = {**result, "injected": True}
         print(f"Loaded {args.load_matrix} — {sum(len(v) for v in preloaded.values())} preloaded matchups")
 

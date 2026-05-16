@@ -85,7 +85,7 @@ Download the checkpoint when done:
 modal volume get pvguan-runs dart/my_run/checkpoints/update_00050000.pt .
 ```
 
-**Reference cost for full M5 baseline (0→200k updates):** ~30 hours, ~$75 across
+**Reference cost for a full run (0→200k updates):** ~30 hours, ~$75 across
 multiple resumes. Steady-state throughput is ~1.8 upd/s on L4; the cold-start
 phase (0→20k) is slower at ~1.4 upd/s.
 

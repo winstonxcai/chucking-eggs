@@ -51,9 +51,9 @@ uv sync
 uv run pytest ml/tests/
 ```
 
-### Training — Local (CPU)
+### Training — Local (MPS)
 
-Runs 6 actor processes + 1 learner on CPU. Meaningful results (~50% vs strategic) in ~6h on an M1 Pro.
+Runs 6 CPU actor processes + 1 MPS learner. Meaningful results (~50% vs strategic) in ~6h on an M1 Pro.
 
 ```bash
 uv run python -m guandan.dart \

@@ -116,7 +116,7 @@ Or run services separately:
 
 ```bash
 # Backend (FastAPI + game engine) — from repo root
-uv pip install -r web/backend/requirements.txt
+uv pip install -e ".[web]"
 uv run uvicorn app.main:app --reload --app-dir web/backend
 
 # Frontend (Next.js) — in a separate terminal

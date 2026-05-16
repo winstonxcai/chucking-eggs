@@ -40,9 +40,9 @@ DEFAULT_AGENTS = [
 MatchupResult = dict[str, Any]
 
 
-def run_matchup(agent_a: Any, agent_b: Any, n_games: int) -> MatchupResult:
+def run_matchup(agent_a: Any, agent_b: Any, n_games: int, label: str = "") -> MatchupResult:
     """Run n_games with agent_a on seats {0,2} vs agent_b on seats {1,3}."""
-    result = play_n_games(agent_a, agent_b, n_games)
+    result = play_n_games(agent_a, agent_b, n_games, label=label, progress=1000)
     return {**result, "injected": False}
 
 
@@ -51,9 +51,11 @@ def _matchup_worker(
 ) -> tuple[str, str, MatchupResult]:
     """Top-level worker for ProcessPoolExecutor; constructs agents in-process."""
     a_name, b_name, n_games, level_rank, checkpoint = task
+    label = f"{a_name} vs {b_name}"
+    print(f"→ {label}", flush=True)
     agent_a = make_agent(a_name, level_rank=level_rank, checkpoint=checkpoint)
     agent_b = make_agent(b_name, level_rank=level_rank, checkpoint=checkpoint)
-    return a_name, b_name, run_matchup(agent_a, agent_b, n_games)
+    return a_name, b_name, run_matchup(agent_a, agent_b, n_games, label=label)
 
 
 def run_all_matchups(

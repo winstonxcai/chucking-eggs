@@ -16,6 +16,8 @@ def play_n_games(
     agent_b: Any,
     n_games: int,
     seeds: list[int] | None = None,
+    label: str = "",
+    progress: int = 0,
 ) -> dict[str, Any]:
     """Play ``n_games`` with agent_a on seats {0, 2} and agent_b on {1, 3}.
 
@@ -47,6 +49,8 @@ def play_n_games(
         if team_r > 0:
             wins_a += 1
         total_r += team_r
+        if progress and label and (i + 1) % progress == 0:
+            print(f"  {label}: {i+1}/{n_games}  WR={wins_a/(i+1):.1%}", flush=True)
 
     return {
         "wins": wins_a,

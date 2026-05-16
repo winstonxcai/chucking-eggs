@@ -8,37 +8,37 @@ Guan Dan is harder than it looks: **108 cards** (vs 52 for most card games), **w
 
 ## Results
 
-DART (DMC, 135k updates on L4 GPU) vs rule-based bots — 1000-game paired fixed-deck eval:
+DART (DMC, 200k updates on L4 GPU) vs rule-based bots — 5000-game eval:
 
 | Opponent | Win Rate | Notes |
 |----------|----------|-------|
-| Jidan (NJUPT 2020 2nd place) | **59.4% ± 1.6%** | Strongest rule-based bot |
-| Yaoji (NJUPT 2020 3rd place) | **48.4% ± 1.6%** | Near coin-flip |
-| Strategic | 68.6% ± 1.5% | Best hand-written heuristic |
-| XingDream | 92.1% ± 0.9% | |
-| Heuristic | 88.3% ± 1.0% | |
-| Greedy | 98.9% ± 0.3% | |
-| Random | 99.6% ± 0.2% | |
+| Jidan (NJUPT 2020 2nd place) | **60.2% ± 0.7%** | Strongest rule-based bot |
+| Yaoji (NJUPT 2020 3rd place) | **53.7% ± 0.7%** | |
+| Strategic | 72.5% ± 0.6% | Best hand-written heuristic |
+| XingDream | 93.3% ± 0.4% | |
+| Heuristic | 89.9% ± 0.4% | |
+| Greedy | 99.1% ± 0.1% | |
+| Random | 99.7% ± 0.1% | |
 
-Glicko-2 ratings from 5000-game round-robin across all 12 rule-based bots (DART not in this run — partial matchup data puts it above Jidan):
+Glicko-2 ratings from a full 5000-game round-robin across all 13 agents (DART included):
 
 | Bot | Glicko-2 | Source |
 |-----|----------|--------|
-| **DART** | **#1** | This project |
-| Jidan | 1891 | NJUPT 2020 2nd place (NUAA) |
-| Yaoji | 1870 | NJUPT 2020 3rd place (NUAA) |
-| Strategic | 1729 | Hand-written heuristic |
-| XingDream | 1622 | Open-source heuristic |
-| Lalala | 1557 | NJUPT 2020 1st place (SEU) |
-| Heuristic | 1557 | Hand-written heuristic |
-| Greedy | 1523 | |
-| Liuzha | 1320 | NJUPT 2020 2nd place (SEU) |
-| Hulalala | 1320 | NJUPT 2020 3rd place (SEU) |
-| Random | 1316 | |
-| WJSD | 1250 | NJUPT 2020 3rd place (SAU) |
-| EZ | 1031 | NJUPT 2020 3rd place (HYIT) |
+| **DART** | **1790** | This project |
+| Jidan | 1750 | NJUPT 2020 2nd place (NUAA) |
+| Yaoji | 1749 | NJUPT 2020 3rd place (NUAA) |
+| EZ | 1675 | NJUPT 2020 3rd place (HYIT) |
+| Strategic | 1601 | Hand-written heuristic |
+| XingDream | 1488 | Open-source heuristic |
+| Heuristic | 1434 | Hand-written heuristic |
+| Lalala | 1409 | NJUPT 2020 1st place (SEU) |
+| Hulalala | 1406 | NJUPT 2020 3rd place (SEU) |
+| Liuzha | 1404 | NJUPT 2020 2nd place (SEU) |
+| Greedy | 1364 | |
+| WJSD | 1333 | NJUPT 2020 3rd place (SAU) |
+| Random | 1135 | |
 
-Web app live at [chucking-eggs.fly.dev](https://chucking-eggs.fly.dev) — solo, duo, and quad multiplayer with Elo ratings and leaderboard.
+Web app live at [chucking-eggs.vercel.app](https://chucking-eggs.vercel.app) — solo, duo, and quad multiplayer with Elo ratings and leaderboard. (Frontend: Vercel · Backend: Fly.io)
 
 ## Quick Start
 
@@ -63,7 +63,7 @@ PYTHONPATH=ml/src python -m guandan.dart \
 
 Outputs go to `ml/runs/my_run/` — `train.log`, `metrics_learner.jsonl`, `checkpoints/`.
 
-### Training — Modal GPU (L4, ~$2.89/hr)
+### Training — Modal GPU (L4, ~$2.50/hr)
 
 1. [Create a Modal account](https://modal.com) and install the CLI: `pip install modal && modal setup`
 2. Create a volume for run outputs: `modal volume create pvguan-runs`
@@ -74,7 +74,7 @@ Outputs go to `ml/runs/my_run/` — `train.log`, `metrics_learner.jsonl`, `check
 python ml/scripts/modal/train_dart_modal.py --dry-run \
     --config-path /root/ml/src/guandan/dart/configs/m5_clean_baseline_l4.yaml
 
-# Full run (~50k updates, ~2h, ~$6)
+# Full run (~50k updates, ~8h, ~$20 at ~1.8 upd/s steady-state)
 modal run --detach ml/scripts/modal/train_dart_modal.py \
     --updates 50000 --run-name my_run \
     --config-path /root/ml/src/guandan/dart/configs/m5_clean_baseline_l4.yaml
@@ -84,6 +84,10 @@ Download the checkpoint when done:
 ```bash
 modal volume get pvguan-runs dart/my_run/checkpoints/update_00050000.pt .
 ```
+
+**Reference cost for full M5 baseline (0→200k updates):** ~30 hours, ~$75 across
+multiple resumes. Steady-state throughput is ~1.8 upd/s on L4; the cold-start
+phase (0→20k) is slower at ~1.4 upd/s.
 
 ### Evaluation
 
@@ -100,14 +104,23 @@ PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200
 ### Web App (local)
 
 ```bash
+# Copy and fill in your MongoDB connection string
+cp .env.example .env
+
+# Start everything with Docker Compose
+docker compose up
+# Frontend: http://localhost:3000  Backend: http://localhost:8000
+```
+
+Or run services separately:
+
+```bash
 # Backend (FastAPI + game engine)
 cd web/backend && pip install -r requirements.txt
 PYTHONPATH=../../ml/src uvicorn app.main:app --reload
-# Backend runs at http://localhost:8000
 
 # Frontend (Next.js) — in a separate terminal
 cd web/frontend && npm install && npm run dev
-# Open http://localhost:3000
 ```
 
 ## Adding Your Own Bot

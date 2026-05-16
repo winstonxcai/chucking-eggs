@@ -56,7 +56,7 @@ uv run pytest ml/tests/
 Runs 6 actor processes + 1 learner on CPU. Meaningful results (~50% vs strategic) in ~6h on an M1 Pro.
 
 ```bash
-PYTHONPATH=ml/src python -m guandan.dart \
+uv run python -m guandan.dart \
     --config ml/src/guandan/dart/configs/m0_m1_distributed.yaml \
     --updates 10000 --run-name my_run
 ```
@@ -93,12 +93,12 @@ phase (0→20k) is slower at ~1.4 upd/s.
 
 ```bash
 # Win rate vs a specific opponent (1000 games, paired fixed-deck)
-PYTHONPATH=ml/src python ml/scripts/eval/eval_dart.py \
+uv run python ml/scripts/eval/eval_dart.py \
     --checkpoint ml/runs/my_run/checkpoints/update_00050000.pt \
     --opponent strategic --games 1000 --out results.json
 
 # Full Glicko-2 leaderboard across all rule-based bots
-PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --games 200
+uv run python ml/scripts/eval/wr_matrix.py --games 200
 ```
 
 ### Web App (local)
@@ -148,7 +148,7 @@ AGENT_REGISTRY["mybot"] = MyBot
 Then use it anywhere:
 
 ```bash
-PYTHONPATH=ml/src python ml/scripts/eval/wr_matrix.py --agents mybot,strategic,jidan
+uv run python ml/scripts/eval/wr_matrix.py --agents mybot,strategic,jidan
 ```
 
 Or pass it directly to the training config (`hard_bot_pool: [mybot]`) to train against it.

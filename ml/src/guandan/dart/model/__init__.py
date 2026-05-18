@@ -1,17 +1,11 @@
-"""Neural network architectures + serialization.
-
-Q-networks (per-seat and shared-head variants), the legacy state/action
-encoder shared constants, and checkpoint save/load helpers. The
-``encoding/`` subpackage hosts the active per-decision feature builders.
-"""
+"""Neural network architectures and serialization."""
 
 from .checkpoint import (
     WeightSnapshot,
     load_checkpoint,
-    load_frozen_shared_qnet,
-    load_frozen_trick_qnet,
+    load_frozen_dart_qnet,
     save_checkpoint_base,
-    save_checkpoint_shared,
+    save_checkpoint_dart,
 )
 from .encoder import (
     BEHAVIOR_DIM,
@@ -22,21 +16,17 @@ from .encoder import (
 )
 from .q_network import (
     DartQNet,
-    SharedHeadQNet,
-    SharedHeadQNetConfig,
-    SharedTrickHeadQNet,
-    SharedTrickHeadQNetConfig,
-    init_seat_nets,
+    DartQNetConfig,
+    GuanZeroQNet,
+    init_guanzero_nets,
 )
 
 __all__ = [
     # q_network
     "DartQNet",
-    "SharedHeadQNet",
-    "SharedHeadQNetConfig",
-    "SharedTrickHeadQNet",
-    "SharedTrickHeadQNetConfig",
-    "init_seat_nets",
+    "DartQNetConfig",
+    "GuanZeroQNet",
+    "init_guanzero_nets",
     # encoder constants
     "BEHAVIOR_DIM",
     "HISTORY_LEN",
@@ -46,8 +36,7 @@ __all__ = [
     # checkpoint
     "WeightSnapshot",
     "load_checkpoint",
-    "load_frozen_shared_qnet",
-    "load_frozen_trick_qnet",
+    "load_frozen_dart_qnet",
     "save_checkpoint_base",
-    "save_checkpoint_shared",
+    "save_checkpoint_dart",
 ]

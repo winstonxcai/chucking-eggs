@@ -11,10 +11,20 @@ from __future__ import annotations
 import dataclasses
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
+
+CheckpointSaveType = Literal["weight", "full"]
+
+
+def _validate_checkpoint_save_type(save_type: str) -> CheckpointSaveType:
+    if save_type not in ("weight", "full"):
+        raise ValueError(
+            f"checkpoint_save_type must be 'weight' or 'full'; got {save_type!r}"
+        )
+    return save_type
 
 
 def unwrap_compiled(module: nn.Module) -> nn.Module:
@@ -32,6 +42,11 @@ def save_checkpoint_base(
     q_nets: dict[int, nn.Module],
     cfg: Any,
     episode_or_update: int,
+    *,
+    learner_state: dict | None = None,
+    replay_state: dict | None = None,
+    rng_state: dict | None = None,
+    save_type: CheckpointSaveType = "full",
 ) -> None:
     """Save Q-net state dicts + config to ``path``.
 
@@ -39,39 +54,66 @@ def save_checkpoint_base(
     ``episode_or_update`` is stored under the ``"episode"`` key for backwards
     compatibility with existing checkpoint readers.
     """
+    save_type = _validate_checkpoint_save_type(save_type)
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "episode": episode_or_update,
-            "config": dataclasses.asdict(cfg),
-            "q_nets": {
-                p: unwrap_compiled(q_nets[p]).state_dict()
-                for p in range(4)
-            },
+    payload = {
+        "checkpoint_format_version": 2,
+        "checkpoint_save_type": save_type,
+        "episode": episode_or_update,
+        "total_updates": episode_or_update,
+        "config": dataclasses.asdict(cfg),
+        "q_nets": {
+            p: unwrap_compiled(q_nets[p]).state_dict()
+            for p in range(4)
         },
-        path,
-    )
+    }
+    if save_type == "weight":
+        torch.save(payload, path)
+        return
+    if learner_state is not None:
+        payload["learner_state"] = learner_state
+    if replay_state is not None:
+        payload["replay_state"] = replay_state
+    if rng_state is not None:
+        payload["rng_state"] = rng_state
+    torch.save(payload, path)
 
 
 save_checkpoint = save_checkpoint_base
 
 
-def save_checkpoint_shared(
+def save_checkpoint_dart(
     path: Path,
     q_net: nn.Module,
     cfg: Any,
     episode_or_update: int,
+    *,
+    learner_state: dict | None = None,
+    replay_state: dict | None = None,
+    rng_state: dict | None = None,
+    save_type: CheckpointSaveType = "full",
 ) -> None:
-    """Save shared-head Q-net state dict + config to ``path``."""
+    """Save one Dart Q-net state dict plus config to ``path``."""
+    save_type = _validate_checkpoint_save_type(save_type)
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "episode": episode_or_update,
-            "config": dataclasses.asdict(cfg),
-            "q_net": unwrap_compiled(q_net).state_dict(),
-        },
-        path,
-    )
+    payload = {
+        "checkpoint_format_version": 2,
+        "checkpoint_save_type": save_type,
+        "episode": episode_or_update,
+        "total_updates": episode_or_update,
+        "config": dataclasses.asdict(cfg),
+        "q_net": unwrap_compiled(q_net).state_dict(),
+    }
+    if save_type == "weight":
+        torch.save(payload, path)
+        return
+    if learner_state is not None:
+        payload["learner_state"] = learner_state
+    if replay_state is not None:
+        payload["replay_state"] = replay_state
+    if rng_state is not None:
+        payload["rng_state"] = rng_state
+    torch.save(payload, path)
 
 
 def load_checkpoint(path: Path | str) -> dict:
@@ -83,44 +125,21 @@ def load_checkpoint(path: Path | str) -> dict:
     return torch.load(path, map_location="cpu", weights_only=False)
 
 
-def load_frozen_shared_qnet(
+def load_frozen_dart_qnet(
     path: str | Path,
     qnet_cfg: Any,
     device: str | torch.device = "cpu",
 ) -> torch.nn.Module:
-    """Build a SharedHeadQNet from ``qnet_cfg`` and load frozen weights from ``path``.
+    """Build a DartQNet from ``qnet_cfg`` and load frozen weights from ``path``.
 
     Returns the network in ``eval()`` mode with all parameters frozen
     (``requires_grad=False``). Used by actors to instantiate population
     opponents whose weights never change during the run.
     """
-    # Local import — q_network depends on torch but not on this module, so
-    # keeping the import lazy avoids any future circular-import surprises.
-    from .q_network import SharedHeadQNet
+    from .q_network import DartQNet
 
-    net = SharedHeadQNet(qnet_cfg).to(device)
-    ckpt = torch.load(path, map_location=device, weights_only=True)
-    net.load_state_dict(ckpt["q_net"])
-    net.eval()
-    for p in net.parameters():
-        p.requires_grad_(False)
-    return net
-
-
-def load_frozen_trick_qnet(
-    path: str | Path,
-    qnet_cfg: Any,
-    device: str | torch.device = "cpu",
-) -> torch.nn.Module:
-    """Build a SharedTrickHeadQNet from ``qnet_cfg`` and load frozen weights from ``path``.
-
-    Sibling of ``load_frozen_shared_qnet`` for the ``shared_trick_heads`` model
-    type. Returns the network in ``eval()`` mode with all parameters frozen.
-    """
-    from .q_network import SharedTrickHeadQNet
-
-    net = SharedTrickHeadQNet(qnet_cfg).to(device)
-    ckpt = torch.load(path, map_location=device, weights_only=True)
+    net = DartQNet(qnet_cfg).to(device)
+    ckpt = torch.load(path, map_location=device, weights_only=False)
     net.load_state_dict(ckpt["q_net"])
     net.eval()
     for p in net.parameters():
@@ -141,12 +160,12 @@ class WeightSnapshot:
 
 
 __all__ = [
+    "CheckpointSaveType",
     "unwrap_compiled",
     "save_checkpoint_base",
     "save_checkpoint",
-    "save_checkpoint_shared",
+    "save_checkpoint_dart",
     "load_checkpoint",
-    "load_frozen_shared_qnet",
-    "load_frozen_trick_qnet",
+    "load_frozen_dart_qnet",
     "WeightSnapshot",
 ]

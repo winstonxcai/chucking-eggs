@@ -1,14 +1,9 @@
-"""Role-normalized state-action encoder for the shared-head Dart model.
+"""Role-normalized state-action encoder for the Dart model.
 
-Two head-routing schemes are supported via the encoder's ``head_scheme`` param:
-
-* ``"absolute_seat"`` (default, legacy) — emits ``seat_id`` (absolute seat 0-3)
-  for the model's per-seat head selection. ``player_blocks`` shape is (4, 252).
-
-* ``"trick_relative"`` (new) — emits ``trick_head_id``, the actor's position
-  relative to the current trick leader: 0 = leading a new trick, 1 = first
-  responder, 2 = across from leader, 3 = last responder. ``player_blocks``
-  shape is (4, 256) with a 4-dim trick-position one-hot appended per role.
+The encoder emits ``trick_head_id``, the actor's position relative to the
+current trick leader: 0 = leading a new trick, 1 = first responder, 2 = across
+from leader, 3 = last responder. ``player_blocks`` shape is (4, 256) with a
+4-dim trick-position one-hot appended per role.
 
 The formula:
     trick_head_id = 0                              if env.current_trick is None
@@ -22,8 +17,6 @@ Play is counterclockwise (``_next_seat = (p-1) % 4``), so the table is:
 """
 
 from __future__ import annotations
-
-from typing import Literal
 
 import numpy as np
 
@@ -45,8 +38,6 @@ REL_NEXT_OPP: int = 1
 REL_PARTNER: int = 2
 REL_PREV_OPP: int = 3
 
-# State channel keys are identical across both head schemes; only the
-# action-side head id and the player_blocks width differ.
 ROLE_ENCODE_STATE_KEYS: tuple[str, ...] = (
     "own_hand",
     "partner_hand",
@@ -59,43 +50,17 @@ ROLE_ENCODE_STATE_KEYS: tuple[str, ...] = (
     "history_is_pass",
 )
 
-# ── absolute_seat (legacy) schema ──────────────────────────────────
-# player_blocks slot layout (per role, 252 dims):
-#   [0:108]   played multi-hot
-#   [108:216] last non-pass action multi-hot
-#   [216:243] remaining-card count one-hot (27)
-#   [243:252] bomb tier histogram (9 tiers: BOMB_4..BOMB_JOKER), uint8 counts capped at 3
-ROLE_ENCODE_ACTION_KEYS: tuple[str, ...] = (
-    "candidate_action",
-    "seat_id",
-)
-ROLE_ENCODE_CHANNEL_SHAPES: dict[str, tuple[int, ...]] = {
-    "own_hand": (CARD_ID_DIM,),
-    "partner_hand": (CARD_ID_DIM,),
-    "others_hand": (CARD_ID_DIM,),
-    "player_blocks": (4, 252),
-    "global_features": (LEVEL_DIM,),
-    "behavior": (BEHAVIOR_DIM,),
-    "history_actions": (HISTORY_LEN, CARD_ID_DIM),
-    "history_roles": (HISTORY_LEN, 4),
-    "history_is_pass": (HISTORY_LEN, 1),
-    "candidate_action": (CARD_ID_DIM,),
-    "seat_id": (),
-}
-ROLE_ENCODE_CHANNEL_KEYS: tuple[str, ...] = tuple(ROLE_ENCODE_CHANNEL_SHAPES.keys())
-
-# ── trick_relative (new) schema ─────────────────────────────────────
 # player_blocks gains a 4-dim trick-position one-hot per role at [252:256]:
 #   [0:108]   played multi-hot
 #   [108:216] last non-pass action multi-hot
 #   [216:243] remaining-card count one-hot (27)
 #   [243:252] bomb tier histogram
 #   [252:256] trick-relative position one-hot (this role's pos from leader)
-ROLE_ENCODE_TRICK_ACTION_KEYS: tuple[str, ...] = (
+ROLE_ENCODE_ACTION_KEYS: tuple[str, ...] = (
     "candidate_action",
     "trick_head_id",
 )
-ROLE_ENCODE_TRICK_CHANNEL_SHAPES: dict[str, tuple[int, ...]] = {
+ROLE_ENCODE_CHANNEL_SHAPES: dict[str, tuple[int, ...]] = {
     "own_hand": (CARD_ID_DIM,),
     "partner_hand": (CARD_ID_DIM,),
     "others_hand": (CARD_ID_DIM,),
@@ -108,11 +73,7 @@ ROLE_ENCODE_TRICK_CHANNEL_SHAPES: dict[str, tuple[int, ...]] = {
     "candidate_action": (CARD_ID_DIM,),
     "trick_head_id": (),
 }
-ROLE_ENCODE_TRICK_CHANNEL_KEYS: tuple[str, ...] = tuple(
-    ROLE_ENCODE_TRICK_CHANNEL_SHAPES.keys()
-)
-
-HeadScheme = Literal["absolute_seat", "trick_relative"]
+ROLE_ENCODE_CHANNEL_KEYS: tuple[str, ...] = tuple(ROLE_ENCODE_CHANNEL_SHAPES.keys())
 
 
 def relative_role(abs_player: int, actor: int) -> int:
@@ -159,39 +120,19 @@ def trick_head_id(env: GuanDanEnv, actor: int) -> int:
 
 
 class RoleAwareStateActionEncoder:
-    """Encodes state + candidate action into role-normalized tensors.
-
-    Two head-routing schemes are supported, selected at construction time.
-    The default ``"absolute_seat"`` preserves the legacy output verbatim.
-    """
+    """Encodes state + candidate action into role-normalized Dart tensors."""
 
     def __init__(
         self,
         is_partner_visible: bool = True,
-        head_scheme: HeadScheme = "absolute_seat",
     ) -> None:
-        if head_scheme not in ("absolute_seat", "trick_relative"):
-            raise ValueError(
-                f"head_scheme must be 'absolute_seat' or 'trick_relative'; "
-                f"got {head_scheme!r}"
-            )
         self.is_partner_visible = is_partner_visible
-        self.head_scheme = head_scheme
-        # Schema-dependent constants, exposed for buffer/collate consumers.
-        if head_scheme == "absolute_seat":
-            self.channel_shapes = ROLE_ENCODE_CHANNEL_SHAPES
-            self.channel_keys = ROLE_ENCODE_CHANNEL_KEYS
-            self.state_keys = ROLE_ENCODE_STATE_KEYS
-            self.action_keys = ROLE_ENCODE_ACTION_KEYS
-            self.head_field = "seat_id"
-            self._player_block_width = 252
-        else:
-            self.channel_shapes = ROLE_ENCODE_TRICK_CHANNEL_SHAPES
-            self.channel_keys = ROLE_ENCODE_TRICK_CHANNEL_KEYS
-            self.state_keys = ROLE_ENCODE_STATE_KEYS
-            self.action_keys = ROLE_ENCODE_TRICK_ACTION_KEYS
-            self.head_field = "trick_head_id"
-            self._player_block_width = 256
+        self.channel_shapes = ROLE_ENCODE_CHANNEL_SHAPES
+        self.channel_keys = ROLE_ENCODE_CHANNEL_KEYS
+        self.state_keys = ROLE_ENCODE_STATE_KEYS
+        self.action_keys = ROLE_ENCODE_ACTION_KEYS
+        self.head_field = "trick_head_id"
+        self._player_block_width = 256
 
     def encode_all(
         self,
@@ -231,9 +172,7 @@ class RoleAwareStateActionEncoder:
         return enc
 
     def _head_value(self, env: GuanDanEnv, player: int) -> np.ndarray:
-        """Compute the head-routing id appropriate to this encoder's mode."""
-        if self.head_scheme == "absolute_seat":
-            return np.asarray(player, dtype=np.int64)
+        """Compute the trick-relative head-routing id."""
         return np.asarray(trick_head_id(env, player), dtype=np.int64)
 
     def _encode_state(
@@ -257,7 +196,7 @@ class RoleAwareStateActionEncoder:
             # bounded for the network (duplicate-tier plays beyond 3 are rare).
             np.minimum(env.bombs_played[seat], 3, out=blocks[role, 243:252])
 
-        if self.head_scheme == "trick_relative" and env.current_trick is not None:
+        if env.current_trick is not None:
             # Per-role trick-position onehot: each role's distance from the
             # leader, in the same counterclockwise convention as trick_head_id.
             leader_role = relative_role(env.trick_winner, player)
@@ -353,14 +292,8 @@ __all__ = [
     "REL_NEXT_OPP",
     "REL_PARTNER",
     "REL_PREV_OPP",
-    "HeadScheme",
-    # Legacy (absolute_seat) schema constants
     "ROLE_ENCODE_CHANNEL_KEYS",
     "ROLE_ENCODE_STATE_KEYS",
     "ROLE_ENCODE_ACTION_KEYS",
     "ROLE_ENCODE_CHANNEL_SHAPES",
-    # New trick_relative schema constants
-    "ROLE_ENCODE_TRICK_CHANNEL_KEYS",
-    "ROLE_ENCODE_TRICK_ACTION_KEYS",
-    "ROLE_ENCODE_TRICK_CHANNEL_SHAPES",
 ]

@@ -1,13 +1,7 @@
-"""Dart Q-network: history encoder + flat MLP scorer.
+"""Q-networks for DART training and GuanZero comparison.
 
-The standard ``forward`` API accepts one row per ``(state, candidate_action)``
-pair, as produced by replay-buffer sampling. ``forward_grouped`` accepts one
-state row per decision plus flattened action rows (see
-``buffer.collate_base_encoded``) so shared history is encoded once per
-decision. Both return one Q-value per candidate action. Action selection is
-argmax over Q across legal actions; there is no policy head.
-
-Build four seat-independent copies with ``init_seat_nets(cfg)``.
+``GuanZeroQNet`` is the per-seat comparison baseline. ``DartQNet`` is the
+current role-aware, trick-relative shared-trunk model used by DART runs.
 """
 
 from __future__ import annotations
@@ -54,7 +48,7 @@ class _TransformerHistoryEncoder(nn.Module):
         return h.mean(dim=1)                       # [B, d_model]
 
 
-class DartQNet(nn.Module):
+class GuanZeroQNet(nn.Module):
     """History encoder → concat with flat per-step features → MLP scoring head.
 
     Input dict keys are defined by ``encoder.ENCODE_CHANNEL_KEYS``.
@@ -147,14 +141,25 @@ class DartQNet(nn.Module):
                 self._flat_action_features(action_batch),
                 z_hist,
             )
-        else:
-            state_rows = torch.repeat_interleave(state_flat, repeats, dim=0)
-            z_hist_rows = torch.repeat_interleave(z_hist, repeats, dim=0)
 
-        flat = torch.cat(
-            [state_rows, self._flat_action_features(action_batch), z_hist_rows],
-            dim=-1,
-        )
+        action_flat = self._flat_action_features(action_batch)
+        first = self.mlp[0]
+        if isinstance(first, nn.Linear):
+            state_dim = state_flat.shape[-1]
+            action_dim = action_flat.shape[-1]
+            w = first.weight
+            shared = F.linear(state_flat, w[:, :state_dim], first.bias)
+            shared = shared + F.linear(z_hist, w[:, state_dim + action_dim :], None)
+            shared_rows = torch.repeat_interleave(shared, repeats, dim=0)
+            x = F.linear(action_flat, w[:, state_dim : state_dim + action_dim], None)
+            x = x + shared_rows
+            for layer in list(self.mlp.children())[1:]:
+                x = layer(x)
+            return x.squeeze(-1)
+
+        state_rows = torch.repeat_interleave(state_flat, repeats, dim=0)
+        z_hist_rows = torch.repeat_interleave(z_hist, repeats, dim=0)
+        flat = torch.cat([state_rows, action_flat, z_hist_rows], dim=-1)
         return self.mlp(flat).squeeze(-1)
 
     def _forward_grouped_single_state(
@@ -193,18 +198,18 @@ class DartQNet(nn.Module):
         return x.squeeze(-1)
 
 
-def init_seat_nets(cfg: QNetConfig) -> dict[int, DartQNet]:
-    """One Q-network per seat (paper §4.2).
+def init_guanzero_nets(cfg: QNetConfig) -> dict[int, GuanZeroQNet]:
+    """One Q-network per seat for the GuanZero comparison baseline.
 
     All four networks share the same architecture; they are trained
     independently on per-seat replay buffers.
     """
-    return {p: DartQNet(cfg) for p in range(4)}
+    return {p: GuanZeroQNet(cfg) for p in range(4)}
 
 
 @dataclasses.dataclass(frozen=True)
-class SharedHeadQNetConfig:
-    """Hyperparameters for the role-aware shared-trunk Q-network."""
+class DartQNetConfig:
+    """Hyperparameters for the Dart role-aware shared-trunk Q-network."""
 
     role_d_model: int = 128
     history_hidden: int = 256
@@ -215,179 +220,8 @@ class SharedHeadQNetConfig:
     dropout: float = 0.0
 
 
-class SharedHeadQNet(nn.Module):
-    """Role-aware shared trunk with four absolute-seat Q heads."""
-
-    def __init__(self, cfg: SharedHeadQNetConfig) -> None:
-        super().__init__()
-        d = cfg.role_d_model
-        self.role_emb = nn.Embedding(4, d)
-        self.seat_emb = nn.Embedding(4, d)
-        self.player_mlp = nn.Sequential(
-            nn.Linear(252, d),
-            nn.ReLU(),
-            nn.Linear(d, d),
-            nn.ReLU(),
-        )
-        self.history_lstm = nn.LSTM(
-            input_size=CARD_ID_DIM + 4 + 1,
-            hidden_size=cfg.history_hidden,
-            batch_first=True,
-        )
-        # State branch consumes: level(13) + own_hand(108) + partner_hand(108)
-        # + others_hand(108) + behavior(9) = 346
-        self.global_mlp = nn.Sequential(
-            nn.Linear(13 + 3 * CARD_ID_DIM + 9, cfg.global_hidden),
-            nn.ReLU(),
-            nn.Linear(cfg.global_hidden, cfg.global_hidden),
-            nn.ReLU(),
-        )
-        # Action branch is paper-faithful: just the candidate card multi-hot.
-        self.action_mlp = nn.Sequential(
-            nn.Linear(CARD_ID_DIM, cfg.action_hidden),
-            nn.ReLU(),
-            nn.Linear(cfg.action_hidden, cfg.action_hidden),
-            nn.ReLU(),
-        )
-        trunk_in = 4 * d + cfg.history_hidden + cfg.global_hidden + cfg.action_hidden + d
-        layers: list[nn.Module] = []
-        for i in range(cfg.trunk_layers):
-            layers.append(nn.Linear(trunk_in if i == 0 else cfg.trunk_hidden, cfg.trunk_hidden))
-            layers.append(nn.ReLU())
-            if cfg.dropout > 0:
-                layers.append(nn.Dropout(cfg.dropout))
-        self.trunk = nn.Sequential(*layers)
-        self.heads = nn.ModuleList([nn.Linear(cfg.trunk_hidden, 1) for _ in range(4)])
-
-    def _state_features(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        b = batch["player_blocks"].shape[0]
-        role_ids = torch.arange(4, device=batch["player_blocks"].device).expand(b, 4)
-        z_p = (self.player_mlp(batch["player_blocks"].float()) + self.role_emb(role_ids)).flatten(1)
-        hist_in = torch.cat(
-            [
-                batch["history_actions"].float(),
-                batch["history_roles"].float(),
-                batch["history_is_pass"].float(),
-            ],
-            dim=-1,
-        )
-        _, (h_n, _) = self.history_lstm(hist_in)
-        z_hist = h_n[-1]
-        z_g = self.global_mlp(
-            torch.cat(
-                [
-                    batch["global_features"].float(),
-                    batch["own_hand"].float(),
-                    batch["partner_hand"].float(),
-                    batch["others_hand"].float(),
-                    batch["behavior"].float(),
-                ],
-                dim=-1,
-            )
-        )
-        return z_p, z_hist, z_g
-
-    def _action_features(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-        z_a = self.action_mlp(batch["candidate_action"].float())
-        z_seat = self.seat_emb(batch["seat_id"].long())
-        return z_a, z_seat
-
-    def _route_heads(self, shared: torch.Tensor, seat_id: torch.Tensor) -> torch.Tensor:
-        all_q = torch.stack([head(shared).squeeze(-1) for head in self.heads], dim=1)
-        return all_q.gather(1, seat_id.long().view(-1, 1)).squeeze(1)
-
-    def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Return one Q-value per encoded role-aware state-action row."""
-        z_p, z_hist, z_g = self._state_features(batch)
-        z_a, z_seat = self._action_features(batch)
-        shared = self.trunk(torch.cat([z_p, z_hist, z_g, z_a, z_seat], dim=-1))
-        return self._route_heads(shared, batch["seat_id"])
-
-    def forward_grouped(
-        self,
-        state_batch: dict[str, torch.Tensor],
-        action_batch: dict[str, torch.Tensor],
-        repeats: torch.Tensor,
-    ) -> torch.Tensor:
-        """Score flattened candidate actions while encoding each state once."""
-        z_p, z_hist, z_g = self._state_features(state_batch)
-        repeats = repeats.to(device=z_p.device, dtype=torch.long)
-        z_a, z_seat = self._action_features(action_batch)
-        if z_p.shape[0] == 1:
-            return self._forward_grouped_single_state(
-                z_p,
-                z_hist,
-                z_g,
-                z_a,
-                z_seat,
-                action_batch["seat_id"],
-            )
-        z_p = torch.repeat_interleave(z_p, repeats, dim=0)
-        z_hist = torch.repeat_interleave(z_hist, repeats, dim=0)
-        z_g = torch.repeat_interleave(z_g, repeats, dim=0)
-        shared = self.trunk(torch.cat([z_p, z_hist, z_g, z_a, z_seat], dim=-1))
-        return self._route_heads(shared, action_batch["seat_id"])
-
-    def _forward_grouped_single_state(
-        self,
-        z_p: torch.Tensor,
-        z_hist: torch.Tensor,
-        z_g: torch.Tensor,
-        z_a: torch.Tensor,
-        z_seat: torch.Tensor,
-        seat_id: torch.Tensor,
-    ) -> torch.Tensor:
-        """Fast path for the actor's common one-decision grouped forward.
-
-        Falls through to the expansion path when ``self.trunk[0]`` is not a
-        plain nn.Linear (e.g. dynamic-quantized int8).
-        """
-        first = self.trunk[0]
-        K = z_a.shape[0]
-        if isinstance(first, nn.Linear):
-            state = torch.cat([z_p, z_hist, z_g], dim=-1)
-            action = torch.cat([z_a, z_seat], dim=-1)
-            state_dim = state.shape[-1]
-            w = first.weight
-            shared = F.linear(state, w[:, :state_dim], first.bias)
-            x = F.linear(action, w[:, state_dim:], None)
-            x = x + shared
-            for layer in list(self.trunk.children())[1:]:
-                x = layer(x)
-        else:
-            z_p_exp = z_p.expand(K, -1)
-            z_hist_exp = z_hist.expand(K, -1)
-            z_g_exp = z_g.expand(K, -1)
-            x = self.trunk(torch.cat([z_p_exp, z_hist_exp, z_g_exp, z_a, z_seat], dim=-1))
-        if seat_id.device.type == "cpu" and seat_id.numel() > 0:
-            # Actor inference scores one decision at a time, so every
-            # candidate row routes to the same absolute-seat head.
-            return self.heads[int(seat_id.reshape(-1)[0].item())](x).squeeze(-1)
-        return self._route_heads(x, seat_id)
-
-
-@dataclasses.dataclass(frozen=True)
-class SharedTrickHeadQNetConfig:
-    """Hyperparameters for the trick-relative shared-trunk Q-network.
-
-    Same fields as ``SharedHeadQNetConfig`` — the architecture differences
-    (no seat_emb, wider player_blocks, head routing by trick_head_id) are
-    structural rather than hyperparameter-driven.
-    """
-
-    role_d_model: int = 128
-    history_hidden: int = 256
-    global_hidden: int = 128
-    action_hidden: int = 128
-    trunk_hidden: int = 1024
-    trunk_layers: int = 4
-    dropout: float = 0.0
-
-
-class SharedTrickHeadQNet(nn.Module):
+class DartQNet(nn.Module):
     """Role-aware shared trunk with four trick-leader-relative Q heads.
-
-    Sibling architecture to ``SharedHeadQNet``. Differences:
 
     * No ``seat_emb`` — absolute seat id is dropped entirely. Heads specialize
       on tactical context (leader / 1st responder / across / last responder)
@@ -396,12 +230,12 @@ class SharedTrickHeadQNet(nn.Module):
       slots plus a 4-dim trick-position one-hot at [252:256].
     * Trunk input is 4*d + history_hidden + global_hidden + action_hidden
       (no `+ d` for seat_emb).
-    * Heads are indexed by ``batch["trick_head_id"]`` instead of ``seat_id``.
+    * Heads are indexed by ``batch["trick_head_id"]``.
     """
 
     PLAYER_BLOCK_DIM: int = 256
 
-    def __init__(self, cfg: SharedTrickHeadQNetConfig) -> None:
+    def __init__(self, cfg: DartQNetConfig) -> None:
         super().__init__()
         d = cfg.role_d_model
         self.role_emb = nn.Embedding(4, d)
@@ -497,10 +331,24 @@ class SharedTrickHeadQNet(nn.Module):
         head_id = action_batch["trick_head_id"]
         if z_p.shape[0] == 1:
             return self._forward_grouped_single_state(z_p, z_hist, z_g, z_a, head_id)
-        z_p = torch.repeat_interleave(z_p, repeats, dim=0)
-        z_hist = torch.repeat_interleave(z_hist, repeats, dim=0)
-        z_g = torch.repeat_interleave(z_g, repeats, dim=0)
-        shared = self.trunk(torch.cat([z_p, z_hist, z_g, z_a], dim=-1))
+
+        first = self.trunk[0]
+        if isinstance(first, nn.Linear):
+            state = torch.cat([z_p, z_hist, z_g], dim=-1)
+            state_dim = state.shape[-1]
+            w = first.weight
+            shared = F.linear(state, w[:, :state_dim], first.bias)
+            shared = torch.repeat_interleave(shared, repeats, dim=0)
+            x = F.linear(z_a, w[:, state_dim:], None)
+            x = x + shared
+            for layer in list(self.trunk.children())[1:]:
+                x = layer(x)
+            return self._route_heads(x, head_id)
+
+        z_p_rows = torch.repeat_interleave(z_p, repeats, dim=0)
+        z_hist_rows = torch.repeat_interleave(z_hist, repeats, dim=0)
+        z_g_rows = torch.repeat_interleave(z_g, repeats, dim=0)
+        shared = self.trunk(torch.cat([z_p_rows, z_hist_rows, z_g_rows, z_a], dim=-1))
         return self._route_heads(shared, head_id)
 
     def _forward_grouped_single_state(
@@ -543,10 +391,8 @@ class SharedTrickHeadQNet(nn.Module):
 
 
 __all__ = [
+    "GuanZeroQNet",
+    "init_guanzero_nets",
+    "DartQNetConfig",
     "DartQNet",
-    "init_seat_nets",
-    "SharedHeadQNetConfig",
-    "SharedHeadQNet",
-    "SharedTrickHeadQNetConfig",
-    "SharedTrickHeadQNet",
 ]

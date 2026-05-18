@@ -1,4 +1,4 @@
-"""Base Dart state-action encoder (paper-original schema).
+"""GuanZero comparison state-action encoder.
 
 Outputs a dict of channels keyed by ``ENCODE_CHANNEL_KEYS``. Paper-faithful
 layout: behavior flags live in the state branch; the action branch is just the
@@ -119,7 +119,7 @@ def _history_window(env: GuanDanEnv) -> np.ndarray:
 
 
 def static_dim(is_partner_visible: bool = True) -> int:
-    """Total flat input dim for ``DartQNet`` (everything except history)."""
+    """Total flat input dim for ``GuanZeroQNet`` (everything except history)."""
     return (
         CARD_ID_DIM                 # own_hand
         + CARD_ID_DIM               # others_hand

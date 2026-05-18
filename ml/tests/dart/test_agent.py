@@ -9,14 +9,14 @@ import torch
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
 from guandan.dart.agent import DartBot
-from guandan.dart.config import QNetConfig, TrainConfig
-from guandan.dart.model.q_network import init_seat_nets
+from guandan.dart.config import MODEL_TYPE_GUANZERO, QNetConfig, TrainConfig
+from guandan.dart.model.q_network import init_guanzero_nets
 
 
 def _save_dummy_checkpoint(path: Path) -> None:
     qnet = QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2)
-    cfg = TrainConfig(qnet=qnet)
-    q_nets = init_seat_nets(cfg.qnet)
+    cfg = TrainConfig(model_type=MODEL_TYPE_GUANZERO, qnet=qnet)
+    q_nets = init_guanzero_nets(cfg.qnet)
     torch.save(
         {
             "episode": 0,

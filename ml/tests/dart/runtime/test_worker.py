@@ -1,16 +1,82 @@
 from __future__ import annotations
 
+import errno
 import tempfile
 from pathlib import Path
 
 from guandan.dart.config import QNetConfig
+from guandan.dart.data.returns import EpisodeTags, TrainSample
+from guandan.dart.runtime.actor import LaneConfig, all_latest_seats
 from guandan.dart.runtime.learner import publish_weights
-from guandan.dart.model.q_network import init_seat_nets
-from guandan.dart.runtime.worker import maybe_sync_weights
+from guandan.dart.model.q_network import init_guanzero_nets
+from guandan.dart.runtime.actor.runtime import maybe_sync_weights
+from guandan.dart.runtime.actor.samples import (
+    ActorSampleAccumulator,
+    QueueBatchMeta,
+)
+from guandan.dart.runtime.worker import (
+    _is_closed_queue_error,
+)
+
+
+def _sample(player: int, value: float) -> TrainSample:
+    return TrainSample(
+        player=player,
+        encoded={
+            "state": value,
+            "action": value + 1,
+        },
+        mc_return=value,
+        phase_self=1,
+        trick_role=2,
+        phase_partner=3,
+        action_type=4,
+        is_pass=0,
+        is_bomb=0,
+        bomb_available=1,
+        num_legal_actions=5,
+        q_gap=0.25,
+        chosen_by_epsilon=0,
+        episode_mode=0,
+        opponent_id=0,
+        latest_team=0,
+        terminal_reward=3.0,
+    )
+
+
+def test_actor_sample_accumulator_stacks_and_pops_batches():
+    acc = ActorSampleAccumulator(channel_keys=("state", "action"), include_players=True)
+    lane = LaneConfig(seed=1, seats=all_latest_seats(0.0), tags=EpisodeTags())
+
+    acc.append_lane(lane, [_sample(0, 1.0), _sample(2, 2.0), _sample(1, 3.0)])
+    msg = acc.pop_message(
+        2,
+        QueueBatchMeta(actor_id=7, version=3, local_updates=100, global_updates=120),
+    )
+
+    assert msg is not None
+    assert msg["actor_id"] == 7
+    assert msg["version"] == 3
+    assert msg["local_updates"] == 100
+    assert msg["global_updates"] == 120
+    assert msg["stacked"]["state"].tolist() == [1.0, 2.0]
+    assert msg["stacked"]["action"].tolist() == [2.0, 3.0]
+    assert msg["players"].tolist() == [0, 2]
+    assert msg["returns"].tolist() == [1.0, 2.0]
+    assert msg["num_legal_actions"].tolist() == [5, 5]
+    assert len(acc) == 1
+
+
+def test_queue_error_classifier_only_accepts_closed_queue_errors():
+    assert _is_closed_queue_error(BrokenPipeError())
+    assert _is_closed_queue_error(OSError(errno.EBADF, "bad file descriptor"))
+    assert _is_closed_queue_error(ValueError("Queue is closed"))
+    assert not _is_closed_queue_error(OSError(errno.EIO, "I/O error"))
+    assert not _is_closed_queue_error(ValueError("bad payload"))
 
 
 def test_maybe_sync_weights_no_op_when_not_newer():
-    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
 
     with tempfile.TemporaryDirectory() as td:
         weight_dir = Path(td) / "weights"
@@ -24,8 +90,8 @@ def test_maybe_sync_weights_no_op_when_not_newer():
 
 
 def test_maybe_sync_weights_loads_newer():
-    q_nets_pub   = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
-    q_nets_actor = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets_pub   = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets_actor = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
 
     for net in q_nets_pub.values():
         for p in net.parameters():
@@ -49,8 +115,8 @@ def test_maybe_sync_weights_loads_newer():
 
 def test_maybe_sync_weights_interval_gate_defers_load():
     """When sync_interval_updates is set, actors keep stale weights until the gap is wide enough."""
-    q_nets_pub = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
-    q_nets_actor = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets_pub = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets_actor = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
 
     # Make published weights distinguishable from actor's initial weights.
     for net in q_nets_pub.values():

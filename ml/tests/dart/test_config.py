@@ -8,37 +8,19 @@ import yaml
 
 from guandan.dart.config import (
     EpsilonConfig,
+    EpisodeMixConfig,
     InferenceConfig,
+    MODEL_TYPE_DART,
+    MODEL_TYPE_GUANZERO,
+    OpponentConfig,
+    OpponentSamplingConfig,
     QNetConfig,
     TrainConfig,
     load_config_from_cli,
     load_config_from_yaml,
-    shared_head_qnet_config,
+    dart_qnet_config,
 )
-from guandan.dart.model.q_network import SharedHeadQNetConfig
-
-
-def test_from_flat_dict_routes_flat_keys_and_ignores_removed_fields():
-    cfg = TrainConfig.from_flat_dict({
-        "hidden_lstm": 64,
-        "hidden_mlp": 128,
-        "epsilon_start": 0.2,
-        "epsilon_final": 0.03,
-        "use_inference_server": True,
-        "inference_n_slots": 32,
-        "n_actors": 3,
-        "max_legal_actions": 320,
-        "env_lanes_per_actor": 4,
-        "compile_actor": True,
-    })
-
-    assert cfg.qnet.hidden_lstm == 64
-    assert cfg.qnet.hidden_mlp == 128
-    assert cfg.epsilon.start == 0.2
-    assert cfg.epsilon.final == 0.03
-    assert cfg.inference.enabled is True
-    assert cfg.inference.n_slots == 32
-    assert cfg.n_actors == 3
+from guandan.dart.model.q_network import DartQNetConfig
 
 
 def test_from_flat_dict_accepts_nested_dicts_and_dataclass_instances():
@@ -70,12 +52,14 @@ def test_yaml_and_cli_loading_apply_precedence(tmp_path):
     path.write_text(yaml.safe_dump({
         "hidden_lstm": 16,
         "epsilon_start": 0.5,
+        "checkpoint_save_type": "weight",
         "n_actors": 4,
     }))
 
     from_yaml = load_config_from_yaml(path)
     assert from_yaml.qnet.hidden_lstm == 16
     assert from_yaml.epsilon.start == 0.5
+    assert from_yaml.checkpoint_save_type == "weight"
     assert from_yaml.n_actors == 4
 
     cfg = load_config_from_cli(
@@ -88,8 +72,18 @@ def test_yaml_and_cli_loading_apply_precedence(tmp_path):
     assert cfg.n_actors == 2
 
 
+def test_unknown_flat_config_key_fails_fast():
+    with pytest.raises(ValueError, match="TrainConfig has unknown key"):
+        TrainConfig.from_flat_dict({"batch_szie": 128})
+
+
+def test_unknown_nested_config_key_fails_fast():
+    with pytest.raises(ValueError, match="qnet has unknown key"):
+        TrainConfig.from_flat_dict({"qnet": {"hidden_lstm": 16, "hidden_lstn": 32}})
+
+
 def test_model_type_default_and_invalid():
-    assert TrainConfig().model_type == "seat_nets"
+    assert TrainConfig().model_type == MODEL_TYPE_DART
 
     try:
         TrainConfig(model_type="bad")
@@ -99,24 +93,32 @@ def test_model_type_default_and_invalid():
         raise AssertionError("invalid model_type should raise")
 
 
-def test_model_type_shared_heads_loads_and_factory(tmp_path):
-    path = tmp_path / "shared.yaml"
+def test_checkpoint_save_type_validation():
+    assert TrainConfig(checkpoint_save_type="weight").checkpoint_save_type == "weight"
+    assert TrainConfig(checkpoint_save_type="full").checkpoint_save_type == "full"
+
+    with pytest.raises(ValueError, match="checkpoint_save_type"):
+        TrainConfig(checkpoint_save_type="weights")
+
+
+def test_model_type_dart_loads_and_factory(tmp_path):
+    path = tmp_path / "dart.yaml"
     path.write_text(yaml.safe_dump({
-        "model_type": "shared_heads",
-        "shared_head_role_d_model": 64,
-        "shared_head_history_hidden": 96,
-        "shared_head_global_hidden": 32,
-        "shared_head_action_hidden": 48,
-        "shared_head_trunk_hidden": 128,
-        "shared_head_trunk_layers": 2,
+        "model_type": MODEL_TYPE_DART,
+        "dart_role_d_model": 64,
+        "dart_history_hidden": 96,
+        "dart_global_hidden": 32,
+        "dart_action_hidden": 48,
+        "dart_trunk_hidden": 128,
+        "dart_trunk_layers": 2,
         "dropout": 0.25,
     }))
 
     cfg = load_config_from_yaml(path)
-    qcfg = shared_head_qnet_config(cfg)
+    qcfg = dart_qnet_config(cfg)
 
-    assert cfg.model_type == "shared_heads"
-    assert isinstance(qcfg, SharedHeadQNetConfig)
+    assert cfg.model_type == MODEL_TYPE_DART
+    assert isinstance(qcfg, DartQNetConfig)
     assert qcfg.role_d_model == 64
     assert qcfg.history_hidden == 96
     assert qcfg.global_hidden == 32
@@ -126,70 +128,98 @@ def test_model_type_shared_heads_loads_and_factory(tmp_path):
     assert qcfg.dropout == 0.25
 
 
-def test_buffer_capacity_default_for_shared_mode():
-    cfg = TrainConfig(model_type="shared_heads", buffer_capacity=0, buffer_capacity_per_player=123)
+def test_buffer_capacity_default_for_dart_mode():
+    cfg = TrainConfig(model_type=MODEL_TYPE_DART, buffer_capacity=0, buffer_capacity_per_player=123)
     capacity = cfg.buffer_capacity or 4 * cfg.buffer_capacity_per_player
     assert capacity == 492
 
 
-# ── hard_bot_pair_sampling validation ─────────────────────────────────
+# ── nested opponent config validation ─────────────────────────────────
 
 
-def test_pair_sampling_normalizes_to_probability():
-    cfg = TrainConfig(
-        hard_bot_pool=("strategic", "yaoji", "jidan"),
-        hard_bot_pair_sampling={"yaoji_yaoji": 2.0, "jidan_yaoji": 2.0},
-    )
-    # Weights renormalized to sum to 1.0
-    assert sum(cfg.hard_bot_pair_sampling.values()) == 1.0
-    assert cfg.hard_bot_pair_sampling["yaoji_yaoji"] == 0.5
-    assert cfg.hard_bot_pair_sampling["jidan_yaoji"] == 0.5
+def test_nested_opponent_config_parses_and_normalizes_weights():
+    cfg = TrainConfig.from_flat_dict({
+        "opponents": {
+            "latest_team_odd_probability": 0.25,
+            "episode_mix": {"self_play": 0.4, "frozen_pool": 0.2, "hard_bot": 0.3},
+            "frozen_pool": {"checkpoints": ["a.pt"], "epsilon": 0.05},
+            "hard_bot": {
+                "bots": ["strategic", "yaoji", "jidan"],
+                "sampling": {
+                    "type": "pair_weighted",
+                    "weights": {"yaoji_yaoji": 2.0, "jidan_yaoji": 2.0},
+                },
+            },
+        },
+    })
+
+    assert cfg.opponents.latest_team_odd_probability == 0.25
+    assert cfg.opponents.episode_mix.self_play == 0.4
+    assert cfg.opponents.frozen_pool.checkpoints == ("a.pt",)
+    weights = cfg.opponents.hard_bot.sampling.weights
+    assert sum(weights.values()) == 1.0
+    assert weights["yaoji_yaoji"] == 0.5
+    assert weights["jidan_yaoji"] == 0.5
 
 
-def test_pair_sampling_rejects_unordered_pair_key():
-    import pytest
+def test_removed_flat_opponent_keys_fail_fast():
+    with pytest.raises(ValueError, match="Removed opponent config key"):
+        TrainConfig.from_flat_dict({"hard_bot_pool": ["strategic"]})
+
+
+def test_unknown_nested_opponent_key_fails_fast():
+    with pytest.raises(ValueError, match="opponents has unknown key"):
+        TrainConfig.from_flat_dict({"opponents": {"episode_mxi": {}}})
+
+
+def test_episode_mix_rejects_total_over_one():
+    with pytest.raises(ValueError, match="sum to <= 1"):
+        TrainConfig(opponents=OpponentConfig(
+            episode_mix=EpisodeMixConfig(self_play=0.7, frozen_pool=0.3, hard_bot=0.1)
+        ))
+
+
+def test_hard_bot_weighted_sampling_rejects_unknown_bot():
+    with pytest.raises(ValueError, match="keys not in bots"):
+        TrainConfig.from_flat_dict({
+            "opponents": {
+                "hard_bot": {
+                    "bots": ["strategic", "yaoji"],
+                    "sampling": {
+                        "type": "weighted",
+                        "weights": {"unknown": 1.0},
+                    },
+                },
+            },
+        })
+
+
+def test_hard_bot_pair_sampling_rejects_unordered_pair_key():
     with pytest.raises(ValueError, match="alphabetized"):
-        TrainConfig(
-            hard_bot_pool=("strategic", "yaoji", "jidan"),
-            hard_bot_pair_sampling={"yaoji_jidan": 1.0},   # j > y alphabetically — must be jidan_yaoji
-        )
+        TrainConfig.from_flat_dict({
+            "opponents": {
+                "hard_bot": {
+                    "bots": ["strategic", "yaoji", "jidan"],
+                    "sampling": {
+                        "type": "pair_weighted",
+                        "weights": {"yaoji_jidan": 1.0},
+                    },
+                },
+            },
+        })
 
 
-def test_pair_sampling_rejects_unknown_bot():
-    import pytest
-    with pytest.raises(ValueError, match="not in hard_bot_pool"):
-        TrainConfig(
-            hard_bot_pool=("strategic", "yaoji"),
-            hard_bot_pair_sampling={"strategic_unknown": 1.0},
-        )
-
-
-def test_pair_sampling_rejects_malformed_key():
-    import pytest
-    with pytest.raises(ValueError, match="<a>_<b>"):
-        TrainConfig(
-            hard_bot_pool=("strategic", "yaoji"),
-            hard_bot_pair_sampling={"strategic": 1.0},     # missing underscore
-        )
-
-
-def test_pair_sampling_rejects_non_positive_weights():
-    import pytest
+def test_hard_bot_sampling_rejects_non_positive_weights():
     with pytest.raises(ValueError, match="weights must be positive"):
-        TrainConfig(
-            hard_bot_pool=("strategic", "yaoji"),
-            hard_bot_pair_sampling={"strategic_yaoji": -0.5},
-        )
-
-
-def test_pair_sampling_mutual_exclusion_with_hard_bot_sampling():
-    import pytest
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        TrainConfig(
-            hard_bot_pool=("strategic", "yaoji"),
-            hard_bot_sampling={"yaoji": 1.0},
-            hard_bot_pair_sampling={"strategic_yaoji": 1.0},
-        )
+        TrainConfig(opponents=OpponentConfig(
+            hard_bot={
+                "bots": ["strategic", "yaoji"],
+                "sampling": OpponentSamplingConfig(
+                    type="weighted",
+                    weights={"strategic": -0.5},
+                ),
+            },
+        ))
 
 
 # ── YAML config roundtrip ─────────────────────────────────────────────
@@ -203,4 +233,4 @@ def test_all_config_yamls_parse(yaml_path):
     cfg = load_config_from_yaml(yaml_path)
     assert isinstance(cfg, TrainConfig)
     assert cfg.n_actors >= 1
-    assert cfg.model_type in ("seat_nets", "shared_heads", "shared_trick_heads")
+    assert cfg.model_type in (MODEL_TYPE_GUANZERO, MODEL_TYPE_DART)

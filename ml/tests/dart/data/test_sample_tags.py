@@ -7,10 +7,10 @@ import math
 import numpy as np
 
 from guandan.cards import ComboType
-from guandan.dart.runtime.actor import play_episode
+from guandan.dart.runtime.actor import all_latest_seats, play_episode
 from guandan.dart.data.returns import EpisodeTags
 from guandan.dart.model.encoding.role_encoder import RoleAwareStateActionEncoder
-from guandan.dart.model.q_network import SharedHeadQNet, SharedHeadQNetConfig
+from guandan.dart.model.q_network import DartQNet, DartQNetConfig
 from guandan.dart.data.sample_tags import (
     ACTION_CLASS_BOMB,
     ACTION_CLASS_JOKER_BOMB,
@@ -123,8 +123,8 @@ def test_reward_bucket_boundaries():
     assert reward_bucket_array(arr).tolist() == [0, 0, 1, 2, 2, 3, 3]
 
 
-def _small_shared_net() -> SharedHeadQNet:
-    return SharedHeadQNet(SharedHeadQNetConfig(
+def _small_dart_net() -> DartQNet:
+    return DartQNet(DartQNetConfig(
         role_d_model=16,
         history_hidden=16,
         global_hidden=8,
@@ -137,9 +137,9 @@ def _small_shared_net() -> SharedHeadQNet:
 def test_play_episode_tags_propagate():
     """Run a real episode; verify the 13 tag fields are populated on every sample."""
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=RoleAwareStateActionEncoder(),
-        epsilon=1.0,  # random play → fast termination, exercises epsilon branch
+        seats=all_latest_seats(1.0),  # random play → fast termination, exercises epsilon branch
         seed=99,
         device="cpu",
         gamma=1.0,

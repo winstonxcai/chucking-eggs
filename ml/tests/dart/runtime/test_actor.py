@@ -5,26 +5,54 @@ import random
 
 import torch
 
+import guandan.dart.runtime.actor.rollout as actor_mod
 from guandan.agents import make_agent
 from guandan.cards import Card, ComboType, Rank, Suit
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
-from guandan.dart.runtime.actor import argmax_q, play_episode, select_legal
+from guandan.dart.data.returns import EpisodeTags
+from guandan.dart.data.sample_tags import (
+    EPISODE_MODE_SELF_PLAY,
+    EPISODE_MODE_VS_CHECKPOINT,
+    EPISODE_MODE_VS_HARD_BOT,
+    OPPONENT_CHECKPOINT_BASE,
+    OPPONENT_STRATEGIC,
+)
+from guandan.dart.runtime.actor import (
+    LaneConfig,
+    SeatPolicy,
+    argmax_q,
+    all_latest_seats,
+    play_episode,
+    play_episodes_batched,
+    select_legal,
+)
 from guandan.dart.data.buffer import collate_base_encoded, collate_role_encoded
 from guandan.dart.config import QNetConfig
 from guandan.dart.model.encoding.base_encoder import StateActionEncoder
 from guandan.dart.model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_KEYS, RoleAwareStateActionEncoder
-from guandan.dart.model.q_network import SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
+from guandan.dart.model.q_network import (
+    DartQNet,
+    DartQNetConfig,
+    init_guanzero_nets,
+)
 from guandan.dart.data.returns import TrainSample
+
+
+def _with_seats(base, replacements):
+    seats = list(base)
+    for seat, policy in replacements.items():
+        seats[seat] = policy
+    return tuple(seats)
 
 
 def test_one_episode_returns_team_signed_samples():
     encoder = StateActionEncoder()
-    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     samples = play_episode(
         q_nets=q_nets,
         encoder=encoder,
-        epsilon=1.0,  # pure random play for fastest termination
+        seats=all_latest_seats(1.0),  # pure random play for fastest termination
         seed=7,
         device="cpu",
         gamma=1.0,
@@ -88,7 +116,7 @@ def test_select_legal_does_not_add_pass_when_leading():
 def test_argmax_q_matches_grouped_forward():
     torch.manual_seed(11)
     encoder = StateActionEncoder()
-    q_nets = init_seat_nets(QNetConfig(
+    q_nets = init_guanzero_nets(QNetConfig(
         hidden_lstm=16,
         hidden_mlp=32,
         n_mlp_layers=2,
@@ -112,8 +140,8 @@ def test_argmax_q_matches_grouped_forward():
     assert idx == expected
 
 
-def _small_shared_net() -> SharedHeadQNet:
-    return SharedHeadQNet(SharedHeadQNetConfig(
+def _small_dart_net() -> DartQNet:
+    return DartQNet(DartQNetConfig(
         role_d_model=16,
         history_hidden=16,
         global_hidden=8,
@@ -126,7 +154,7 @@ def _small_shared_net() -> SharedHeadQNet:
 def test_argmax_q_role_matches_grouped_forward():
     torch.manual_seed(12)
     encoder = RoleAwareStateActionEncoder()
-    net = _small_shared_net()
+    net = _small_dart_net()
     env = GuanDanEnv()
     env.reset(seed=6)
     p = env.current_player
@@ -142,9 +170,9 @@ def test_argmax_q_role_matches_grouped_forward():
 
 def test_role_episode_returns_samples_with_m3_keys():
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=RoleAwareStateActionEncoder(),
-        epsilon=1.0,
+        seats=all_latest_seats(1.0),
         seed=17,
         device="cpu",
         gamma=1.0,
@@ -153,6 +181,125 @@ def test_role_episode_returns_samples_with_m3_keys():
     assert samples
     assert all(isinstance(s, TrainSample) for s in samples)
     assert set(samples[0].encoded) == set(ROLE_ENCODE_CHANNEL_KEYS)
+
+
+def test_batched_role_episode_returns_trick_head_samples():
+    net = DartQNet(DartQNetConfig(
+        role_d_model=16,
+        history_hidden=16,
+        global_hidden=8,
+        action_hidden=8,
+        trunk_hidden=32,
+        trunk_layers=1,
+    ))
+    samples_per_lane = play_episodes_batched(
+        q_nets=net,
+        encoder=RoleAwareStateActionEncoder(),
+        lanes=[
+            LaneConfig(seed=21, seats=all_latest_seats(0.0)),
+            LaneConfig(seed=22, seats=all_latest_seats(0.0)),
+        ],
+        device="cpu",
+        gamma=1.0,
+    )
+    samples = [s for lane_samples in samples_per_lane for s in lane_samples]
+
+    assert samples
+    assert all(isinstance(s, TrainSample) for s in samples)
+    assert "trick_head_id" in samples[0].encoded
+    assert {s.episode_mode for s in samples} == {0}
+
+
+def test_batched_role_episode_supports_heterogeneous_lanes():
+    latest = _small_dart_net()
+    frozen = _small_dart_net()
+    lanes = [
+        LaneConfig(
+            seed=31,
+            seats=all_latest_seats(0.0),
+            tags=EpisodeTags(mode=EPISODE_MODE_SELF_PLAY),
+        ),
+        LaneConfig(
+            seed=32,
+            seats=_with_seats(
+                all_latest_seats(0.0),
+                {0: SeatPolicy.frozen(frozen, 0.0), 2: SeatPolicy.frozen(frozen, 0.0)},
+            ),
+            tags=EpisodeTags(
+                mode=EPISODE_MODE_VS_CHECKPOINT,
+                opponent_id=OPPONENT_CHECKPOINT_BASE,
+                latest_team=1,
+            ),
+        ),
+        LaneConfig(
+            seed=33,
+            seats=_with_seats(
+                all_latest_seats(0.0),
+                {1: SeatPolicy.hard_bot(make_agent("strategic")),
+                 3: SeatPolicy.hard_bot(make_agent("strategic"))},
+            ),
+            tags=EpisodeTags(
+                mode=EPISODE_MODE_VS_HARD_BOT,
+                opponent_id=OPPONENT_STRATEGIC,
+                latest_team=0,
+            ),
+        ),
+    ]
+
+    samples_per_lane = play_episodes_batched(
+        q_nets=latest,
+        encoder=RoleAwareStateActionEncoder(),
+        lanes=lanes,
+        device="cpu",
+        gamma=1.0,
+    )
+
+    assert [bool(samples) for samples in samples_per_lane] == [True, True, True]
+    assert {s.player for s in samples_per_lane[1]} <= {1, 3}
+    assert {s.player for s in samples_per_lane[2]} <= {0, 2}
+    assert {s.episode_mode for s in samples_per_lane[0]} == {EPISODE_MODE_SELF_PLAY}
+    assert {s.episode_mode for s in samples_per_lane[1]} == {EPISODE_MODE_VS_CHECKPOINT}
+    assert {s.opponent_id for s in samples_per_lane[1]} == {OPPONENT_CHECKPOINT_BASE}
+    assert {s.episode_mode for s in samples_per_lane[2]} == {EPISODE_MODE_VS_HARD_BOT}
+    assert {s.opponent_id for s in samples_per_lane[2]} == {OPPONENT_STRATEGIC}
+
+
+def test_batched_role_episode_groups_same_frozen_net(monkeypatch):
+    latest = _small_dart_net()
+    frozen_a = _small_dart_net()
+    frozen_b = _small_dart_net()
+    calls: list[tuple[int, int]] = []
+
+    def fake_argmax_q_batched(net, encoded_groups, device, **kwargs):
+        calls.append((id(net), len(encoded_groups)))
+        return [(0, float("nan")) for _ in encoded_groups]
+
+    monkeypatch.setattr(actor_mod, "argmax_q_batched", fake_argmax_q_batched)
+
+    play_episodes_batched(
+        q_nets=latest,
+        encoder=RoleAwareStateActionEncoder(),
+        lanes=[
+            LaneConfig(
+                seed=41,
+                seats=_with_seats(all_latest_seats(0.0), {0: SeatPolicy.frozen(frozen_a, 0.0)}),
+            ),
+            LaneConfig(
+                seed=42,
+                seats=_with_seats(all_latest_seats(0.0), {0: SeatPolicy.frozen(frozen_a, 0.0)}),
+            ),
+            LaneConfig(
+                seed=43,
+                seats=_with_seats(all_latest_seats(0.0), {0: SeatPolicy.frozen(frozen_b, 0.0)}),
+            ),
+        ],
+        device="cpu",
+        gamma=1.0,
+    )
+
+    assert (id(frozen_a), 2) in calls
+    assert (id(frozen_b), 1) in calls
+    assert any(net_id == id(latest) for net_id, _ in calls)
 
 
 def test_random_episode_uses_selected_action_encoding_fast_path():
@@ -171,10 +318,11 @@ def test_random_episode_uses_selected_action_encoding_fast_path():
             return super().encode_one(env, player, action, legal_moves)
 
     encoder = CountingEncoder()
+    q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     samples = play_episode(
-        q_nets=None,
+        q_nets=q_nets,
         encoder=encoder,
-        epsilon=1.0,
+        seats=all_latest_seats(1.0),
         seed=13,
         device="cpu",
         gamma=1.0,
@@ -191,14 +339,16 @@ def test_random_episode_uses_selected_action_encoding_fast_path():
 def test_hard_bot_seats_contribute_no_samples():
     """Latest controls {0,2}; hard bot plays seats {1,3}. No seat-1/3 samples."""
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=RoleAwareStateActionEncoder(),
-        epsilon=0.0,
+        seats=_with_seats(
+            all_latest_seats(0.0),
+            {1: SeatPolicy.hard_bot(make_agent("strategic")),
+             3: SeatPolicy.hard_bot(make_agent("strategic"))},
+        ),
         seed=41,
         device="cpu",
         gamma=1.0,
-        hard_bots=make_agent("strategic"),
-        hard_bot_seats=frozenset({1, 3}),
     )
     assert samples, "latest team must produce some training samples"
     assert {s.player for s in samples} <= {0, 2}
@@ -207,14 +357,12 @@ def test_hard_bot_seats_contribute_no_samples():
 def test_hard_bot_self_play_unchanged():
     """hard_bot_seats=frozenset() → all 4 seats in samples (full self-play)."""
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=RoleAwareStateActionEncoder(),
-        epsilon=1.0,   # random play → terminates fast and exercises every seat
+        seats=all_latest_seats(1.0),   # random play → terminates fast and exercises every seat
         seed=42,
         device="cpu",
         gamma=1.0,
-        hard_bots=make_agent("strategic"),
-        hard_bot_seats=frozenset(),
     )
     assert samples
     assert {s.player for s in samples} == {0, 1, 2, 3}
@@ -239,14 +387,15 @@ def test_hard_bot_only_invoked_for_hard_bot_seats():
 
     spy = SpyBot()
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=RoleAwareStateActionEncoder(),
-        epsilon=0.0,
+        seats=_with_seats(
+            all_latest_seats(0.0),
+            {1: SeatPolicy.hard_bot(spy), 3: SeatPolicy.hard_bot(spy)},
+        ),
         seed=43,
         device="cpu",
         gamma=1.0,
-        hard_bots=spy,
-        hard_bot_seats=frozenset({1, 3}),
     )
     assert samples
     assert spy.players, "hard bot must have been invoked at least once"
@@ -261,14 +410,16 @@ def test_hard_bot_returns_finite_and_attributed_to_latest():
     sample attribution and well-formedness of the MC return computation.
     """
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=RoleAwareStateActionEncoder(),
-        epsilon=0.0,
+        seats=_with_seats(
+            all_latest_seats(0.0),
+            {1: SeatPolicy.hard_bot(make_agent("strategic")),
+             3: SeatPolicy.hard_bot(make_agent("strategic"))},
+        ),
         seed=44,
         device="cpu",
         gamma=1.0,
-        hard_bots=make_agent("strategic"),
-        hard_bot_seats=frozenset({1, 3}),
     )
     assert samples
     for s in samples:
@@ -284,17 +435,17 @@ def test_hard_bot_dispatch_probability():
     draws should land in [0.58, 0.62] (well within the binomial 95% band of
     ≈ ±0.0095).
     """
-    latest_vs_latest_frac = 0.60
-    latest_vs_hard_bot_frac = 0.40
+    self_play_frac = 0.60
+    hard_bot_frac = 0.40
     rng = random.Random(2026)
 
     n_self = n_hard = 0
     n = 10_000
     for _ in range(n):
         u = rng.random()
-        if u < latest_vs_latest_frac:
+        if u < self_play_frac:
             n_self += 1
-        elif u < latest_vs_latest_frac + latest_vs_hard_bot_frac:
+        elif u < self_play_frac + hard_bot_frac:
             n_hard += 1
         else:
             n_self += 1
@@ -321,9 +472,9 @@ def test_role_random_episode_uses_encode_one_fast_path():
 
     encoder = CountingEncoder()
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=encoder,
-        epsilon=1.0,
+        seats=all_latest_seats(1.0),
         seed=18,
         device="cpu",
         gamma=1.0,
@@ -353,14 +504,15 @@ def test_pair_dispatch_assigns_distinct_bots():
     spy_a = SpyBot("A")
     spy_b = SpyBot("B")
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=RoleAwareStateActionEncoder(),
-        epsilon=0.0,
+        seats=_with_seats(
+            all_latest_seats(0.0),
+            {1: SeatPolicy.hard_bot(spy_a), 3: SeatPolicy.hard_bot(spy_b)},
+        ),
         seed=51,
         device="cpu",
         gamma=1.0,
-        hard_bots={1: spy_a, 3: spy_b},
-        hard_bot_seats=frozenset({1, 3}),
     )
     assert samples
     # spy_a only saw p=1; spy_b only saw p=3
@@ -373,14 +525,16 @@ def test_pair_dispatch_assigns_distinct_bots():
 def test_pair_episode_samples_only_latest():
     """Mixed-pair vs-hard-bot episode still produces only latest-team samples."""
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=RoleAwareStateActionEncoder(),
-        epsilon=0.0,
+        seats=_with_seats(
+            all_latest_seats(0.0),
+            {1: SeatPolicy.hard_bot(make_agent("strategic")),
+             3: SeatPolicy.hard_bot(make_agent("yaoji"))},
+        ),
         seed=52,
         device="cpu",
         gamma=1.0,
-        hard_bots={1: make_agent("strategic"), 3: make_agent("yaoji")},
-        hard_bot_seats=frozenset({1, 3}),
     )
     assert samples
     assert {s.player for s in samples} <= {0, 2}
@@ -400,14 +554,15 @@ def test_pair_legacy_agent_still_works():
 
     spy = SpyBot()
     samples = play_episode(
-        q_nets=_small_shared_net(),
+        q_nets=_small_dart_net(),
         encoder=RoleAwareStateActionEncoder(),
-        epsilon=0.0,
+        seats=_with_seats(
+            all_latest_seats(0.0),
+            {1: SeatPolicy.hard_bot(spy), 3: SeatPolicy.hard_bot(spy)},
+        ),
         seed=53,
         device="cpu",
         gamma=1.0,
-        hard_bots=spy,
-        hard_bot_seats=frozenset({1, 3}),
     )
     assert samples
     assert spy.players, "spy bot must have been called"

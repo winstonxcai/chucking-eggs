@@ -16,7 +16,6 @@ from guandan.dart.data.buffer import (
 from guandan.dart.model.encoding.base_encoder import ENCODE_CHANNEL_SHAPES
 from guandan.dart.model.encoding.role_encoder import (
     ROLE_ENCODE_CHANNEL_SHAPES,
-    ROLE_ENCODE_TRICK_CHANNEL_SHAPES,
 )
 from guandan.dart.data.returns import TrainSample
 
@@ -33,7 +32,7 @@ def _sample(player: int, val: float) -> TrainSample:
 def _role_stacked(n: int, offset: int = 0) -> dict[str, np.ndarray]:
     stacked: dict[str, np.ndarray] = {}
     for key, shape in ROLE_ENCODE_CHANNEL_SHAPES.items():
-        if key == "seat_id":
+        if key == "trick_head_id":
             stacked[key] = np.asarray([(offset + i) % 4 for i in range(n)], dtype=np.int8)
         else:
             arr = np.zeros((n, *shape), dtype=np.uint8)
@@ -119,7 +118,7 @@ def test_clear_resets_sizes_without_reallocating_storage():
 
 def test_role_buffer_push_sample_and_size_by_seat():
     buf = RoleAwareReplayBuffer(capacity=16)
-    stacked = _role_stacked(8)
+    stacked = _trick_stacked(8)
     returns = np.arange(8, dtype=np.float32)
     buf.push_stacked(stacked, returns)
 
@@ -127,57 +126,77 @@ def test_role_buffer_push_sample_and_size_by_seat():
     assert buf.size_by_seat() == {0: 2, 1: 2, 2: 2, 3: 2}
     batch, targets = buf.sample_batch(4)
 
-    assert batch["player_blocks"].shape == (4, 4, 252)
+    assert batch["player_blocks"].shape == (4, 4, 256)
     assert batch["global_features"].shape == (4, 13)
     assert batch["history_actions"].shape == (4, 20, 108)
     assert batch["history_roles"].shape == (4, 20, 4)
     assert batch["history_is_pass"].shape == (4, 20, 1)
     assert batch["behavior"].shape == (4, 9)
     assert batch["candidate_action"].shape == (4, 108)
-    assert batch["seat_id"].shape == (4,)
-    assert batch["seat_id"].dtype == torch.int64
+    assert batch["trick_head_id"].shape == (4,)
+    assert batch["trick_head_id"].dtype == torch.int64
     assert targets.shape == (4,)
 
 
 def test_role_buffer_circular_overwrite_sets_full_on_partial_wrap():
     buf = RoleAwareReplayBuffer(capacity=5)
-    buf.push_stacked(_role_stacked(3), np.arange(3, dtype=np.float32))
-    buf.push_stacked(_role_stacked(3, offset=1), np.arange(3, 6, dtype=np.float32))
+    buf.push_stacked(_trick_stacked(3), np.arange(3, dtype=np.float32))
+    buf.push_stacked(_trick_stacked(3, offset=1), np.arange(3, 6, dtype=np.float32))
 
     assert buf.size() == 5
     assert sum(buf.size_by_seat().values()) == 5
     batch, targets = buf.sample_batch(5)
-    assert batch["seat_id"].shape == (5,)
+    assert batch["trick_head_id"].shape == (5,)
     assert targets.shape == (5,)
+
+
+def test_role_buffer_state_dict_restores_samples_and_rng():
+    buf = RoleAwareReplayBuffer(capacity=16, seed=123)
+    stacked = _trick_stacked(12)
+    returns = np.arange(12, dtype=np.float32)
+    buf.push_stacked(stacked, returns)
+    first_idx = buf.rng.integers(0, 12, size=4)
+
+    state = buf.state_dict()
+    restored = RoleAwareReplayBuffer(capacity=16, seed=999)
+    restored.load_state_dict(state)
+
+    assert restored.size() == buf.size()
+    assert restored.ptr == buf.ptr
+    assert np.array_equal(restored.returns[:12], buf.returns[:12])
+    assert np.array_equal(restored.fields["trick_head_id"][:12], buf.fields["trick_head_id"][:12])
+    # RNG state should continue from the checkpoint, not from the constructor seed.
+    assert np.array_equal(restored.rng.integers(0, 12, size=4), buf.rng.integers(0, 12, size=4))
+    assert not np.array_equal(first_idx, restored.rng.integers(0, 12, size=4))
 
 
 def test_role_buffer_balanced_sample():
     buf = RoleAwareReplayBuffer(capacity=32)
-    buf.push_stacked(_role_stacked(16), np.arange(16, dtype=np.float32))
+    buf.push_stacked(_trick_stacked(16), np.arange(16, dtype=np.float32))
 
     batch, _targets = buf.sample_batch_balanced(8)
-    counts = {p: int((batch["seat_id"] == p).sum().item()) for p in range(4)}
+    counts = {p: int((batch["trick_head_id"] == p).sum().item()) for p in range(4)}
     assert counts == {0: 2, 1: 2, 2: 2, 3: 2}
 
 
-def test_collate_role_encoded_shapes_repeats_and_seat_ids():
+def test_collate_role_encoded_shapes_repeats_and_head_ids():
     groups = [_role_rows(2, offset=0), _role_rows(3, offset=2)]
 
     state_batch, action_batch, repeats = collate_role_encoded(groups)
 
-    assert state_batch["player_blocks"].shape == (2, 4, 252)
+    assert state_batch["player_blocks"].shape == (2, 4, 256)
     assert action_batch["candidate_action"].shape == (5, 108)
-    assert action_batch["seat_id"].tolist() == [0, 1, 2, 3, 0]
+    assert action_batch["trick_head_id"].tolist() == [0, 1, 2, 3, 0]
     assert repeats.tolist() == [2, 3]
 
 
-# ─── Trick-relative buffer (head_scheme="trick_relative") ─────────────
+# ─── Role-aware Dart buffer ───────────────────────────────────────────
 
 
 def _trick_stacked(n: int, offset: int = 0) -> dict[str, np.ndarray]:
-    """Build a stacked role-encoded batch under the trick_relative schema."""
+    """Build a stacked role-encoded Dart batch."""
     stacked: dict[str, np.ndarray] = {}
-    for key, shape in ROLE_ENCODE_TRICK_CHANNEL_SHAPES.items():
+    for key, shape in ROLE_ENCODE_CHANNEL_SHAPES.items():
         if key == "trick_head_id":
             stacked[key] = np.asarray([(offset + i) % 4 for i in range(n)], dtype=np.int8)
         else:
@@ -189,25 +208,22 @@ def _trick_stacked(n: int, offset: int = 0) -> dict[str, np.ndarray]:
 
 
 def test_trick_buffer_stores_256_wide_player_blocks():
-    buf = RoleAwareReplayBuffer(capacity=8, head_scheme="trick_relative")
+    buf = RoleAwareReplayBuffer(capacity=8)
     assert buf.head_field == "trick_head_id"
     assert buf.fields["player_blocks"].shape == (8, 4, 256)
-    assert "seat_id" not in buf.fields
 
 
 def test_trick_buffer_stratifies_on_trick_head_id():
-    buf = RoleAwareReplayBuffer(capacity=32, head_scheme="trick_relative")
+    buf = RoleAwareReplayBuffer(capacity=32)
     buf.push_stacked(_trick_stacked(16), np.arange(16, dtype=np.float32))
 
     batch, _targets = buf.sample_batch_balanced(8)
     counts = {p: int((batch["trick_head_id"] == p).sum().item()) for p in range(4)}
     assert counts == {0: 2, 1: 2, 2: 2, 3: 2}
-    # The legacy seat_id field must NOT be present in the trick-mode batch.
-    assert "seat_id" not in batch
 
 
 def test_trick_buffer_size_by_seat_uses_trick_head_id():
-    buf = RoleAwareReplayBuffer(capacity=16, head_scheme="trick_relative")
+    buf = RoleAwareReplayBuffer(capacity=16)
     # 4 samples per head id 0..3
     buf.push_stacked(_trick_stacked(16), np.arange(16, dtype=np.float32))
     sizes = buf.size_by_seat()
@@ -215,7 +231,6 @@ def test_trick_buffer_size_by_seat_uses_trick_head_id():
 
 
 def test_collate_role_encoded_autodetects_trick_scheme():
-    """collate_role_encoded picks trick action keys when trick_head_id present."""
     n = 2
     base = _trick_stacked(n, offset=0)
     rows_a = [{k: base[k][i] for k in base} for i in range(n)]
@@ -228,24 +243,21 @@ def test_collate_role_encoded_autodetects_trick_scheme():
     assert state_batch["player_blocks"].shape == (2, 4, 256)
     assert action_batch["candidate_action"].shape == (5, 108)
     assert "trick_head_id" in action_batch
-    assert "seat_id" not in action_batch
     assert action_batch["trick_head_id"].tolist() == [0, 1, 2, 3, 0]
     assert repeats.tolist() == [2, 3]
 
 
-def test_legacy_buffer_unchanged_by_default():
-    """Default head_scheme preserves legacy seat_id buffer behavior."""
+def test_role_buffer_defaults_to_dart_schema():
     buf = RoleAwareReplayBuffer(capacity=8)
-    assert buf.head_field == "seat_id"
-    assert buf.fields["player_blocks"].shape == (8, 4, 252)
-    assert "trick_head_id" not in buf.fields
+    assert buf.head_field == "trick_head_id"
+    assert buf.fields["player_blocks"].shape == (8, 4, 256)
 
 
 def test_buffer_roundtrips_all_tags():
     """Push samples with known tag values and assert sample_batch returns them unchanged."""
     n = 16
     buf = RoleAwareReplayBuffer(capacity=n)
-    stacked = _role_stacked(n)
+    stacked = _trick_stacked(n)
     returns = np.linspace(-1.0, 1.0, n, dtype=np.float32)
 
     tags = {
@@ -286,7 +298,7 @@ def test_buffer_roundtrips_all_tags():
 
 def test_k1_capped_sampler_hits_target_fraction():
     """sample_batch_balanced_k1_capped should produce batches with ~max_k1_frac K=1 samples."""
-    buf = RoleAwareReplayBuffer(capacity=400, head_scheme="trick_relative")
+    buf = RoleAwareReplayBuffer(capacity=400)
     n = 400
     stacked = _trick_stacked(n)
     returns = np.zeros(n, dtype=np.float32)

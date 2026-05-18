@@ -10,7 +10,6 @@ from guandan.dart.model.encoding.role_encoder import (
     REL_PARTNER,
     REL_SELF,
     ROLE_ENCODE_CHANNEL_SHAPES,
-    ROLE_ENCODE_TRICK_CHANNEL_SHAPES,
     RoleAwareStateActionEncoder,
     absolute_player,
     relative_role,
@@ -63,7 +62,7 @@ def test_encoder_output_keys_shapes_and_dtypes():
     assert set(out) == set(ROLE_ENCODE_CHANNEL_SHAPES)
     for key, shape in ROLE_ENCODE_CHANNEL_SHAPES.items():
         assert out[key].shape == shape
-        expected_dtype = np.int64 if key == "seat_id" else np.uint8
+        expected_dtype = np.int64 if key == "trick_head_id" else np.uint8
         assert out[key].dtype == expected_dtype
 
 
@@ -147,8 +146,8 @@ def test_player_blocks_carries_public_info_only():
     p = env.current_player
     legal = env.legal_moves(p)
     out = RoleAwareStateActionEncoder().encode_all(env, p, legal)[0]
-    assert out["player_blocks"].shape == (4, 252)
-    # No hand slots — only played, last_action, count, bomb-tier-histogram remain.
+    assert out["player_blocks"].shape == (4, 256)
+    # First 252 slots carry public info; the last 4 are trick-position metadata.
 
 
 def test_player_blocks_bombs_slot_is_zero_at_start():
@@ -174,22 +173,13 @@ def test_m0_feature_parity_for_initial_state():
     assert np.array_equal(role_out["candidate_action"], base_out["candidate_action"].astype(np.uint8))
 
 
-# ─── Trick-relative head scheme ───────────────────────────────────────
+# ─── Trick-relative heads ─────────────────────────────────────────────
 
 
-def test_absolute_seat_scheme_is_default():
-    """Default head_scheme preserves legacy seat_id output verbatim."""
+def test_encoder_advertises_trick_head_schema():
     enc = RoleAwareStateActionEncoder()
-    assert enc.head_scheme == "absolute_seat"
-    assert enc.head_field == "seat_id"
-    assert enc.channel_shapes["player_blocks"] == (4, 252)
-
-
-def test_trick_scheme_advertises_trick_head_id():
-    enc = RoleAwareStateActionEncoder(head_scheme="trick_relative")
     assert enc.head_field == "trick_head_id"
     assert enc.channel_shapes["player_blocks"] == (4, 256)
-    assert "seat_id" not in enc.channel_shapes
     assert "trick_head_id" in enc.channel_shapes
 
 
@@ -265,10 +255,9 @@ def test_trick_encoder_outputs_trick_head_id_field():
     env = _fresh_env(seed=5)
     p = env.current_player
     legal = env.legal_moves(p)
-    enc = RoleAwareStateActionEncoder(head_scheme="trick_relative")
+    enc = RoleAwareStateActionEncoder()
     out = enc.encode_all(env, p, legal)[0]
 
-    assert "seat_id" not in out
     assert "trick_head_id" in out
     assert out["trick_head_id"].dtype == np.int64
     # No trick yet → leader → 0
@@ -279,7 +268,7 @@ def test_trick_encoder_player_blocks_width_is_256():
     env = _fresh_env(seed=5)
     p = env.current_player
     legal = env.legal_moves(p)
-    enc = RoleAwareStateActionEncoder(head_scheme="trick_relative")
+    enc = RoleAwareStateActionEncoder()
     out = enc.encode_all(env, p, legal)[0]
 
     assert out["player_blocks"].shape == (4, 256)
@@ -293,7 +282,7 @@ def test_trick_encoder_trick_pos_onehot_in_player_blocks():
     leader = env.trick_winner
     p = env.current_player
 
-    enc = RoleAwareStateActionEncoder(head_scheme="trick_relative")
+    enc = RoleAwareStateActionEncoder()
     out = enc.encode_all(env, p, legal_moves=env.legal_moves(p))[0]
     blocks = out["player_blocks"]
 
@@ -314,24 +303,6 @@ def test_trick_encoder_trick_pos_zero_when_no_trick():
     legal = env.legal_moves(p)
     assert env.current_trick is None
 
-    enc = RoleAwareStateActionEncoder(head_scheme="trick_relative")
+    enc = RoleAwareStateActionEncoder()
     out = enc.encode_all(env, p, legal)[0]
     assert out["player_blocks"][:, 252:256].sum() == 0
-
-
-def test_trick_encoder_other_features_match_absolute_scheme_at_start():
-    """At game start, the state channels match between the two head schemes
-    (only player_blocks shape and the head-id field differ)."""
-    env = _fresh_env(seed=8)
-    p = env.current_player
-    legal = env.legal_moves(p)
-    abs_out = RoleAwareStateActionEncoder().encode_all(env, p, legal)[0]
-    trick_out = RoleAwareStateActionEncoder(head_scheme="trick_relative").encode_all(env, p, legal)[0]
-
-    # Shared state channels must be identical.
-    for k in ("own_hand", "partner_hand", "others_hand", "global_features",
-              "behavior", "history_actions", "history_roles", "history_is_pass"):
-        assert np.array_equal(abs_out[k], trick_out[k]), f"mismatch on {k}"
-
-    # player_blocks: first 252 dims must match; trick block has extra 4 dims.
-    assert np.array_equal(abs_out["player_blocks"], trick_out["player_blocks"][:, :252])

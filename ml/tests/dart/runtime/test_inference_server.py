@@ -27,7 +27,7 @@ from guandan.dart.runtime.inference_server import (
     release_shared_buffers,
 )
 from guandan.dart.config import QNetConfig
-from guandan.dart.model.q_network import DartQNet, init_seat_nets
+from guandan.dart.model.q_network import GuanZeroQNet, init_guanzero_nets
 from guandan.game import GuanDanEnv
 
 
@@ -63,7 +63,7 @@ def _build_decisions(n: int, seed: int = 7) -> list[tuple[int, list[dict]]]:
 
 
 def _local_argmaxes(
-    q_nets: Mapping[int, DartQNet],
+    q_nets: Mapping[int, GuanZeroQNet],
     decisions: list[tuple[int, list[dict]]],
     device: str = "cpu",
 ) -> list[int]:
@@ -80,7 +80,7 @@ def _local_argmaxes(
 
 
 def _shared_argmaxes(
-    q_nets: Mapping[int, DartQNet],
+    q_nets: Mapping[int, GuanZeroQNet],
     decisions: list[tuple[int, list[dict]]],
     device: str = "cpu",
     num_slots: int = 16,
@@ -139,7 +139,7 @@ def _shared_argmaxes(
 def test_shared_mem_cpu_equivalence():
     """Shared-memory wire format must produce identical argmax to local."""
     torch.manual_seed(0)
-    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     for net in q_nets.values():
         net.eval()
 
@@ -157,7 +157,7 @@ def test_shared_mem_cpu_equivalence():
 def test_shared_mem_batched_requests_match_serial():
     """Forced batching across multiple requests still matches serial argmax."""
     torch.manual_seed(1)
-    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     for net in q_nets.values():
         net.eval()
 
@@ -178,7 +178,7 @@ def test_shared_mem_batched_requests_match_serial():
 def test_shared_mem_client_rejects_oversize_K():
     """K > inference_max_actions should fail loudly, not silently truncate."""
     torch.manual_seed(2)
-    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     ctx = mp.get_context("spawn")
     bufs, _ = allocate_shared_buffers(num_slots=4, max_actions=8, n_actors=1, ctx=ctx)
     try:
@@ -218,7 +218,7 @@ def test_shared_mem_actor_timeout_raises():
 def test_server_shared_weight_reload_respects_local_version():
     """Shared-memory refresh skips equal versions and loads newer versions."""
     torch.manual_seed(4)
-    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     ctx = mp.get_context("spawn")
     bufs, _ = allocate_shared_buffers(num_slots=1, max_actions=8, n_actors=1, ctx=ctx)
     stop_event = ctx.Event()
@@ -260,7 +260,7 @@ def test_cuda_tolerance_argmax_matches_local_or_near_tie():
     Q-value is below 1e-5.
     """
     torch.manual_seed(0)
-    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
     for net in q_nets.values():
         net.eval()
 

@@ -9,18 +9,18 @@ import torch
 from guandan.dart.data.buffer import RoleAwareReplayBuffer
 from guandan.dart.config import QNetConfig
 from guandan.dart.model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_SHAPES
-from guandan.dart.runtime.learner_shared import SharedHeadLearner
-from guandan.dart.runtime.weight_publish import (
+from guandan.dart.runtime.learners.dart import DartLearner
+from guandan.dart.runtime.weights import (
     load_latest_weights,
     publish_weights,
-    publish_weights_shared,
+    publish_weights_dart,
 )
-from guandan.dart.model.q_network import SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
-from guandan.dart.runtime.worker import maybe_sync_weights_shared
+from guandan.dart.model.q_network import DartQNet, DartQNetConfig, init_guanzero_nets
+from guandan.dart.runtime.actor.runtime import maybe_sync_weights
 
 
-def _small_shared_cfg() -> SharedHeadQNetConfig:
-    return SharedHeadQNetConfig(
+def _small_dart_cfg() -> DartQNetConfig:
+    return DartQNetConfig(
         role_d_model=16,
         history_hidden=16,
         global_hidden=8,
@@ -33,7 +33,7 @@ def _small_shared_cfg() -> SharedHeadQNetConfig:
 def _role_stacked(n: int) -> dict[str, np.ndarray]:
     stacked: dict[str, np.ndarray] = {}
     for key, shape in ROLE_ENCODE_CHANNEL_SHAPES.items():
-        if key == "seat_id":
+        if key == "trick_head_id":
             stacked[key] = np.asarray([i % 4 for i in range(n)], dtype=np.int8)
         else:
             arr = np.zeros((n, *shape), dtype=np.uint8)
@@ -75,7 +75,7 @@ def _full_tags(n: int) -> dict:
 
 
 def test_publish_and_load_weights():
-    q_nets = init_seat_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
+    q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
 
     with tempfile.TemporaryDirectory() as td:
         weight_dir = Path(td) / "weights"
@@ -100,50 +100,50 @@ def test_publish_and_load_weights():
         assert (weight_dir / "weights_1.pt").exists()
 
 
-def test_shared_learner_update_step_changes_params_and_returns_metrics():
+def test_dart_learner_update_step_changes_params_and_returns_metrics():
     torch.manual_seed(0)
-    net = SharedHeadQNet(_small_shared_cfg())
+    net = DartQNet(_small_dart_cfg())
     before = {k: v.detach().clone() for k, v in net.state_dict().items()}
-    learner = SharedHeadLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
+    learner = DartLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
 
     metrics = learner.update(_role_buffer(32), batch_size=16)
 
     assert metrics is not None
     assert "loss" in metrics
-    for seat in range(4):
-        assert f"loss_seat_{seat}" in metrics
-        assert f"q_mean_seat_{seat}" in metrics
-        assert f"grad_norm_head_{seat}" in metrics
-        assert metrics[f"sample_count_seat_{seat}"] == 4.0
+    for head in range(4):
+        assert f"loss_trick_head_{head}" in metrics
+        assert f"q_mean_trick_head_{head}" in metrics
+        assert f"grad_norm_head_{head}" in metrics
+        assert metrics[f"sample_count_trick_head_{head}"] == 4.0
     assert any(not torch.equal(before[k], v) for k, v in net.state_dict().items())
 
 
-def test_shared_learner_skips_when_seat_short():
+def test_dart_learner_skips_when_head_short():
     buf = RoleAwareReplayBuffer(capacity=8)
     stacked = _role_stacked(8)
-    stacked["seat_id"][:] = 0
+    stacked["trick_head_id"][:] = 0
     buf.push_stacked(stacked, np.zeros(8, dtype=np.float32))
-    learner = SharedHeadLearner(SharedHeadQNet(_small_shared_cfg()), lr=1e-3)
+    learner = DartLearner(DartQNet(_small_dart_cfg()), lr=1e-3)
 
     assert learner.update(buf, batch_size=8) is None
 
 
-def test_publish_weights_shared_roundtrip_and_sync():
+def test_publish_weights_dart_roundtrip_and_sync():
     torch.manual_seed(1)
-    q_net = SharedHeadQNet(_small_shared_cfg())
-    actor_net = SharedHeadQNet(_small_shared_cfg())
+    q_net = DartQNet(_small_dart_cfg())
+    actor_net = DartQNet(_small_dart_cfg())
 
     with tempfile.TemporaryDirectory() as td:
         weight_dir = Path(td) / "weights"
-        assert maybe_sync_weights_shared(actor_net, weight_dir, local_version=5) == (5, 0, 0)
+        assert maybe_sync_weights(actor_net, weight_dir, local_version=5) == (5, 0, 0)
 
-        publish_weights_shared(q_net, weight_dir, version=7)
+        publish_weights_dart(q_net, weight_dir, version=7)
         snapshot = load_latest_weights(weight_dir)
         assert snapshot is not None
         assert snapshot.version == 7
-        assert set(snapshot.state_dicts) == {"shared"}
+        assert set(snapshot.state_dicts) == {"q_net"}
 
-        new_version, local_updates, global_updates = maybe_sync_weights_shared(
+        new_version, local_updates, global_updates = maybe_sync_weights(
             actor_net, weight_dir, local_version=6,
         )
         assert new_version == 7
@@ -155,8 +155,8 @@ def test_publish_weights_shared_roundtrip_and_sync():
 
 def test_per_bucket_loss_emitted_all_grids():
     torch.manual_seed(2)
-    net = SharedHeadQNet(_small_shared_cfg())
-    learner = SharedHeadLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
+    net = DartQNet(_small_dart_cfg())
+    learner = DartLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
     n = 512
     buf = _role_buffer(n, tags=_full_tags(n))
 
@@ -185,8 +185,8 @@ def test_per_bucket_loss_emitted_all_grids():
 
 def test_sparse_cell_emits_null_loss():
     torch.manual_seed(3)
-    net = SharedHeadQNet(_small_shared_cfg())
-    learner = SharedHeadLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
+    net = DartQNet(_small_dart_cfg())
+    learner = DartLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
     n = 64
     tags = _full_tags(n)
     # Force every sample to land in the same phase_role cell (a=0, b=0); other
@@ -206,8 +206,8 @@ def test_sparse_cell_emits_null_loss():
 
 def test_q_gap_nan_handled():
     torch.manual_seed(4)
-    net = SharedHeadQNet(_small_shared_cfg())
-    learner = SharedHeadLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
+    net = DartQNet(_small_dart_cfg())
+    learner = DartLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
     n = 128
     tags = _full_tags(n)
     # Set every q_gap to NaN; should land them all in bucket 0 without crashing.

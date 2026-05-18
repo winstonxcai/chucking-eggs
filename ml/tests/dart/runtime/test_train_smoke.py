@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
+import torch
 
 from guandan.dart.config import EpsilonConfig, QNetConfig, TrainConfig
 from guandan.dart.utils.metrics import METRICS_SCHEMA_VERSION
@@ -33,8 +34,15 @@ def _smoke_cfg(run_dir: Path) -> TrainConfig:
         max_drain_batches_per_loop=8,
         publish_interval_updates=5,
         checkpoint_every_updates=5,
+        checkpoint_save_type="weight",
         log_every_updates=5,
         total_updates_target=5,
+        dart_role_d_model=8,
+        dart_history_hidden=8,
+        dart_global_hidden=8,
+        dart_action_hidden=8,
+        dart_trunk_hidden=16,
+        dart_trunk_layers=1,
         device="cpu",
         run_dir=str(run_dir),
     )
@@ -50,6 +58,24 @@ def test_train_smoke_runs_to_completion(tmp_path):
     assert (run_dir / "train.log").exists()
     assert (run_dir / "learner.log").exists()
     assert (run_dir / "checkpoints" / "final.pt").exists()
+    assert (run_dir / "checkpoints" / "update_00000005.pt").exists()
+
+    update_ckpt = torch.load(
+        run_dir / "checkpoints" / "update_00000005.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    final_ckpt = torch.load(
+        run_dir / "checkpoints" / "final.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert update_ckpt["checkpoint_save_type"] == "weight"
+    assert "learner_state" not in update_ckpt
+    assert "replay_state" not in update_ckpt
+    assert final_ckpt["checkpoint_save_type"] == "full"
+    assert "learner_state" in final_ckpt
+    assert "replay_state" in final_ckpt
 
     metrics_path = run_dir / "metrics_learner.jsonl"
     assert metrics_path.exists()

@@ -17,19 +17,20 @@ def test_actor_loop_single_episode():
     """Actor pushes at least one batch to the queue within a short window."""
     import multiprocessing as mp
 
-    from guandan.dart.config import QNetConfig, TrainConfig
+    from guandan.dart.config import MODEL_TYPE_GUANZERO, QNetConfig, TrainConfig
     from guandan.dart.runtime.learner import publish_weights
-    from guandan.dart.model.q_network import init_seat_nets
+    from guandan.dart.model.q_network import init_guanzero_nets
     from guandan.dart.runtime.worker import actor_loop
 
     cfg = TrainConfig(
+        model_type=MODEL_TYPE_GUANZERO,
         qnet=QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2),
         actor_push_batch_size=1,
         sync_interval_updates=1,
     )
     cfg_dict = dataclasses.asdict(cfg)
 
-    q_nets = init_seat_nets(cfg.qnet)
+    q_nets = init_guanzero_nets(cfg.qnet)
 
     ctx = mp.get_context("spawn")
 
@@ -79,12 +80,13 @@ def test_learner_drains_queue_and_updates():
 
     from guandan.combos import Combo  # noqa: F401 — ensures game engine is importable
     from guandan.game import GuanDanEnv
-    from guandan.dart.config import QNetConfig, TrainConfig
+    from guandan.dart.config import MODEL_TYPE_GUANZERO, QNetConfig, TrainConfig
     from guandan.dart.model.encoding.base_encoder import StateActionEncoder
     from guandan.dart.runtime.learner import learner_loop, publish_weights
-    from guandan.dart.model.q_network import init_seat_nets
+    from guandan.dart.model.q_network import init_guanzero_nets
 
     cfg = TrainConfig(
+        model_type=MODEL_TYPE_GUANZERO,
         qnet=QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2),
         buffer_min_size=2,
         batch_size=2,

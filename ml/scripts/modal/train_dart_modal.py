@@ -29,6 +29,15 @@ hf_cache = modal.Volume.from_name("hf-cache", create_if_missing=True)
 RUN_VOL = "/runs"
 
 _root = Path(__file__).resolve().parent.parent.parent.parent  # repo root
+_REMOTE_SRC = "/root/ml/src/"
+_DEFAULT_CONFIG_PATH = "/root/ml/src/guandan/dart/configs/dart_l4.yaml"
+
+
+def _local_config_path(config_path: str) -> str:
+    """Map Modal container config paths to local paths for --dry-run validation."""
+    if config_path.startswith(_REMOTE_SRC):
+        return str(_root / "ml" / "src" / config_path[len(_REMOTE_SRC):])
+    return config_path
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -37,12 +46,11 @@ image = (
         "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable",
     )
     .pip_install("torch", "numpy", "pyyaml", "tqdm", "maturin==1.7.0")
-    .add_local_dir(str(_root / "ml" / "src"),     remote_path="/root/ml/src", copy=True)
-    .add_local_dir(str(_root / "ml" / "scripts"), remote_path="/root/ml/scripts", copy=True)
+    .add_local_dir(str(_root / "ml" / "src"), remote_path="/root/ml/src", copy=True)
     .run_commands(
         ". $HOME/.cargo/env && cd /root/ml/src/guandan_rs"
         " && maturin build --release -i python3"
-        " && pip install target/wheels/*.whl",
+        " && pip install target/wheels/*manylinux*.whl",
     )
 )
 
@@ -51,7 +59,7 @@ image = (
     image=image,
     gpu="L4",
     cpu=32,
-    memory=20 * 1024,   # peak observed 16.89 GB; 20 GB leaves ~3 GB headroom
+    memory=20 * 1024,   # peak observed ~22.5 GB with lanes=40; Modal soft limit
     timeout=3600 * 12,  # 12-hour cap
     volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
     secrets=[modal.Secret.from_name("huggingface-token")],
@@ -87,6 +95,16 @@ def train_remote(
 
     run_dir = f"{RUN_VOL}/dart/{run_name}"
 
+    # Auto-detect latest checkpoint in run dir so preemption restarts don't rewind.
+    import glob
+    checkpoints_dir = f"{run_dir}/checkpoints"
+    existing = sorted(glob.glob(f"{checkpoints_dir}/update_*.pt"))
+    if existing:
+        latest = existing[-1]
+        if latest != resume:
+            print(f"Auto-resuming from latest checkpoint: {latest} (passed resume={resume})")
+        resume = latest
+
     cmd = [
         "python", "-m", "guandan.dart",
         "--config",  config_path,
@@ -109,21 +127,26 @@ def main(
     updates: int = 1000,
     run_name: str = "dart_l4_bench",
     seed: int = 0,
-    config_path: str = "/root/ml/src/guandan/dart/configs/m0_l4_distributed.yaml",
+    config_path: str = _DEFAULT_CONFIG_PATH,
     device: str = "cuda",
     profile: bool = False,
     resume: str | None = None,
     dry_run: bool = False,
+    wait: bool = False,
 ) -> None:
     if dry_run:
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
         from guandan.dart.config import load_config_from_yaml
-        cfg = load_config_from_yaml(config_path)
-        print(f"Config OK: model_type={cfg.model_type}, n_actors={cfg.n_actors}, updates={updates}")
+        local_path = _local_config_path(config_path)
+        cfg = load_config_from_yaml(local_path)
+        print(
+            f"Config OK: path={local_path}, model_type={cfg.model_type}, "
+            f"n_actors={cfg.n_actors}, updates={updates}"
+        )
         return
 
-    fn = train_remote.spawn(
+    kwargs = dict(
         updates=updates,
         run_name=run_name,
         seed=seed,
@@ -132,4 +155,9 @@ def main(
         profile=profile,
         resume=resume,
     )
-    print(f"Spawned function call id: {fn.object_id}")
+    if wait:
+        final_ckpt = train_remote.remote(**kwargs)
+        print(f"Completed. Final checkpoint: {final_ckpt}")
+    else:
+        fn = train_remote.spawn(**kwargs)
+        print(f"Spawned function call id: {fn.object_id}")

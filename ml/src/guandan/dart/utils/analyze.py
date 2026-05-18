@@ -60,10 +60,8 @@ def load_metrics(metrics_path: Path) -> RunMetrics:
 
     def _seat_loss(r: dict, p: int) -> float:
         d = r["loss"]
-        # legacy: keys are "0","1","2","3"
-        # shared-head: keys are "loss_seat_0","loss_seat_1",...
-        # trick-head: keys are "loss_trick_head_0","loss_trick_head_1",...
-        return d.get(str(p), d.get(f"loss_seat_{p}", d.get(f"loss_trick_head_{p}", float("nan"))))
+        # GuanZero logs use "0".."3"; Dart logs use "loss_trick_head_0".."..._3".
+        return d.get(str(p), d.get(f"loss_trick_head_{p}", float("nan")))
 
     losses = {
         p: np.asarray([_seat_loss(r, p) for r in rows], dtype=np.float64)

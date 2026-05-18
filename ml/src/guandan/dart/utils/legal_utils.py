@@ -6,9 +6,8 @@ logical play are strategically identical — the encoder is suit-agnostic —
 so keeping them dilutes labels and produces redundant NN evaluations.
 
 ``dedup_strategic`` collapses those variants and ``select_legal`` is the
-canonical entry point for actors. Both delegate to the Rust ``guandan_rs``
-extension so the Python episode loop and the Rust rollout loop share a single
-implementation.
+canonical entry point for actors. The ``guandan_rs`` package uses the optional
+native extension when available and falls back to Python otherwise.
 """
 
 from __future__ import annotations

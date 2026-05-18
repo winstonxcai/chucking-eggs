@@ -10,10 +10,10 @@ Typical local smoke:
 
 ```bash
 DART_ACTOR_PROFILE=1 DART_LEARNER_PROFILE=1 \
-  uv run python -m guandan.dart.train --config <config.yaml>
+  uv run python -m guandan.dart --config <config.yaml>
 ```
 
-When the inference server is enabled, add:
+When running the inference-server systems ablation, add:
 
 ```bash
 DART_SERVER_PROFILE=1

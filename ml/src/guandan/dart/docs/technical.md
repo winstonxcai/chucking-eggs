@@ -2,6 +2,27 @@
 
 ---
 
+## What is the current blessed training path?
+
+**DART is the production path.** New training configs should use
+`model_type: Dart`, the role-aware encoder, batched local actor inference, and
+`use_inference_server: false`.
+
+The shared-memory inference server is intentionally still in the tree. It was
+evaluated as a throughput alternative: actors submit action-scoring requests to
+a dedicated GPU process instead of scoring batched lanes locally. For the
+current DART setup this is not optimal; local batched actor inference plus a
+GPU learner is simpler and faster, so DART rejects `use_inference_server: true`
+at startup. The inference-server path remains useful as an ablation artifact
+and for the older GuanZero-style baseline.
+
+Validated production configs:
+
+- Local Apple Silicon: `ml/src/guandan/dart/configs/dart_mps.yaml`
+- Modal L4: `ml/src/guandan/dart/configs/dart_l4.yaml`
+
+---
+
 ## How does distributed training work?
 
 Three process types, two communication channels.
@@ -10,7 +31,7 @@ Three process types, two communication channels.
 
 **Learner process** owns the authoritative Q-nets and replay buffer. Tight loop: (1) drain the queue into the buffer, (2) run one gradient step when every seat has `buffer_min_size` samples, (3) publish weights / checkpoint / log on periodic ticks.
 
-**Actor processes** each hold a local eval-mode copy of the Q-nets. Loop: play an episode, accumulate samples, push a pre-stacked batch to the queue every `actor_push_batch_size` steps. Sync weights from disk every `sync_interval_updates` episodes (non-blocking — skips if already current).
+**Actor processes** each hold a local eval-mode copy of the Q-nets. Loop: roll one or more episode lanes with `play_episodes_batched`, accumulate samples, push a pre-stacked batch to the queue every `actor_push_batch_size` steps. Sync weights from disk every `sync_interval_updates` episodes (non-blocking — skips if already current).
 
 Communication — four channels, three directions:
 
@@ -142,23 +163,25 @@ With `γ<1`, earlier decisions are discounted more. For example, p's first decis
 
 ## What is the `encoded` field in `TrainSample`?
 
-A Python dict with 9 named numpy arrays — one per channel. It stays as a dict until `collate()` stacks it into tensors for the forward pass.
+A Python dict with named numpy arrays — one per channel. Current DART runs use the role-aware schema; the older base encoder has a smaller 9-key schema. The dict stays structured until `collate()` stacks it into tensors for the forward pass.
 
 | Key | Shape | Content |
 |---|---|---|
-| `own_hand` | (108,) | multi-hot over your current hand |
-| `others_hand` | (108,) | oracle: union of all opponents' hands |
-| `recent_action_each_player` | (4, 108) | last non-pass play per seat |
-| `played_cards_others` | (3, 108) | cumulative played cards, seats +1/+2/+3 |
-| `remaining_counts_others` | (3, 27) | one-hot hand-size bucket per opponent |
-| `level` | (13,) | current level rank, one-hot |
-| `history` | (20, 108) | last 20 moves as multi-hot card vectors |
+| `own_hand` | (108,) | multi-hot over the actor's current hand |
+| `partner_hand` | (108,) | partner hand when `is_partner_visible=true`; zeros otherwise |
+| `others_hand` | (108,) | union of the two opponents' current hands; oracle information in the current checkpoint |
+| `player_blocks` | (4, 256) | public per-role features: played cards, last non-pass action, remaining count, bomb tiers, trick position |
+| `global_features` | (13,) | current level rank, one-hot |
 | `behavior` | (9,) | cooperation/dwarfing/assisting flags |
+| `history_actions` | (20, 108) | recent moves as multi-hot card vectors |
+| `history_roles` | (20, 4) | relative actor role for each history row |
+| `history_is_pass` | (20, 1) | pass marker for each history row |
 | `candidate_action` | (108,) | the action being scored, multi-hot |
+| `trick_head_id` | scalar | routing head: leading / first responder / across / last responder |
 
-108 dims per card channel = one bit per physical card in the double deck (52×2 + 4 jokers). The dict structure exists so individual channels can be swapped for ablations (M1–M4) without touching the rest of the pipeline.
+108 dims per card channel = one bit per physical card in the double deck (52×2 + 4 jokers). The dict structure exists so individual channels can be swapped for ablations without touching the rest of the pipeline.
 
-In the Q-network, `history` goes through the LSTM; the other 8 are flattened and concatenated directly into the MLP.
+In the Q-network, the history channels go through the LSTM; `player_blocks`, global hand/features, and the candidate action go through separate MLP branches before the routed Q head.
 
 ---
 
@@ -180,9 +203,9 @@ No universal rule — it's empirically driven. Common patterns:
 
 **Start/end values.** Literature default is start=1.0, end=0.01–0.05. Dart uses start=0.1 (conservative) because self-play + replay buffer already provides diversity without needing fully random early play.
 
-**Decay horizon.** Set to roughly when the buffer first fills and losses stabilize — before that point Q-values are noise and epsilon barely matters; after that you want it low. `epsilon_decay_episodes=15000` against 30k episodes decays halfway through, when the network has had real training.
+**Decay horizon.** Set to roughly when the buffer first fills and losses stabilize — before that point Q-values are noise and epsilon barely matters; after that you want it low. DART uses `epsilon_decay_updates`; the actor evaluates the schedule against the latest learner update count, so exploration tracks optimization progress rather than local episode count.
 
-**Per-actor variation (distributed).** DouZero (the paper this is based on) gives each actor a different *fixed* epsilon rather than a shared decaying one. Actor 0 gets ε=0.0, actor 1 gets ε=0.1, actor 2 gets ε=0.3, etc. This maintains diversity throughout training without a decay schedule. The current code approximates this via the `actor_id` offset in `_epsilon(episode_count + actor_id, cfg)`.
+**Per-actor variation (distributed).** DouZero gives each actor a different fixed epsilon rather than a shared decaying one. DART does not currently use per-actor epsilon bands; actors share the update-based epsilon schedule and diversify through independent seeds, lane interleaving, mixed opponents, and replay.
 
 **Guan Dan branching factor.** With 100+ legal moves, even ε=0.01 generates meaningful randomness — picking uniformly from 100 actions is a lot of variance. Could go lower than 0.01 without losing exploration coverage.
 
@@ -283,8 +306,8 @@ Its only job is transferring sample batches from actor processes to the learner'
 ```
 Actor process                      Learner process
 ─────────────                      ───────────────
-play_episode()
-accumulate samples
+play_episodes_batched()
+accumulate per-lane samples
 stack into numpy arrays
 sample_queue.put(msg)    ──►    sample_queue.get_nowait()
                                   → buffer.push_stacked()

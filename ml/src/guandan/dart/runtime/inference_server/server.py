@@ -1,4 +1,4 @@
-"""Batched GPU inference server for distributed Dart actors."""
+"""Batched GPU inference server used by the systems ablation."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from ...model.encoding.base_encoder import ENCODE_CHANNEL_SHAPES
-from ...model.q_network import DartQNet
+from ...model.q_network import GuanZeroQNet
 from ...utils.profiler import PhaseProfiler
 from .batching import (
     RequestDesc,
@@ -39,7 +39,7 @@ class InferenceServer:
 
     def __init__(
         self,
-        q_nets:           Mapping[int, DartQNet],
+        q_nets:           Mapping[int, GuanZeroQNet],
         bufs:             SharedBuffers,
         stop_event,
         device:           str | torch.device = "cpu",
@@ -298,8 +298,8 @@ def run_server(
     from pathlib import Path
     import torch
     from ...utils.logging_setup import setup_run_logging
-    from ...model.q_network import init_seat_nets
-    from ..weight_publish import load_latest_weights
+    from ...model.q_network import init_guanzero_nets
+    from ..weights import load_latest_weights
 
     server_log_path = Path(server_log_path) if server_log_path else Path("inference_server.log")
     _slog, _ = setup_run_logging(
@@ -330,7 +330,7 @@ def run_server(
         )
 
         _slog.info("building q_nets and moving to %s...", cfg_device)
-        q_nets = init_seat_nets(cfg.qnet)
+        q_nets = init_guanzero_nets(cfg.qnet)
         if initial_state_dicts is not None:
             for p in range(4):
                 q_nets[p].load_state_dict(initial_state_dicts[p])

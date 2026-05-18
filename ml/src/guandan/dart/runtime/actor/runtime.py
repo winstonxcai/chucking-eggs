@@ -1,0 +1,166 @@
+"""Actor runtime construction and weight synchronization."""
+
+from __future__ import annotations
+
+import dataclasses
+from collections.abc import Mapping
+import random
+from pathlib import Path
+
+import torch
+
+from ...config import MODEL_TYPE_DART, dart_qnet_config
+from ...model.encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
+from ...model.encoding.role_encoder import RoleAwareStateActionEncoder
+from ...model.q_network import DartQNet, init_guanzero_nets
+
+
+@dataclasses.dataclass
+class ActorRuntime:
+    encoder: StateActionEncoder | RoleAwareStateActionEncoder
+    q_nets: object | None
+    q_nets_inference: object | None
+    inference_client: object | None
+    dart_path: bool
+    use_int8: bool
+    channel_keys: tuple[str, ...]
+    include_players: bool
+
+    def refresh_inference_nets(self) -> None:
+        if self.use_int8:
+            self.q_nets_inference = _quantize_for_inference(self.q_nets, self.dart_path)
+
+
+def build_actor_runtime(actor_id: int, cfg, inference_args: dict | None) -> ActorRuntime:
+    if cfg.model_type == MODEL_TYPE_DART and cfg.inference.enabled:
+        raise ValueError(
+            f"Inference server is not the production path for model_type={cfg.model_type!r}. "
+            "Set use_inference_server: false."
+        )
+
+    dart_path = cfg.model_type == MODEL_TYPE_DART
+    if dart_path:
+        encoder = RoleAwareStateActionEncoder(
+            is_partner_visible=cfg.qnet.is_partner_visible,
+        )
+    else:
+        encoder = StateActionEncoder(is_partner_visible=cfg.qnet.is_partner_visible)
+
+    inference_client = _build_inference_client(actor_id, inference_args, cfg) if inference_args else None
+    if dart_path:
+        q_nets = DartQNet(dart_qnet_config(cfg))
+        q_nets.eval()
+    elif inference_client is None:
+        q_nets = init_guanzero_nets(cfg.qnet)
+        for net in q_nets.values():
+            net.eval()
+    else:
+        q_nets = None
+
+    use_int8 = bool(getattr(cfg, "use_int8_actor", False)) and q_nets is not None
+    q_nets_inference = (
+        _quantize_for_inference(q_nets, dart_path)
+        if use_int8
+        else q_nets
+    )
+    return ActorRuntime(
+        encoder=encoder,
+        q_nets=q_nets,
+        q_nets_inference=q_nets_inference,
+        inference_client=inference_client,
+        dart_path=dart_path,
+        use_int8=use_int8,
+        channel_keys=tuple(encoder.channel_keys) if dart_path else tuple(ENCODE_CHANNEL_KEYS),
+        include_players=not dart_path,
+    )
+
+
+def sync_actor_weights(
+    runtime: ActorRuntime,
+    weight_dir: Path,
+    *,
+    local_version: int,
+    local_updates: int,
+    sync_threshold: int,
+) -> tuple[int, int, int]:
+    if runtime.q_nets is None:
+        return local_version, local_updates, 0
+    return maybe_sync_weights(
+        runtime.q_nets, weight_dir, local_version, local_updates, sync_threshold,
+    )
+
+
+def maybe_sync_weights(
+    q_nets,
+    weight_dir: Path,
+    local_version: int,
+    local_updates: int = 0,
+    sync_interval_updates: int = 0,
+) -> tuple[int, int, int]:
+    """Conditionally load newer actor weights."""
+    from ..weights import load_latest_weights, read_latest_metadata
+
+    meta = read_latest_metadata(weight_dir)
+    if meta is None:
+        return local_version, local_updates, 0
+    latest_version, latest_updates = meta
+
+    if latest_version <= local_version:
+        return local_version, local_updates, latest_updates
+
+    if local_version >= 0 and sync_interval_updates > 0 \
+            and (latest_updates - local_updates) < sync_interval_updates:
+        return local_version, local_updates, latest_updates
+
+    snapshot = load_latest_weights(weight_dir)
+    if snapshot is None or snapshot.version <= local_version:
+        return local_version, local_updates, latest_updates
+
+    if isinstance(q_nets, Mapping):
+        for p in range(4):
+            q_nets[p].load_state_dict(snapshot.state_dicts[p])
+            q_nets[p].eval()
+    else:
+        q_nets.load_state_dict(snapshot.state_dicts["q_net"])
+        q_nets.eval()
+
+    return snapshot.version, snapshot.updates, snapshot.updates
+
+
+def jitter_sync_threshold(cfg, rng: random.Random) -> int:
+    """Return sync_interval_updates plus per-actor uniform jitter."""
+    if cfg.sync_jitter_updates <= 0:
+        return cfg.sync_interval_updates
+    return cfg.sync_interval_updates + rng.randint(
+        -cfg.sync_jitter_updates, cfg.sync_jitter_updates,
+    )
+
+
+def _quantize_for_inference(nets, dart_path: bool):
+    import torch.ao.quantization as qao
+
+    if dart_path:
+        return qao.quantize_dynamic(nets, {torch.nn.Linear}, dtype=torch.qint8)
+    return {
+        player: qao.quantize_dynamic(nets[player], {torch.nn.Linear}, dtype=torch.qint8)
+        for player in range(4)
+    }
+
+
+def _build_inference_client(actor_id: int, inference_args: dict, cfg) -> "object":
+    from ..inference_server import build_client
+    return build_client(
+        actor_id       = actor_id,
+        inference_args = inference_args,
+        timeout_s      = cfg.inference.timeout_s,
+        max_actions    = cfg.inference.max_actions,
+    )
+
+
+__all__ = [
+    "ActorRuntime",
+    "build_actor_runtime",
+    "jitter_sync_threshold",
+    "maybe_sync_weights",
+    "sync_actor_weights",
+]

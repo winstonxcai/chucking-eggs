@@ -2,7 +2,7 @@
 
 Provides the bucket tensor builders and grid/marginal emitters that annotate
 each gradient step's loss by phase, trick-role, opponent, epsilon, etc.
-Consumed by SharedHeadLearner.update() and exposed here so analysis scripts
+Consumed by DartLearner.update() and exposed here so analysis scripts
 can reconstruct the same bucketing offline.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from ..data.sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
+from ...data.sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
 
 
 PHASE_KEY_PREFIXES = (

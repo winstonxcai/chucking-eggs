@@ -15,7 +15,8 @@ Architecture
   │                          │     │                               │
   │  Q-nets[0..3] compiled   │     │  Q-nets[0..3]  local copy     │
   │  ReplayBuffer  per-seat  │     │  loop:                        │
-  │  loop:                   │     │    play_episode() → samples   │
+  │  loop:                   │     │    play_episodes_batched()     │
+  │                          │     │      → per-lane samples        │
   │    drain queue → buffer  │◄────│    accumulate actor_push_batch│
   │    MSE update ×4 seats   │     │    queue.put(stacked_msg)     │
   │    update_counter += 1   │     │                               │
@@ -56,9 +57,11 @@ from pathlib import Path
 from tqdm import tqdm
 
 from .worker import actor_loop
-from .learner import learner_loop, load_latest_weights
-from ..config import TrainConfig, load_config_from_cli
+from .learner import learner_loop
+from .weights import load_latest_weights
+from ..config import MODEL_TYPE_DART, TrainConfig, load_config_from_cli
 from ..utils.logging_setup import setup_run_logging
+from ..utils.reproducibility import seed_everything
 from ..utils.run_layout import RunLayout
 from . import inference_server as _isrv
 
@@ -264,10 +267,13 @@ def _shutdown_all(
 def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     import multiprocessing as mp
 
-    if cfg.model_type == "shared_heads" and cfg.inference.enabled:
+    seed_everything(cfg.seed)
+
+    if cfg.model_type == MODEL_TYPE_DART and cfg.inference.enabled:
         raise ValueError(
-            "Inference server not supported for model_type='shared_heads'. "
-            "Set use_inference_server: false in config."
+            f"Inference server is not the production path for model_type={MODEL_TYPE_DART!r}. "
+            "Use use_inference_server: false. The inference-server implementation is kept "
+            "for the older GuanZero baseline and throughput tradeoff experiments."
         )
 
     layout         = RunLayout(Path(cfg.resolved_run_dir))

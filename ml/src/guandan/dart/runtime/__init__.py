@@ -3,22 +3,32 @@
 Process modules:
 - ``train``            — top-level orchestrator (entry point via ``main``)
 - ``learner``          — unified ``learner_loop`` + ``LearnerProtocol``
-- ``learner_seat``     — ``SeatLearner`` (per-seat Q-nets, paper §4.2)
-- ``learner_shared``   — ``SharedHeadLearner`` (shared trunk, active variant)
-- ``loss_buckets``     — per-batch metric stratification helpers
-- ``weight_publish``   — atomic weight publish + read helpers
+- ``learners/``        — concrete learner implementations and loss buckets
+- ``weights``          — atomic weight publish + read helpers
 - ``worker``           — per-actor subprocess; ``actor_loop`` target
-- ``actor``            — single-episode self-play helpers used by the worker
-- ``inference_server/`` — optional shared-GPU inference server (batching/client/server)
+- ``actor/``           — rollout, actor runtime setup, opponents, sample packing
+- ``inference_server/`` — shared-GPU inference-server systems ablation
 """
 
-from .actor import argmax_q, play_episode, select_legal
+from .actor import (
+    LaneConfig,
+    SeatPolicy,
+    all_latest_seats,
+    argmax_q,
+    play_episode,
+    play_episodes_batched,
+    select_legal,
+)
 from .train import main, train
 
 __all__ = [
     "argmax_q",
+    "LaneConfig",
     "main",
     "play_episode",
+    "play_episodes_batched",
+    "SeatPolicy",
+    "all_latest_seats",
     "select_legal",
     "train",
 ]

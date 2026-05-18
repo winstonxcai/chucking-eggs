@@ -1,4 +1,4 @@
-"""Shared-memory inference server for distributed Dart actors.
+"""Shared-memory inference-server systems ablation.
 
 Submodules:
 - ``batching`` — shared-memory buffer types, field layout, lifecycle helpers

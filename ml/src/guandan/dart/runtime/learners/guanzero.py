@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 import torch
 import torch.nn.functional as F
 
-from ..data.buffer import ReplayBuffer
-from ..model.q_network import DartQNet
-from ..utils.profiler import PhaseProfiler
+from ...data.buffer import ReplayBuffer
+from ...model.q_network import GuanZeroQNet
+from ...utils.profiler import PhaseProfiler
 
 
 class SeatLearner:
@@ -32,7 +32,7 @@ class SeatLearner:
 
     def __init__(
         self,
-        q_nets: Mapping[int, DartQNet],
+        q_nets: Mapping[int, GuanZeroQNet],
         lr: float = 1e-4,
         device: torch.device | str = "cpu",
         use_bf16: bool = False,
@@ -60,6 +60,23 @@ class SeatLearner:
             enabled=os.environ.get("DART_LEARNER_PROFILE") == "1",
             device=self.device if self.device.type == "cuda" else None,
         )
+
+    def state_dict(self) -> dict:
+        """Return optimizer/runtime state needed for exact resume."""
+        return {
+            "optimizers": {
+                p: optim.state_dict()
+                for p, optim in self.optims.items()
+            }
+        }
+
+    def load_state_dict(self, state: dict | None) -> None:
+        """Restore optimizer/runtime state when present in a checkpoint."""
+        if not state:
+            return
+        optimizers = state.get("optimizers", {})
+        for p, optim_state in optimizers.items():
+            self.optims[int(p)].load_state_dict(optim_state)
 
     def update(
         self,

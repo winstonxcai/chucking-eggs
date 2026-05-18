@@ -1,11 +1,7 @@
-"""Shared-head DMC learner for role-aware training.
-
-Supports both ``SharedHeadQNet`` (absolute-seat heads) and
-``SharedTrickHeadQNet`` (trick-relative heads).  Uses a single shared trunk
-with per-head output layers and one Adam optimizer over all parameters.
+"""Dart DMC learner for role-aware training.
 
 Owns no replay buffer; the buffer is managed externally (by
-``_SharedAdapter`` inside ``learner_loop``).
+``_DartAdapter`` inside ``learner_loop``).
 """
 
 from __future__ import annotations
@@ -13,8 +9,8 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from ..data.buffer import RoleAwareReplayBuffer
-from ..model.q_network import SharedHeadQNet, SharedTrickHeadQNet
+from ...data.buffer import RoleAwareReplayBuffer
+from ...model.q_network import DartQNet
 from .loss_buckets import _emit_phase_aggregations
 
 
@@ -26,18 +22,12 @@ def _grad_norm_of(module: torch.nn.Module) -> torch.Tensor:
     return total.sqrt()
 
 
-class SharedHeadLearner:
-    """Learner for a single shared-head Q-net with one shared optimizer.
-
-    Supports both ``SharedHeadQNet`` (absolute-seat heads, ``seat_id`` field)
-    and ``SharedTrickHeadQNet`` (trick-relative heads, ``trick_head_id``
-    field).  The head field is auto-detected from the buffer at update time
-    and drives both stratification and per-head metric naming.
-    """
+class DartLearner:
+    """Learner for one role-aware Dart Q-net with one optimizer."""
 
     def __init__(
         self,
-        q_net: SharedHeadQNet | SharedTrickHeadQNet,
+        q_net: DartQNet,
         lr: float = 1e-4,
         device: torch.device | str = "cpu",
         use_bf16: bool = False,
@@ -48,6 +38,18 @@ class SharedHeadLearner:
         self.opt = torch.optim.Adam(self.q_net.parameters(), lr=lr, foreach=True)
         self.use_bf16 = use_bf16 and self.device.type == "cuda"
         self.max_grad_norm = max_grad_norm
+
+    def state_dict(self) -> dict:
+        """Return optimizer/runtime state needed for exact resume."""
+        return {"optimizer": self.opt.state_dict()}
+
+    def load_state_dict(self, state: dict | None) -> None:
+        """Restore optimizer/runtime state when present in a checkpoint."""
+        if not state:
+            return
+        optimizer = state.get("optimizer")
+        if optimizer is not None:
+            self.opt.load_state_dict(optimizer)
 
     def update(
         self,
@@ -93,7 +95,7 @@ class SharedHeadLearner:
         )
         self.opt.step()
 
-        suffix = "seat" if head_field == "seat_id" else "trick_head"
+        suffix = "trick_head"
         with torch.no_grad():
             metrics: dict = {
                 "loss": float(loss.item()),
@@ -114,4 +116,4 @@ class SharedHeadLearner:
         return metrics
 
 
-__all__ = ["SharedHeadLearner"]
+__all__ = ["DartLearner"]

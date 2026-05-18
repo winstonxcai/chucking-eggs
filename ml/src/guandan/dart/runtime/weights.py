@@ -10,14 +10,13 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Union
 
 import torch
 
 logger = logging.getLogger(__name__)
 
 from ..model.checkpoint import WeightSnapshot, unwrap_compiled
-from ..model.q_network import SharedHeadQNet, SharedTrickHeadQNet
+from ..model.q_network import DartQNet
 
 
 def publish_weights(q_nets: dict, weight_dir: Path, version: int, updates: int = 0) -> None:
@@ -51,13 +50,13 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int, updates: int =
         stale.unlink(missing_ok=True)
 
 
-def publish_weights_shared(
-    q_net: Union[SharedHeadQNet, SharedTrickHeadQNet],
+def publish_weights_dart(
+    q_net: DartQNet,
     weight_dir: Path,
     version: int,
     updates: int = 0,
 ) -> None:
-    """Atomically write one shared-head Q-net snapshot to disk."""
+    """Atomically write one Dart Q-net snapshot to disk."""
     weight_dir.mkdir(parents=True, exist_ok=True)
     tmp   = weight_dir / f"weights_{version}.tmp"
     final = weight_dir / f"weights_{version}.pt"
@@ -66,7 +65,7 @@ def publish_weights_shared(
             "version": version,
             "updates": updates,
             "state_dicts": {
-                "shared": {
+                "q_net": {
                     k: v.detach().cpu()
                     for k, v in unwrap_compiled(q_net).state_dict().items()
                 }
@@ -130,13 +129,13 @@ def load_latest_weights(weight_dir: Path) -> WeightSnapshot | None:
     except (FileNotFoundError, OSError):
         return None  # not published yet or mid-atomic-swap — expected
     except Exception as exc:
-        logger.warning("weight_publish: unexpected error loading weights v%d: %s", version, exc)
+        logger.warning("weights: unexpected error loading weights v%d: %s", version, exc)
         return None
 
 
 __all__ = [
     "publish_weights",
-    "publish_weights_shared",
+    "publish_weights_dart",
     "read_latest_metadata",
     "load_latest_weights",
 ]

@@ -4,16 +4,16 @@ Architecture
 ------------
 ``learner_loop`` is the single process target for all model variants.  It
 dispatches to a concrete ``LearnerProtocol`` adapter (``_SeatAdapter`` or
-``_SharedAdapter``) that owns both the gradient-step logic and the replay
+``_DartAdapter``) that owns both the gradient-step logic and the replay
 buffer.  Adding a new variant = implement one adapter class + wire it into
 ``_make_adapter``.
 
 Module map
 ----------
-``learner_seat``     — ``SeatLearner``        (per-position Q-nets, paper §4.2)
-``learner_shared``   — ``SharedHeadLearner``  (shared trunk, active variant)
-``loss_buckets``     — phase/trick-role/action metric stratification helpers
-``weight_publish``   — atomic disk publish + read helpers used by actors too
+``learners.guanzero`` — ``SeatLearner``       (per-position Q-nets, paper §4.2)
+``learners.dart``     — ``DartLearner``       (role-aware Dart Q-net)
+``learners.loss_buckets`` — phase/trick-role/action metric stratification helpers
+``weights``           — atomic disk publish + read helpers used by actors too
 """
 
 from __future__ import annotations
@@ -28,20 +28,24 @@ import torch
 
 from ..data.buffer import ReplayBuffer, RoleAwareReplayBuffer
 from ..model.checkpoint import (
+    CheckpointSaveType,
     save_checkpoint_base,
-    save_checkpoint_shared,
+    save_checkpoint_dart,
 )
 from ..utils.logging_setup import setup_run_logging
 from ..utils.metrics import jsonl_writer
+from ..utils.reproducibility import (
+    capture_torch_rng_state,
+    restore_torch_rng_state,
+    seed_everything,
+)
 from ..utils.run_layout import RunLayout
-from .learner_seat import SeatLearner
-from .learner_shared import SharedHeadLearner
-from .loss_buckets import PHASE_KEY_PREFIXES
-from .weight_publish import (
-    load_latest_weights,
+from .learners.dart import DartLearner
+from .learners.guanzero import SeatLearner
+from .learners.loss_buckets import PHASE_KEY_PREFIXES
+from .weights import (
     publish_weights,
-    publish_weights_shared,
-    read_latest_metadata,
+    publish_weights_dart,
 )
 
 
@@ -83,8 +87,10 @@ class LearnerProtocol(Protocol):
         """Atomically write current weights to disk."""
         ...
 
-    def checkpoint(self, path: Path, updates: int) -> None:
-        """Write a full checkpoint to ``path``."""
+    def checkpoint(
+        self, path: Path, updates: int, *, save_type: CheckpointSaveType = "full"
+    ) -> None:
+        """Write a checkpoint to ``path``."""
         ...
 
     def resume(self, path: Path) -> int:
@@ -119,7 +125,7 @@ class _SeatAdapter:
     """LearnerProtocol adapter for the per-seat paper-repro variant."""
 
     def __init__(self, cfg) -> None:
-        from ..model.q_network import init_seat_nets
+        from ..model.q_network import init_guanzero_nets
 
         self._cfg = cfg
         device = cfg.device
@@ -134,7 +140,7 @@ class _SeatAdapter:
             except Exception:
                 pass
 
-        q_nets = init_seat_nets(cfg.qnet)
+        q_nets = init_guanzero_nets(cfg.qnet)
         compile_mode = cfg.compile_mode or "default"
         self._startup_messages: list[str] = []
         if compile_mode == "reduce-overhead" and device == "cuda":
@@ -158,7 +164,10 @@ class _SeatAdapter:
             use_bf16=cfg.use_bf16_learner,
             max_grad_norm=cfg.max_grad_norm,
         )
-        self._buffer = ReplayBuffer(capacity_per_player=cfg.buffer_capacity_per_player)
+        self._buffer = ReplayBuffer(
+            capacity_per_player=cfg.buffer_capacity_per_player,
+            seed=cfg.seed + 101,
+        )
 
     # ── LearnerProtocol ──
 
@@ -182,15 +191,30 @@ class _SeatAdapter:
     def publish(self, weight_dir: Path, version: int, updates: int) -> None:
         publish_weights(self._learner.q_nets, weight_dir, version, updates)
 
-    def checkpoint(self, path: Path, updates: int) -> None:
-        save_checkpoint_base(path, self._learner.q_nets, self._cfg, updates)
+    def checkpoint(
+        self, path: Path, updates: int, *, save_type: CheckpointSaveType = "full"
+    ) -> None:
+        save_checkpoint_base(
+            path,
+            self._learner.q_nets,
+            self._cfg,
+            updates,
+            learner_state=self._learner.state_dict(),
+            replay_state=self._buffer.state_dict(),
+            rng_state=capture_torch_rng_state(),
+            save_type=save_type,
+        )
 
     def resume(self, path: Path) -> int:
-        ckpt = torch.load(path, map_location="cpu", weights_only=True)
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
         for p in range(4):
             net = self._learner.q_nets[p]
             getattr(net, "_orig_mod", net).load_state_dict(ckpt["q_nets"][p])
-        return int(ckpt.get("episode", 0))
+        self._learner.load_state_dict(ckpt.get("learner_state"))
+        if ckpt.get("replay_state") is not None:
+            self._buffer.load_state_dict(ckpt["replay_state"])
+        restore_torch_rng_state(ckpt.get("rng_state"))
+        return int(ckpt.get("total_updates", ckpt.get("episode", 0)))
 
     def buffer_size(self) -> int:
         return self._buffer.total_size()
@@ -267,32 +291,27 @@ class _SeatAdapter:
                     logger.info(line)
 
 
-class _SharedAdapter:
-    """LearnerProtocol adapter for shared-head (shared_heads / shared_trick_heads)."""
+class _DartAdapter:
+    """LearnerProtocol adapter for the role-aware Dart model."""
 
     def __init__(self, cfg) -> None:
-        from ..config import shared_head_qnet_config, shared_trick_head_qnet_config
-        from ..model.q_network import SharedHeadQNet, SharedTrickHeadQNet
+        from ..config import dart_qnet_config
+        from ..model.q_network import DartQNet
 
         if cfg.inference.enabled:
             raise ValueError(
-                f"Inference server not supported for model_type={cfg.model_type!r}. "
+                f"Inference server is not the production path for model_type={cfg.model_type!r}. "
                 "Set use_inference_server: false in config."
             )
 
         self._cfg = cfg
-        trick_path = cfg.model_type == "shared_trick_heads"
-
-        if trick_path:
-            q_net = SharedTrickHeadQNet(shared_trick_head_qnet_config(cfg))
-        else:
-            q_net = SharedHeadQNet(shared_head_qnet_config(cfg))
+        q_net = DartQNet(dart_qnet_config(cfg))
 
         if cfg.device == "cuda":
             compile_mode = cfg.compile_mode or "default"
             q_net = torch.compile(q_net, mode=compile_mode)
 
-        self._learner = SharedHeadLearner(
+        self._learner = DartLearner(
             q_net=q_net,
             lr=cfg.lr,
             device=cfg.device,
@@ -302,7 +321,7 @@ class _SharedAdapter:
         capacity = cfg.buffer_capacity or 4 * cfg.buffer_capacity_per_player
         self._buffer = RoleAwareReplayBuffer(
             capacity=capacity,
-            head_scheme="trick_relative" if trick_path else "absolute_seat",
+            seed=cfg.seed + 101,
         )
         self._compile_warn = None
 
@@ -347,16 +366,31 @@ class _SharedAdapter:
         return StepResult(loss=scalar_loss, phase=phase_payload)
 
     def publish(self, weight_dir: Path, version: int, updates: int) -> None:
-        publish_weights_shared(self._learner.q_net, weight_dir, version, updates)
+        publish_weights_dart(self._learner.q_net, weight_dir, version, updates)
 
-    def checkpoint(self, path: Path, updates: int) -> None:
-        save_checkpoint_shared(path, self._learner.q_net, self._cfg, updates)
+    def checkpoint(
+        self, path: Path, updates: int, *, save_type: CheckpointSaveType = "full"
+    ) -> None:
+        save_checkpoint_dart(
+            path,
+            self._learner.q_net,
+            self._cfg,
+            updates,
+            learner_state=self._learner.state_dict(),
+            replay_state=self._buffer.state_dict(),
+            rng_state=capture_torch_rng_state(),
+            save_type=save_type,
+        )
 
     def resume(self, path: Path) -> int:
-        ckpt = torch.load(path, map_location="cpu", weights_only=True)
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
         net = self._learner.q_net
         getattr(net, "_orig_mod", net).load_state_dict(ckpt["q_net"])
-        return int(ckpt.get("episode", 0))
+        self._learner.load_state_dict(ckpt.get("learner_state"))
+        if ckpt.get("replay_state") is not None:
+            self._buffer.load_state_dict(ckpt["replay_state"])
+        restore_torch_rng_state(ckpt.get("rng_state"))
+        return int(ckpt.get("total_updates", ckpt.get("episode", 0)))
 
     def buffer_size(self) -> int:
         return self._buffer.size()
@@ -405,15 +439,17 @@ class _SharedAdapter:
             time.sleep(0.001)
 
     def on_profiler_report(self, logger: Any, interval_dt: float, interval_upd: int) -> None:
-        pass  # SharedHeadLearner has no per-phase profiler
+        pass  # DartLearner has no per-phase profiler
 
 
 # ─── Factory ──────────────────────────────────────────────────────────────────
 
 
 def _make_adapter(cfg) -> LearnerProtocol:
-    if cfg.model_type in ("shared_heads", "shared_trick_heads"):
-        return _SharedAdapter(cfg)
+    from ..config import MODEL_TYPE_DART
+
+    if cfg.model_type == MODEL_TYPE_DART:
+        return _DartAdapter(cfg)
     return _SeatAdapter(cfg)
 
 
@@ -444,6 +480,7 @@ def learner_loop(
     from ..config import TrainConfig
 
     cfg = TrainConfig.from_flat_dict(cfg_dict)
+    seed_everything(cfg.seed + 1)
     layout     = RunLayout(Path(run_dir))
     weight_dir = Path(weight_dir)
 
@@ -541,8 +578,8 @@ def learner_loop(
         # 5. Checkpoint
         if total_updates % cfg.checkpoint_every_updates == 0:
             ckpt = layout.update_checkpoint(total_updates)
-            adapter.checkpoint(ckpt, total_updates)
-            logger.info("checkpoint → %s", ckpt)
+            adapter.checkpoint(ckpt, total_updates, save_type=cfg.checkpoint_save_type)
+            logger.info("checkpoint → %s (%s)", ckpt, cfg.checkpoint_save_type)
 
         # 6. Metrics log
         if total_updates % cfg.log_every_updates == 0:
@@ -609,17 +646,9 @@ def learner_loop(
 
     # Final checkpoint on clean shutdown
     if total_updates > 0:
-        adapter.checkpoint(layout.final_checkpoint, total_updates)
+        adapter.checkpoint(layout.final_checkpoint, total_updates, save_type="full")
     logger.info("learner stopped after %d updates", total_updates)
     metrics_writer.close()
-
-
-# ─── Backward-compat re-exports ───────────────────────────────────────────────
-# Callers that previously imported these from learner.py now get them here
-# (train.py, worker.py, inference_server.py have been updated to import from
-# the canonical modules, but the names are kept here for any stray references).
-
-Learner          = SeatLearner       # old name alias (not in __all__)
 
 
 __all__ = [
@@ -628,12 +657,7 @@ __all__ = [
     "LearnerProtocol",
     # Concrete classes (re-exported for convenience)
     "SeatLearner",
-    "SharedHeadLearner",
-    # Weight helpers (re-exported so existing ``from .learner import ...`` still works)
-    "publish_weights",
-    "publish_weights_shared",
-    "read_latest_metadata",
-    "load_latest_weights",
+    "DartLearner",
     # Entry point
     "learner_loop",
 ]

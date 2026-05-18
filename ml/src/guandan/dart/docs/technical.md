@@ -5,16 +5,10 @@
 ## What is the current blessed training path?
 
 **DART is the production path.** New training configs should use
-`model_type: Dart`, the role-aware encoder, batched local actor inference, and
-`use_inference_server: false`.
-
-The shared-memory inference server is intentionally still in the tree. It was
-evaluated as a throughput alternative: actors submit action-scoring requests to
-a dedicated GPU process instead of scoring batched lanes locally. For the
-current DART setup this is not optimal; local batched actor inference plus a
-GPU learner is simpler and faster, so DART rejects `use_inference_server: true`
-at startup. The inference-server path remains useful as an ablation artifact
-and for the older GuanZero-style baseline.
+`model_type: Dart`, the role-aware encoder, and batched local actor inference.
+We tested centralized GPU inference-server variants, including cross-actor
+lane batching, and local actor-side batching was faster for this model because
+it amortizes Q-forward work without IPC.
 
 Validated production configs:
 
@@ -363,9 +357,7 @@ Empirically (5000 random deals, full 27-card hand at game start):
 | p99 | 339 |
 
 Dart no longer truncates legal actions for policy reasons. Actors score the full
-post-dedup legal set. The inference server still has a per-slot
-`inference.max_actions` buffer capacity; that is a memory-safety limit, not a
-policy cap, and should be set above the measured maximum K with headroom.
+post-dedup legal set.
 
 ---
 

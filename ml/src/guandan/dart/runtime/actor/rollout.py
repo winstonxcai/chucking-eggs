@@ -23,7 +23,7 @@ from ...utils.profiler import PhaseProfiler, k_bucket_label
 
 
 QNetLike = GuanZeroQNet | DartQNet
-QNetBundle = Mapping[int, GuanZeroQNet] | DartQNet | None
+QNetBundle = Mapping[int, GuanZeroQNet] | DartQNet
 SeatKind = Literal["latest", "frozen", "hard_bot"]
 
 
@@ -110,7 +110,6 @@ def _validate_lanes(
     lanes: list[LaneConfig],
     q_nets: QNetBundle,
     encoder: StateActionEncoder | RoleAwareStateActionEncoder,
-    inference_client,
 ) -> None:
     if not lanes:
         raise ValueError("play_episodes_batched: lanes must be non-empty")
@@ -120,9 +119,7 @@ def _validate_lanes(
     needs_latest = any(sp.kind == "latest" for sp in flat)
     has_frozen = any(sp.kind == "frozen" for sp in flat)
 
-    if needs_latest and inference_client is None:
-        if q_nets is None:
-            raise ValueError("latest seats require q_nets or inference_client")
+    if needs_latest:
         latest_schema = _latest_schema(q_nets)
         if latest_schema != enc_schema:
             raise ValueError(
@@ -139,13 +136,6 @@ def _validate_lanes(
                     raise ValueError(
                         f"frozen_net schema {frozen_schema!r} != encoder schema {enc_schema!r}"
                     )
-
-    if inference_client is not None:
-        if len(lanes) != 1:
-            raise ValueError("inference_client requires exactly one lane")
-        if not all(sp.kind == "latest" for sp in lanes[0].seats):
-            raise ValueError("inference_client requires all-latest seats")
-
 
 def _resolve_acting_net(policy: SeatPolicy, q_nets: QNetBundle, player: int) -> QNetLike:
     if policy.kind == "frozen":
@@ -253,7 +243,6 @@ def play_episode(
     tags: EpisodeTags = EpisodeTags(),
     device: torch.device | str = "cpu",
     gamma: float = 1.0,
-    inference_client=None,
     profiler: PhaseProfiler | None = None,
     rng: random.Random | None = None,
 ) -> list[TrainSample]:
@@ -264,7 +253,6 @@ def play_episode(
         lanes=[LaneConfig(seed=seed, seats=seats, tags=tags)],
         device=device,
         gamma=gamma,
-        inference_client=inference_client,
         profiler=profiler,
         rng=rng,
     )[0]
@@ -277,12 +265,11 @@ def play_episodes_batched(
     lanes: list[LaneConfig],
     device: torch.device | str = "cpu",
     gamma: float = 1.0,
-    inference_client=None,
     profiler: PhaseProfiler | None = None,
     rng: random.Random | None = None,
 ) -> list[list[TrainSample]]:
     """Roll episode lanes, batching greedy Q-forwards by acting network."""
-    _validate_lanes(lanes, q_nets, encoder, inference_client)
+    _validate_lanes(lanes, q_nets, encoder)
     device = torch.device(device)
     prof = profiler if profiler is not None else PhaseProfiler(enabled=False)
     policy_rng = rng if rng is not None else random
@@ -391,34 +378,26 @@ def play_episodes_batched(
             continue
 
         choices_by_idx: dict[int, tuple[int, float]] = {}
-        if inference_client is not None:
-            for i, item in enumerate(pending):
-                with prof.time("inference_submit"):
-                    idx, _server_version = inference_client.submit(
-                        item["player"], item["encoded_list"],
-                    )
-                choices_by_idx[i] = (idx, float("nan"))
-        else:
-            groups_by_net: dict[int, dict] = {}
-            for i, item in enumerate(pending):
-                net = _resolve_acting_net(item["policy"], q_nets, item["player"])
-                group = groups_by_net.setdefault(id(net), {"net": net, "indices": []})
-                group["indices"].append(i)
+        groups_by_net: dict[int, dict] = {}
+        for i, item in enumerate(pending):
+            net = _resolve_acting_net(item["policy"], q_nets, item["player"])
+            group = groups_by_net.setdefault(id(net), {"net": net, "indices": []})
+            group["indices"].append(i)
 
-            for group in groups_by_net.values():
-                indices = group["indices"]
-                net = group["net"]
-                encoded_groups = [pending[i]["encoded_list"] for i in indices]
-                choices = argmax_q_batched(
-                    net,
-                    encoded_groups,
-                    device,
-                    role_encoded=isinstance(net, DartQNet),
-                    profiler=prof,
-                    bucket="batched",
-                )
-                for pending_idx, choice in zip(indices, choices):
-                    choices_by_idx[pending_idx] = choice
+        for group in groups_by_net.values():
+            indices = group["indices"]
+            net = group["net"]
+            encoded_groups = [pending[i]["encoded_list"] for i in indices]
+            choices = argmax_q_batched(
+                net,
+                encoded_groups,
+                device,
+                role_encoded=isinstance(net, DartQNet),
+                profiler=prof,
+                bucket="batched",
+            )
+            for pending_idx, choice in zip(indices, choices):
+                choices_by_idx[pending_idx] = choice
 
         for i, item in enumerate(pending):
             idx, q_gap = choices_by_idx[i]

@@ -7,7 +7,6 @@ Process modules:
 - ``weights``          — atomic weight publish + read helpers
 - ``worker``           — per-actor subprocess; ``actor_loop`` target
 - ``actor/``           — rollout, actor runtime setup, opponents, sample packing
-- ``inference_server/`` — shared-GPU inference-server systems ablation
 """
 
 from .actor import (

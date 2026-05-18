@@ -67,9 +67,9 @@ step to restore native acceleration.
 
 ### Training — Local (MPS)
 
-DART is the production training path. Use `model_type: Dart` with
-`use_inference_server: false`; the inference-server code remains in the repo as
-an evaluated throughput alternative, but it is not the optimal DART path.
+DART is the production training path. We tested centralized GPU inference-server
+variants, including cross-actor lane batching, and local batched actor inference
+was faster for this model because it avoids IPC while still batching Q-forwards.
 
 Runs 6 CPU actor processes + 1 MPS learner. Meaningful results (~50% vs strategic) in ~6h on an M1 Pro.
 

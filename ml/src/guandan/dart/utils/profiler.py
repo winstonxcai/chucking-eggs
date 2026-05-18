@@ -1,11 +1,11 @@
-"""Per-phase timing profiler for Dart actors, learner, and inference server.
+"""Per-phase timing profiler for Dart actors and the learner.
 
-A single ``PhaseProfiler`` class handles all three use cases via two optional
+A single ``PhaseProfiler`` class handles both use cases via two optional
 extensions:
 
 * **K-bucket breakdown** — actors populate bucket counts via ``add_count``
-  (e.g. ``"decisions_k=1"``, ``"decisions_k=2-5"``). Server and learner don't,
-  so ``report_k_buckets`` returns an empty string for them automatically.
+  (e.g. ``"decisions_k=1"``, ``"decisions_k=2-5"``). The learner does not, so
+  ``report_k_buckets`` returns an empty string there automatically.
 
 * **CUDA synchronization** — pass ``device`` on construction; the context
   manager inserts ``torch.cuda.synchronize()`` before stopping the clock when

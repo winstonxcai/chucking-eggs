@@ -1,16 +1,13 @@
 """Training configuration for Dart.
 
 ``TrainConfig`` is the single configuration object threaded through the
-training entry point, learner process, actor processes, and inference server.
+training entry point, learner process, and actor processes.
 It is serialised to ``config.json`` in each run directory and embedded in
 every checkpoint file.
 
-Three sub-configs group related knobs:
+Two sub-configs group related knobs:
 - ``QNetConfig``       — architecture (5 fields, must match across all processes)
 - ``EpsilonConfig``    — exploration schedule (3 fields)
-- ``InferenceConfig``  — evaluated shared-GPU inference-server alternative.
-  The production DART path keeps it disabled because local batched actor
-  inference is faster for the current role-aware model.
 
 ``from_flat_dict`` accepts both the flat YAML format and the nested format
 produced by ``dataclasses.asdict`` (the checkpoint serialisation form).
@@ -36,7 +33,7 @@ CheckpointSaveType = Literal["weight", "full"]
 @dataclasses.dataclass(frozen=True)
 class QNetConfig:
     """Q-network architecture. All fields must match across every process
-    that constructs or loads the networks (learner, actors, inference server).
+    that constructs or loads the networks (learner and actors).
     """
     hidden_lstm: int = 256
     hidden_mlp: int = 1024
@@ -55,25 +52,6 @@ class EpsilonConfig:
     start: float = 0.1
     final: float = 0.01
     decay_updates: int = 5_000
-
-
-@dataclasses.dataclass(frozen=True)
-class InferenceConfig:
-    """Shared-GPU inference server alternative.
-
-    This surface is kept because it was evaluated as a throughput tradeoff.
-    The current production DART path uses ``enabled=False``: actors score
-    batched lanes locally and the learner owns the GPU.
-    """
-    enabled: bool = False
-    device: str = "cuda"
-    batch_max_requests: int = 32
-    batch_max_action_rows: int = 4096
-    batch_timeout_ms: float = 5.0
-    n_slots: int = 512
-    max_actions: int = 512   # per-slot buffer capacity; ≥ max K post-dedup (measured: 379)
-    timeout_s: float = 60.0
-    weight_refresh_s: float = 5.0
 
 
 @dataclasses.dataclass
@@ -209,19 +187,6 @@ _EPSILON_FLAT_MAP: dict[str, str] = {
     "epsilon_decay_updates": "decay_updates",
 }
 
-# Flat YAML key → InferenceConfig field name
-_INFERENCE_FLAT_MAP: dict[str, str] = {
-    "use_inference_server":            "enabled",
-    "inference_device":                "device",
-    "inference_batch_max_requests":    "batch_max_requests",
-    "inference_batch_max_action_rows": "batch_max_action_rows",
-    "inference_batch_timeout_ms":      "batch_timeout_ms",
-    "inference_n_slots":               "n_slots",
-    "inference_max_actions":           "max_actions",
-    "inference_timeout_s":             "timeout_s",
-    "inference_weight_refresh_s":      "weight_refresh_s",
-}
-
 _QNET_FIELDS: frozenset[str] = frozenset(
     f.name for f in dataclasses.fields(QNetConfig)
 )
@@ -277,8 +242,8 @@ def _opponent_config_from_raw(raw: Any) -> OpponentConfig:
 class TrainConfig:
     """Unified configuration for Dart training.
 
-    Network architecture, exploration schedule, and inference-server settings
-    live in the ``qnet``, ``epsilon``, and ``inference`` sub-configs respectively.
+    Network architecture and exploration schedule live in the ``qnet`` and
+    ``epsilon`` sub-configs respectively.
     All other knobs are flat fields.
 
     Use ``from_flat_dict`` to load from YAML files or old checkpoint dicts;
@@ -288,7 +253,6 @@ class TrainConfig:
     # ── Sub-configs ─────────────────────────────────────────
     qnet:      QNetConfig      = dataclasses.field(default_factory=QNetConfig)
     epsilon:   EpsilonConfig   = dataclasses.field(default_factory=EpsilonConfig)
-    inference: InferenceConfig = dataclasses.field(default_factory=InferenceConfig)
     opponents: OpponentConfig = dataclasses.field(default_factory=OpponentConfig)
 
     # ── Core hypers ─────────────────────────────────────────
@@ -412,7 +376,6 @@ class TrainConfig:
             raise ValueError(
                 f"Removed opponent config key(s): {removed}. Use the nested 'opponents' block."
             )
-
         if dataclasses.is_dataclass(d.get("qnet")):
             d = {
                 **d,
@@ -421,11 +384,6 @@ class TrainConfig:
                     dataclasses.asdict(d["epsilon"])
                     if dataclasses.is_dataclass(d.get("epsilon"))
                     else d.get("epsilon")
-                ),
-                "inference": (
-                    dataclasses.asdict(d["inference"])
-                    if dataclasses.is_dataclass(d.get("inference"))
-                    else d.get("inference")
                 ),
                 "opponents": (
                     dataclasses.asdict(d["opponents"])
@@ -440,20 +398,16 @@ class TrainConfig:
             qnet_d = dict(d["qnet"])
             qnet      = QNetConfig(**qnet_d)
             epsilon_kw: dict[str, Any] = {}
-            inference_kw: dict[str, Any] = {}
-            valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "inference", "opponents"}
+            valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "opponents"}
             valid_nested_top = (
                 valid_top
-                | {"qnet", "epsilon", "inference", "opponents"}
+                | {"qnet", "epsilon", "opponents"}
                 | set(_EPSILON_FLAT_MAP)
-                | set(_INFERENCE_FLAT_MAP)
             )
             _reject_unknown_keys("TrainConfig", d, valid_nested_top)
             for k, v in d.items():
                 if k in _EPSILON_FLAT_MAP:
                     epsilon_kw[_EPSILON_FLAT_MAP[k]] = v
-                elif k in _INFERENCE_FLAT_MAP:
-                    inference_kw[_INFERENCE_FLAT_MAP[k]] = v
             if isinstance(d.get("epsilon"), dict):
                 _reject_unknown_keys(
                     "epsilon",
@@ -462,16 +416,11 @@ class TrainConfig:
                 )
                 for k, v in d["epsilon"].items():
                     epsilon_kw[_EPSILON_FLAT_MAP.get(k, k)] = v
-            if isinstance(d.get("inference"), dict):
-                _reject_unknown_keys("inference", d["inference"], _dataclass_field_names(InferenceConfig))
-                inference_kw.update(d["inference"])
             epsilon   = EpsilonConfig(**epsilon_kw)
-            inference = InferenceConfig(**inference_kw)
             top = {k: v for k, v in d.items() if k in valid_top}
             return cls(
                 qnet=qnet,
                 epsilon=epsilon,
-                inference=inference,
                 opponents=_opponent_config_from_raw(d.get("opponents")),
                 **top,
             )
@@ -479,13 +428,11 @@ class TrainConfig:
         # ── Flat form (YAML files) ──
         qnet_kw:      dict[str, Any] = {}
         epsilon_kw:   dict[str, Any] = {}
-        inference_kw: dict[str, Any] = {}
-        valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "inference", "opponents"}
+        valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "opponents"}
         valid_flat = (
             valid_top
             | set(_QNET_FIELDS)
             | set(_EPSILON_FLAT_MAP)
-            | set(_INFERENCE_FLAT_MAP)
             | {"opponents"}
         )
         _reject_unknown_keys("TrainConfig", d, valid_flat)
@@ -497,15 +444,12 @@ class TrainConfig:
                 qnet_kw[k] = v
             elif k in _EPSILON_FLAT_MAP:
                 epsilon_kw[_EPSILON_FLAT_MAP[k]] = v
-            elif k in _INFERENCE_FLAT_MAP:
-                inference_kw[_INFERENCE_FLAT_MAP[k]] = v
             elif k in valid_top:
                 top_kw[k] = v
 
         return cls(
             qnet      = QNetConfig(**qnet_kw),
             epsilon   = EpsilonConfig(**epsilon_kw),
-            inference = InferenceConfig(**inference_kw),
             opponents = opponents,
             **top_kw,
         )
@@ -557,7 +501,6 @@ __all__ = [
     "TrainConfig",
     "QNetConfig",
     "EpsilonConfig",
-    "InferenceConfig",
     "CheckpointSaveType",
     "EpisodeMixConfig",
     "FrozenPoolConfig",

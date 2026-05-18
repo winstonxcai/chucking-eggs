@@ -18,26 +18,19 @@ from ...model.q_network import DartQNet, init_guanzero_nets
 @dataclasses.dataclass
 class ActorRuntime:
     encoder: StateActionEncoder | RoleAwareStateActionEncoder
-    q_nets: object | None
-    q_nets_inference: object | None
-    inference_client: object | None
+    q_nets: object
+    q_nets_actor: object
     dart_path: bool
     use_int8: bool
     channel_keys: tuple[str, ...]
     include_players: bool
 
-    def refresh_inference_nets(self) -> None:
+    def refresh_actor_nets(self) -> None:
         if self.use_int8:
-            self.q_nets_inference = _quantize_for_inference(self.q_nets, self.dart_path)
+            self.q_nets_actor = _quantize_for_actor(self.q_nets, self.dart_path)
 
 
-def build_actor_runtime(actor_id: int, cfg, inference_args: dict | None) -> ActorRuntime:
-    if cfg.model_type == MODEL_TYPE_DART and cfg.inference.enabled:
-        raise ValueError(
-            f"Inference server is not the production path for model_type={cfg.model_type!r}. "
-            "Set use_inference_server: false."
-        )
-
+def build_actor_runtime(cfg) -> ActorRuntime:
     dart_path = cfg.model_type == MODEL_TYPE_DART
     if dart_path:
         encoder = RoleAwareStateActionEncoder(
@@ -46,28 +39,24 @@ def build_actor_runtime(actor_id: int, cfg, inference_args: dict | None) -> Acto
     else:
         encoder = StateActionEncoder(is_partner_visible=cfg.qnet.is_partner_visible)
 
-    inference_client = _build_inference_client(actor_id, inference_args, cfg) if inference_args else None
     if dart_path:
         q_nets = DartQNet(dart_qnet_config(cfg))
         q_nets.eval()
-    elif inference_client is None:
+    else:
         q_nets = init_guanzero_nets(cfg.qnet)
         for net in q_nets.values():
             net.eval()
-    else:
-        q_nets = None
 
-    use_int8 = bool(getattr(cfg, "use_int8_actor", False)) and q_nets is not None
-    q_nets_inference = (
-        _quantize_for_inference(q_nets, dart_path)
+    use_int8 = bool(getattr(cfg, "use_int8_actor", False))
+    q_nets_actor = (
+        _quantize_for_actor(q_nets, dart_path)
         if use_int8
         else q_nets
     )
     return ActorRuntime(
         encoder=encoder,
         q_nets=q_nets,
-        q_nets_inference=q_nets_inference,
-        inference_client=inference_client,
+        q_nets_actor=q_nets_actor,
         dart_path=dart_path,
         use_int8=use_int8,
         channel_keys=tuple(encoder.channel_keys) if dart_path else tuple(ENCODE_CHANNEL_KEYS),
@@ -83,8 +72,6 @@ def sync_actor_weights(
     local_updates: int,
     sync_threshold: int,
 ) -> tuple[int, int, int]:
-    if runtime.q_nets is None:
-        return local_version, local_updates, 0
     return maybe_sync_weights(
         runtime.q_nets, weight_dir, local_version, local_updates, sync_threshold,
     )
@@ -136,7 +123,7 @@ def jitter_sync_threshold(cfg, rng: random.Random) -> int:
     )
 
 
-def _quantize_for_inference(nets, dart_path: bool):
+def _quantize_for_actor(nets, dart_path: bool):
     import torch.ao.quantization as qao
 
     if dart_path:
@@ -145,16 +132,6 @@ def _quantize_for_inference(nets, dart_path: bool):
         player: qao.quantize_dynamic(nets[player], {torch.nn.Linear}, dtype=torch.qint8)
         for player in range(4)
     }
-
-
-def _build_inference_client(actor_id: int, inference_args: dict, cfg) -> "object":
-    from ..inference_server import build_client
-    return build_client(
-        actor_id       = actor_id,
-        inference_args = inference_args,
-        timeout_s      = cfg.inference.timeout_s,
-        max_actions    = cfg.inference.max_actions,
-    )
 
 
 __all__ = [

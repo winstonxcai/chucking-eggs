@@ -298,12 +298,6 @@ class _DartAdapter:
         from ..config import dart_qnet_config
         from ..model.q_network import DartQNet
 
-        if cfg.inference.enabled:
-            raise ValueError(
-                f"Inference server is not the production path for model_type={cfg.model_type!r}. "
-                "Set use_inference_server: false in config."
-            )
-
         self._cfg = cfg
         q_net = DartQNet(dart_qnet_config(cfg))
 

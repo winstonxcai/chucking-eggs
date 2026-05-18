@@ -9,7 +9,6 @@ import yaml
 from guandan.dart.config import (
     EpsilonConfig,
     EpisodeMixConfig,
-    InferenceConfig,
     MODEL_TYPE_DART,
     MODEL_TYPE_GUANZERO,
     OpponentConfig,
@@ -27,24 +26,20 @@ def test_from_flat_dict_accepts_nested_dicts_and_dataclass_instances():
     nested = dataclasses.asdict(TrainConfig(
         qnet=QNetConfig(hidden_lstm=32),
         epsilon=EpsilonConfig(decay_updates=7),
-        inference=InferenceConfig(max_actions=99),
         batch_size=11,
     ))
 
     cfg = TrainConfig.from_flat_dict(nested)
     assert cfg.qnet.hidden_lstm == 32
     assert cfg.epsilon.decay_updates == 7
-    assert cfg.inference.max_actions == 99
     assert cfg.batch_size == 11
 
     cfg = TrainConfig.from_flat_dict({
         "qnet": QNetConfig(hidden_mlp=256),
         "epsilon": EpsilonConfig(final=0.02),
-        "inference": InferenceConfig(enabled=True),
     })
     assert cfg.qnet.hidden_mlp == 256
     assert cfg.epsilon.final == 0.02
-    assert cfg.inference.enabled is True
 
 
 def test_yaml_and_cli_loading_apply_precedence(tmp_path):

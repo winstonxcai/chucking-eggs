@@ -83,7 +83,6 @@ def train_remote(
     # Keep weight publish/sync IO off the network-attached Modal volume.
     env["DART_WEIGHT_DIR"] = "/tmp/dart_weights"
     if profile:
-        env["DART_SERVER_PROFILE"] = "1"
         env["DART_ACTOR_PROFILE"]  = "1"
         env["DART_LEARNER_PROFILE"] = "1"
     # Pin BLAS thread pools to 1 — actor processes already set torch.set_num_threads(1)

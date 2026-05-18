@@ -4446,3 +4446,59 @@ uv run python ml/scripts/eval/eval_dart.py \
 Conclusion: for the default 12-bot eval set, `--workers 8 --lanes 32` is the
 fastest measured local setting. Higher lanes (`64`) and more workers (`10/12`)
 were slower on this M1 Pro workload.
+
+## 2026-05-18 — Lane-batched inference server benchmark
+
+Question: the old inference server regressed when actors were single-lane, but
+`actor_batch_lanes=40` now creates larger per-actor decision batches. Could a
+new server design win by batching those lane decisions across all actors?
+
+Ran an experimental benchmark using temporary scripts, not a production path:
+
+- `ml/scripts/util/bench_actor_lane_server.py`
+- `ml/scripts/modal/bench_actor_lane_server_modal.py`
+
+These scripts were not kept after the result because the inference-server path
+is being deprecated.
+
+The benchmark preserves the real Dart `play_episodes_batched` lane scheduler.
+`local` mode is the current production shape: each actor owns a CPU DartQNet and
+runs local grouped forwards. `server` mode gives actors no net; each actor tick
+sends all pending lane decisions as one IPC request to a single CUDA process,
+which batches requests across actors and runs one DartQNet.
+
+Modal account/profile: `winstoncai`. All runs used 32 workers, 40 lanes,
+32 episodes/worker, L4 server GPU, `epsilon=0`, and Torch/BLAS threads pinned
+to 1.
+
+| mode | server wait | wall_s | ep/s | samples/s | samples |
+|-----:|------------:|-------:|-----:|----------:|--------:|
+| local  | n/a  | 13.192 | 77.621 | **10809.1** | 142597 |
+| server | 0.2ms | 34.580 | 29.612 | 4129.6 | 142802 |
+| server | 2.0ms | 30.917 | 33.121 | 4610.5 | 142541 |
+| server | 5.0ms | 29.824 | 34.335 | **4785.2** | 142712 |
+
+Best server setting was still **2.26x slower** than local lane batching
+(`10809.1 / 4785.2`). Server diagnostics:
+
+| wait | requests | groups | action rows | forwards | groups/request | groups/forward | actions/forward | forward_s |
+|-----:|---------:|-------:|------------:|---------:|---------------:|---------------:|----------------:|----------:|
+| 0.2ms | 9361 | 95552 | 773574 | 3919 | 10.21 | 24.38 | 197.4 | 21.278 |
+| 2.0ms | 9356 | 95168 | 771698 | 1462 | 10.17 | 65.09 | 527.8 | 16.416 |
+| 5.0ms | 9364 | 95381 | 772571 | 773 | 10.19 | 123.39 | 999.4 | 14.472 |
+
+Interpretation:
+
+- 40 lanes do not mean 40 pending greedy decisions per actor tick. The measured
+  request carried only ~10 decision groups on average because lanes are often in
+  forced moves, epsilon/random shortcuts, completed episodes, or different
+  rollout phases.
+- Increasing server wait grows GPU batch size and reduces forward time, but the
+  extra batching cannot overcome actor/server IPC plus response latency.
+- At the best 5ms setting, server forward took 14.5s of 29.8s wall. The
+  non-forward side alone is already roughly local total wall, before counting
+  learner contention that would exist in integrated training.
+
+Conclusion: the useful batching boundary is still inside each actor process.
+The lane-batched server idea is directionally reasonable, but this benchmark
+shows it is not competitive for the current Dart model and Modal L4 setup.

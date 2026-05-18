@@ -171,8 +171,7 @@ K_BUCKET_NAMES = {0: "k=1", 1: "k=2-5", 2: "k=6-20", 3: "k>20"}
 def q_gap_bucket(q_gap: float) -> int:
     """Bucket the q_max − q_second gap.
 
-    NaN bucket includes K=1, epsilon-random, and inference-server paths
-    where q_gap is undefined.
+    NaN bucket includes K=1 and epsilon-random paths where q_gap is undefined.
     """
     if math.isnan(q_gap):    return 0  # undefined
     if q_gap < 0.05:         return 1  # pivotal (model uncertain)

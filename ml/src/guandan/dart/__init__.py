@@ -24,7 +24,6 @@ from .config import (
     MODEL_TYPE_GUANZERO,
     dart_qnet_config,
     EpsilonConfig,
-    InferenceConfig,
     QNetConfig,
     TrainConfig,
 )
@@ -95,6 +94,4 @@ __all__ = [
     "init_guanzero_nets",
     "ReplayBuffer",
     "collate_base_encoded",
-    # systems ablation
-    "InferenceConfig",
 ]

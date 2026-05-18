@@ -57,7 +57,6 @@ def actor_loop(
     sample_queue: "mp.Queue[bytes]",
     stop_event:   "mp.Event",
     weight_dir:   Path,
-    inference_args: "dict | None" = None,
     run_dir:      Path | None = None,
 ) -> None:
     """Run self-play continuously and push stacked sample batches to the learner."""
@@ -77,7 +76,7 @@ def actor_loop(
         stream_to_stdout=True,
     )
 
-    runtime = build_actor_runtime(actor_id, cfg, inference_args)
+    runtime = build_actor_runtime(cfg)
     pools = OpponentPools.from_config(cfg, logger)
     accumulator = ActorSampleAccumulator(
         channel_keys=runtime.channel_keys,
@@ -135,50 +134,36 @@ def actor_loop(
                             actor_id, dropped_batches, exc,
                         )
 
-    n_inference_timeouts = 0
     while not stop_event.is_set():
-        if runtime.q_nets is not None:
-            prev_version = local_version
-            with prof.time("weight_sync"):
-                local_version, local_updates, global_updates = sync_actor_weights(
-                    runtime,
-                    weight_dir,
-                    local_version=local_version,
-                    local_updates=local_updates,
-                    sync_threshold=sync_threshold,
-                )
-            if local_version > prev_version:
-                sync_threshold = jitter_sync_threshold(cfg, rng)
-                runtime.refresh_inference_nets()
+        prev_version = local_version
+        with prof.time("weight_sync"):
+            local_version, local_updates, global_updates = sync_actor_weights(
+                runtime,
+                weight_dir,
+                local_version=local_version,
+                local_updates=local_updates,
+                sync_threshold=sync_threshold,
+            )
+        if local_version > prev_version:
+            sync_threshold = jitter_sync_threshold(cfg, rng)
+            runtime.refresh_actor_nets()
 
         eps = epsilon_linear(global_updates, cfg.epsilon)
         n_lanes = (
             1
-            if runtime.inference_client is not None or os.environ.get("DART_NO_BATCHED_ACTOR")
+            if os.environ.get("DART_NO_BATCHED_ACTOR")
             else int(getattr(cfg, "actor_batch_lanes", 1))
         )
         lanes = _build_lanes(pools, rng, n_lanes=n_lanes, eps=eps)
-        try:
-            samples_per_lane = play_episodes_batched(
-                q_nets=runtime.q_nets_inference,
-                encoder=runtime.encoder,
-                lanes=lanes,
-                device="cpu",
-                gamma=cfg.gamma,
-                inference_client=runtime.inference_client,
-                profiler=prof,
-                rng=rng,
-            )
-        except Exception as e:
-            from .inference_server import InferenceTimeoutError
-            if isinstance(e, InferenceTimeoutError):
-                n_inference_timeouts += 1
-                if n_inference_timeouts <= 3 or n_inference_timeouts % 10 == 0:
-                    logger.warning("inference timeout #%d: %s", n_inference_timeouts, e)
-                if stop_event.wait(timeout=0.5):
-                    break
-                continue
-            raise
+        samples_per_lane = play_episodes_batched(
+            q_nets=runtime.q_nets_actor,
+            encoder=runtime.encoder,
+            lanes=lanes,
+            device="cpu",
+            gamma=cfg.gamma,
+            profiler=prof,
+            rng=rng,
+        )
 
         for lane, samples in zip(lanes, samples_per_lane):
             accumulator.append_lane(lane, samples)

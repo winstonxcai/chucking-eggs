@@ -31,10 +31,6 @@ class RunLayout:
         return self.run_dir / "learner.log"
 
     @property
-    def inference_server_log(self) -> Path:
-        return self.run_dir / "inference_server.log"
-
-    @property
     def metrics_jsonl(self) -> Path:
         return self.run_dir / "metrics_learner.jsonl"
 

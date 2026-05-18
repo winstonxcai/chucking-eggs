@@ -28,14 +28,6 @@ dart_trunk_hidden: 1024
 dart_trunk_layers: 4
 dropout: 0.0
 
-use_inference_server: false
-inference_device: cuda
-inference_batch_max_requests: 32
-inference_batch_max_action_rows: 4096
-inference_batch_timeout_ms: 5.0
-inference_max_actions: 512
-inference_n_slots: 512
-
 target_replay_ratio: 1.0
 max_replay_ratio: 1.25
 max_throttle_sleep_s: 0.05

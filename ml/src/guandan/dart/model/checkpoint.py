@@ -2,8 +2,7 @@
 
 All code that reads or writes model state to disk lives here. Both the
 training entry point and the learner subprocess use ``save_checkpoint_base``;
-actors and the inference server use ``WeightSnapshot`` (via
-``load_latest_weights`` in learner.py, which returns one of these).
+actors use ``WeightSnapshot`` via ``load_latest_weights``.
 """
 
 from __future__ import annotations
@@ -152,7 +151,7 @@ class WeightSnapshot:
     """A versioned snapshot of published Q-net weights.
 
     Produced by ``learner.py:publish_weights``, consumed by actors (via
-    ``maybe_sync_weights``) and the inference server (disk-poll refresh thread).
+    ``maybe_sync_weights``).
     """
     version: int
     state_dicts: dict[int | str, dict]

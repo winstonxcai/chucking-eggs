@@ -11,7 +11,7 @@ ml/src/guandan/         — Python package (hatchling-built)
   dart/                 — Active training stack
                             model/    — q_network, encoder, encoding/, checkpoint
                             data/     — buffer, returns, sample_tags
-                            runtime/  — actor, worker, learner, inference_server, train
+                            runtime/  — actor, worker, learner, train
                             utils/    — logging_setup, profiler, schedules, metrics
                             configs/  — YAML training recipes (dart_l4.yaml, dart_mps.yaml, …)
                             agent.py, config.py — public surface

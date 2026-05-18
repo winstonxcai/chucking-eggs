@@ -59,11 +59,10 @@ from tqdm import tqdm
 from .worker import actor_loop
 from .learner import learner_loop
 from .weights import load_latest_weights
-from ..config import MODEL_TYPE_DART, TrainConfig, load_config_from_cli
+from ..config import TrainConfig, load_config_from_cli
 from ..utils.logging_setup import setup_run_logging
 from ..utils.reproducibility import seed_everything
 from ..utils.run_layout import RunLayout
-from . import inference_server as _isrv
 
 
 # ─── Process-lifecycle constants ─────────────────────────────
@@ -72,7 +71,6 @@ _INITIAL_WEIGHTS_TIMEOUT_S = 60.0
 _WATCHER_POLL_INTERVAL_S   = 2.0
 _ACTOR_JOIN_TIMEOUT_S      = 10.0
 _LEARNER_JOIN_TIMEOUT_S    = 15.0
-_SERVER_JOIN_TIMEOUT_S     = 15.0
 
 
 # ─── Helpers ─────────────────────────────────────────────────
@@ -140,52 +138,6 @@ def _spawn_learner(
     return proc
 
 
-def _spawn_inference_server(
-    ctx,
-    cfg: TrainConfig,
-    cfg_dict: dict,
-    stop_event,
-    weight_dir: Path,
-    layout: RunLayout,
-    initial_snapshot,
-):
-    """Allocate shared buffers and start the inference server process.
-
-    Returns ``(proc, inference_args, bufs)``. ``inference_args`` is
-    the actor-side handle bag.
-    """
-    bufs, meta = _isrv.allocate_shared_buffers(
-        num_slots   = cfg.inference.n_slots,
-        max_actions = cfg.inference.max_actions,
-        n_actors    = cfg.n_actors,
-        ctx         = ctx,
-    )
-    proc = ctx.Process(
-        target=_isrv.run_server,
-        args=(
-            cfg_dict, meta,
-            bufs.free_slots, bufs.request_queue, bufs.events,
-            stop_event,
-        ),
-        kwargs={
-            "initial_state_dicts": initial_snapshot.state_dicts,
-            "initial_version":     initial_snapshot.version,
-            "weight_dir":          weight_dir,
-            "server_log_path":     str(layout.inference_server_log),
-        },
-        daemon=True,
-        name="inference_server",
-    )
-    proc.start()
-    inference_args = {
-        "meta":          meta,
-        "free_slots":    bufs.free_slots,
-        "request_queue": bufs.request_queue,
-        "events":        bufs.events,
-    }
-    return proc, inference_args, bufs
-
-
 def _spawn_actors(
     ctx,
     cfg: TrainConfig,
@@ -194,14 +146,13 @@ def _spawn_actors(
     stop_event,
     weight_dir: Path,
     layout: RunLayout,
-    inference_args: dict | None,
 ) -> list:
     procs = []
     for actor_id in range(cfg.n_actors):
         p = ctx.Process(
             target=actor_loop,
             args=(actor_id, cfg_dict, sample_queue, stop_event, weight_dir),
-            kwargs={"inference_args": inference_args, "run_dir": layout.run_dir},
+            kwargs={"run_dir": layout.run_dir},
             daemon=True,
             name=f"actor-{actor_id}",
         )
@@ -249,16 +200,10 @@ def _shutdown_all(
     stop_event,
     actor_procs: list,
     learner_proc,
-    inf_server_proc,
-    inf_bufs,
 ) -> None:
     stop_event.set()
     _shutdown_processes(actor_procs, soft_timeout=_ACTOR_JOIN_TIMEOUT_S, label="actor")
     _shutdown_processes([learner_proc], soft_timeout=_LEARNER_JOIN_TIMEOUT_S, label="learner")
-    if inf_server_proc is not None:
-        _shutdown_processes([inf_server_proc], soft_timeout=_SERVER_JOIN_TIMEOUT_S, label="server")
-    if inf_bufs is not None:
-        _isrv.release_shared_buffers(inf_bufs, unlink=True)
 
 
 # ─── Main entry point ────────────────────────────────────────
@@ -268,13 +213,6 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     import multiprocessing as mp
 
     seed_everything(cfg.seed)
-
-    if cfg.model_type == MODEL_TYPE_DART and cfg.inference.enabled:
-        raise ValueError(
-            f"Inference server is not the production path for model_type={MODEL_TYPE_DART!r}. "
-            "Use use_inference_server: false. The inference-server implementation is kept "
-            "for the older GuanZero baseline and throughput tradeoff experiments."
-        )
 
     layout         = RunLayout(Path(cfg.resolved_run_dir))
     weight_dir_env = os.environ.get("DART_WEIGHT_DIR")
@@ -307,27 +245,16 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
         raise TimeoutError(
             f"Learner did not publish weights within {_INITIAL_WEIGHTS_TIMEOUT_S}s"
         )
-    initial_snapshot = load_latest_weights(weight_dir)
-    if initial_snapshot is None:
+    if load_latest_weights(weight_dir) is None:
         raise RuntimeError(f"Initial weights became unreadable in {weight_dir}")
     logger.info("Initial weights ready — starting actors")
 
-    inf_server_proc = inf_bufs = None
-    inference_args = None
-    if cfg.inference.enabled:
-        inf_server_proc, inference_args, inf_bufs = _spawn_inference_server(
-            ctx, cfg, cfg_dict, stop_event, weight_dir, layout, initial_snapshot,
-        )
-        logger.info("Inference server started (pid=%d) on device=%s",
-                    inf_server_proc.pid, cfg.inference.device)
-
     actor_procs = _spawn_actors(
         ctx, cfg, cfg_dict, sample_queue, stop_event,
-        weight_dir, layout, inference_args,
+        weight_dir, layout,
     )
 
-    server_suffix = " + 1 inference server" if cfg.inference.enabled else ""
-    logger.info("Dart | %d actors + 1 learner%s", cfg.n_actors, server_suffix)
+    logger.info("Dart | %d actors + 1 learner", cfg.n_actors)
     logger.info("log → %s", log_path)
 
     target_updates = cfg.total_updates_target or cfg.checkpoint_every_updates
@@ -340,7 +267,7 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     finally:
         if abort_reason:
             logger.error("Aborting: %s", abort_reason)
-        _shutdown_all(stop_event, actor_procs, learner_proc, inf_server_proc, inf_bufs)
+        _shutdown_all(stop_event, actor_procs, learner_proc)
 
     if abort_reason:
         logger.error("training failed — check logs in %s", layout.run_dir)

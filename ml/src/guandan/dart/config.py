@@ -8,11 +8,12 @@ every checkpoint file.
 Three sub-configs group related knobs:
 - ``QNetConfig``       — architecture (5 fields, must match across all processes)
 - ``EpsilonConfig``    — exploration schedule (3 fields)
-- ``InferenceConfig``  — optional shared-GPU inference server (9 fields)
+- ``InferenceConfig``  — evaluated shared-GPU inference-server alternative.
+  The production DART path keeps it disabled because local batched actor
+  inference is faster for the current role-aware model.
 
-``from_flat_dict`` provides YAML and checkpoint compatibility: it accepts both
-the current flat YAML format and the nested format produced by
-``dataclasses.asdict``, and silently ignores fields removed in past refactors.
+``from_flat_dict`` accepts both the flat YAML format and the nested format
+produced by ``dataclasses.asdict`` (the checkpoint serialisation form).
 """
 
 from __future__ import annotations
@@ -20,7 +21,13 @@ from __future__ import annotations
 import dataclasses
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+
+MODEL_TYPE_GUANZERO = "GuanZero"
+MODEL_TYPE_DART = "Dart"
+ModelType = Literal["GuanZero", "Dart"]
+CheckpointSaveType = Literal["weight", "full"]
 
 
 # ─── Sub-configs ─────────────────────────────────────────────
@@ -48,14 +55,15 @@ class EpsilonConfig:
     start: float = 0.1
     final: float = 0.01
     decay_updates: int = 5_000
-    frozen: float = 0.0   # epsilon used by seats playing a frozen-checkpoint opponent
 
 
 @dataclasses.dataclass(frozen=True)
 class InferenceConfig:
-    """Shared-GPU inference server. Set ``enabled=True`` to route actor
-    action-selection through a dedicated GPU process instead of per-actor
-    CPU forward passes.
+    """Shared-GPU inference server alternative.
+
+    This surface is kept because it was evaluated as a throughput tradeoff.
+    The current production DART path uses ``enabled=False``: actors score
+    batched lanes locally and the learner owns the GPU.
     """
     enabled: bool = False
     device: str = "cuda"
@@ -68,31 +76,137 @@ class InferenceConfig:
     weight_refresh_s: float = 5.0
 
 
-# ─── Removed flat field names ─────────────────────────────────
-# from_flat_dict drops these silently so existing YAML configs and old
-# checkpoints still load without KeyErrors.
-_REMOVED_FIELDS: frozenset[str] = frozenset({
-    "episodes",
-    "learn_every_episodes",
-    "log_every_episodes",
-    "checkpoint_every_episodes",
-    "history_window",
-    "max_legal_actions",
-    "env_lanes_per_actor",
-    "compile_actor",
-    "sync_interval_episodes",   # replaced by sync_interval_updates (different semantic, similar magnitude)
-    "max_version_lag_updates",  # consolidated into sync_interval_updates
-})
+@dataclasses.dataclass
+class EpisodeMixConfig:
+    self_play: float = 1.0
+    frozen_pool: float = 0.0
+    hard_bot: float = 0.0
+
+    def __post_init__(self) -> None:
+        for name in ("self_play", "frozen_pool", "hard_bot"):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"opponents.episode_mix.{name} must be in [0, 1]; got {value}")
+        total = self.self_play + self.frozen_pool + self.hard_bot
+        if total > 1.0 + 1e-9:
+            raise ValueError(
+                "opponents.episode_mix values must sum to <= 1; "
+                f"got {self.self_play} + {self.frozen_pool} + {self.hard_bot}"
+            )
+
+
+@dataclasses.dataclass
+class FrozenPoolConfig:
+    checkpoints: tuple[str, ...] = ()
+    epsilon: float = 0.0
+    sampling: str = "uniform"
+
+    def __post_init__(self) -> None:
+        if isinstance(self.checkpoints, list):
+            self.checkpoints = tuple(self.checkpoints)
+        if not 0.0 <= self.epsilon <= 1.0:
+            raise ValueError(f"opponents.frozen_pool.epsilon must be in [0, 1]; got {self.epsilon}")
+        if self.sampling != "uniform":
+            raise ValueError("opponents.frozen_pool.sampling currently supports only 'uniform'")
+
+
+SamplingType = Literal["uniform", "weighted", "pair_weighted"]
+
+
+@dataclasses.dataclass
+class OpponentSamplingConfig:
+    type: SamplingType = "uniform"
+    weights: dict = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.type not in ("uniform", "weighted", "pair_weighted"):
+            raise ValueError(
+                "opponents.hard_bot.sampling.type must be one of "
+                "'uniform', 'weighted', or 'pair_weighted'"
+            )
+
+
+@dataclasses.dataclass
+class HardBotConfig:
+    bots: tuple[str, ...] = ()
+    sampling: OpponentSamplingConfig = dataclasses.field(default_factory=OpponentSamplingConfig)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.bots, list):
+            self.bots = tuple(self.bots)
+        if isinstance(self.sampling, dict):
+            self.sampling = OpponentSamplingConfig(**self.sampling)
+
+        if self.sampling.type == "uniform":
+            self.sampling.weights = {}
+            return
+
+        if not self.sampling.weights:
+            raise ValueError(
+                f"opponents.hard_bot.sampling.weights must be non-empty for {self.sampling.type!r}"
+            )
+        if any(w <= 0 for w in self.sampling.weights.values()):
+            raise ValueError(
+                f"opponents.hard_bot.sampling.weights must be positive; got {self.sampling.weights}"
+            )
+
+        if self.sampling.type == "weighted":
+            unknown = set(self.sampling.weights) - set(self.bots)
+            if unknown:
+                raise ValueError(
+                    f"opponents.hard_bot.sampling.weights keys not in bots: {sorted(unknown)}"
+                )
+        else:
+            bot_names = set(self.bots)
+            for key in self.sampling.weights:
+                parts = key.split("_")
+                if len(parts) != 2:
+                    raise ValueError(
+                        f"opponents.hard_bot.sampling.weights key {key!r} must be '<a>_<b>'"
+                    )
+                a, b = parts
+                if a > b:
+                    raise ValueError(
+                        f"opponents.hard_bot.sampling.weights key {key!r} must be alphabetized "
+                        f"(use {b}_{a} instead)"
+                    )
+                unknown = {a, b} - bot_names
+                if unknown:
+                    raise ValueError(
+                        f"opponents.hard_bot.sampling.weights key {key!r} references bots "
+                        f"not in bots: {sorted(unknown)}"
+                    )
+
+        total = sum(self.sampling.weights.values())
+        self.sampling.weights = {k: v / total for k, v in self.sampling.weights.items()}
+
+
+@dataclasses.dataclass
+class OpponentConfig:
+    latest_team_odd_probability: float = 0.5
+    episode_mix: EpisodeMixConfig = dataclasses.field(default_factory=EpisodeMixConfig)
+    frozen_pool: FrozenPoolConfig = dataclasses.field(default_factory=FrozenPoolConfig)
+    hard_bot: HardBotConfig = dataclasses.field(default_factory=HardBotConfig)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.episode_mix, dict):
+            self.episode_mix = EpisodeMixConfig(**self.episode_mix)
+        if isinstance(self.frozen_pool, dict):
+            self.frozen_pool = FrozenPoolConfig(**self.frozen_pool)
+        if isinstance(self.hard_bot, dict):
+            self.hard_bot = HardBotConfig(**self.hard_bot)
+        if not 0.0 <= self.latest_team_odd_probability <= 1.0:
+            raise ValueError(
+                "opponents.latest_team_odd_probability must be in [0, 1]; "
+                f"got {self.latest_team_odd_probability}"
+            )
+
 
 # Flat YAML key → EpsilonConfig field name
 _EPSILON_FLAT_MAP: dict[str, str] = {
-    "epsilon_start":          "start",
-    "epsilon_final":          "final",
-    "epsilon_decay_updates":  "decay_updates",
-    "epsilon_decay_episodes": "decay_updates",  # backward compat YAML alias
-    "decay_episodes":         "decay_updates",  # backward compat nested-dict alias (old checkpoints)
-    "epsilon_frozen":         "frozen",
-    "epsilon_bot":            "frozen",
+    "epsilon_start":         "start",
+    "epsilon_final":         "final",
+    "epsilon_decay_updates": "decay_updates",
 }
 
 # Flat YAML key → InferenceConfig field name
@@ -112,14 +226,48 @@ _QNET_FIELDS: frozenset[str] = frozenset(
     f.name for f in dataclasses.fields(QNetConfig)
 )
 
-# Renamed QNetConfig fields. Old key → new key. Values from old checkpoints/yaml
-# are preserved when the new field accepts the same value. is_partner_visible
-# changed semantics from "all opponents + partner visible" to "partner only",
-# so old True maps to new True (closer in spirit than False) and old checkpoints
-# will eval with the new partner-only inputs (accepted distribution shift).
-_QNET_RENAMED_FIELDS: dict[str, str] = {
-    "use_oracle_others_hand": "is_partner_visible",
-}
+_REMOVED_OPPONENT_KEYS: frozenset[str] = frozenset({
+    "population_pool",
+    "hard_bot_pool",
+    "hard_bot_sampling",
+    "hard_bot_pair_sampling",
+    "latest_vs_latest_frac",
+    "latest_vs_hard_bot_frac",
+    "latest_odd_probability",
+    "epsilon_frozen",
+})
+
+
+def _reject_unknown_keys(section: str, raw: dict[str, Any], valid: set[str]) -> None:
+    unknown = set(raw) - valid
+    if unknown:
+        raise ValueError(f"{section} has unknown key(s): {sorted(unknown)}")
+
+
+def _dataclass_field_names(cls: type) -> set[str]:
+    return {f.name for f in dataclasses.fields(cls)}
+
+
+def _opponent_config_from_raw(raw: Any) -> OpponentConfig:
+    if raw is None:
+        return OpponentConfig()
+    if isinstance(raw, OpponentConfig):
+        return raw
+    if dataclasses.is_dataclass(raw):
+        raw = dataclasses.asdict(raw)
+    if not isinstance(raw, dict):
+        raise TypeError(f"opponents must be a dict or OpponentConfig; got {type(raw).__name__}")
+    _reject_unknown_keys(
+        "opponents",
+        raw,
+        {"latest_team_odd_probability", "episode_mix", "frozen_pool", "hard_bot"},
+    )
+    return OpponentConfig(
+        latest_team_odd_probability=raw.get("latest_team_odd_probability", 0.5),
+        episode_mix=raw.get("episode_mix", {}),
+        frozen_pool=raw.get("frozen_pool", {}),
+        hard_bot=raw.get("hard_bot", {}),
+    )
 
 
 # ─── TrainConfig ─────────────────────────────────────────────
@@ -141,9 +289,10 @@ class TrainConfig:
     qnet:      QNetConfig      = dataclasses.field(default_factory=QNetConfig)
     epsilon:   EpsilonConfig   = dataclasses.field(default_factory=EpsilonConfig)
     inference: InferenceConfig = dataclasses.field(default_factory=InferenceConfig)
+    opponents: OpponentConfig = dataclasses.field(default_factory=OpponentConfig)
 
     # ── Core hypers ─────────────────────────────────────────
-    model_type: str = "seat_nets"
+    model_type: ModelType = MODEL_TYPE_DART
     seed: int = 0
     gamma: float = 1.0
     batch_size: int = 512
@@ -155,13 +304,13 @@ class TrainConfig:
     buffer_capacity: int = 0
     buffer_min_size: int = 1_000
 
-    # ── Shared-head architecture ────────────────────────────
-    shared_head_role_d_model: int = 128
-    shared_head_history_hidden: int = 256
-    shared_head_global_hidden: int = 128
-    shared_head_action_hidden: int = 128
-    shared_head_trunk_hidden: int = 1024
-    shared_head_trunk_layers: int = 4
+    # ── Dart architecture ───────────────────────────────────
+    dart_role_d_model: int = 128
+    dart_history_hidden: int = 256
+    dart_global_hidden: int = 128
+    dart_action_hidden: int = 128
+    dart_trunk_hidden: int = 1024
+    dart_trunk_layers: int = 4
 
     # ── Runtime ─────────────────────────────────────────────
     device: str = "cpu"
@@ -169,6 +318,8 @@ class TrainConfig:
 
     # ── Distributed actor-learner ────────────────────────────
     n_actors: int = 1
+    # Self-play envs interleaved per actor for batched local Q-forward.
+    actor_batch_lanes: int = 1
     sync_interval_updates: int = 20       # actor reloads weights when ≥N learner updates behind
     sync_jitter_updates: int = 0          # per-actor uniform jitter ±J around the threshold (0 = no jitter)
     actor_push_batch_size: int = 512
@@ -176,6 +327,7 @@ class TrainConfig:
     max_drain_batches_per_loop: int = 32
     publish_interval_updates: int = 100
     checkpoint_every_updates: int = 5_000
+    checkpoint_save_type: CheckpointSaveType = "full"
     total_updates_target: int = 0   # 0 = run until stopped; >0 = stop after this many
     log_every_updates: int = 200
     updates_per_learner_step: int = 1
@@ -192,23 +344,6 @@ class TrainConfig:
     max_replay_ratio: float = 4.0
     max_throttle_sleep_s: float = 0.05
 
-    # ── Mixed-opponent self-play (shared_heads only) ──
-    # Two opponent-pool modes, mutually exclusive:
-    #   1. population_pool: frozen-checkpoint opponents (older snapshots of latest)
-    #   2. hard_bot_pool:   heuristic bots ({"strategic", "yaoji", "jidan", ...})
-    # When the relevant pool is non-empty AND its frac > 0, each vs-opponent
-    # episode samples one element from the pool; only latest-team samples are kept.
-    population_pool: tuple[str, ...] = ()
-    hard_bot_pool: tuple[str, ...] = ()
-    # Optional weighted sampling over hard_bot_pool. Empty → uniform.
-    # Keys must be a subset of hard_bot_pool; weights must be positive
-    # and are normalized to a probability distribution at load time.
-    hard_bot_sampling: dict = dataclasses.field(default_factory=dict)
-    # Optional pair-sampling over the cross-product of hard_bot_pool. Keys are
-    # "<bot_a>_<bot_b>" alphabetized (e.g. "jidan_yaoji"). Each vs-hard-bot
-    # episode samples one pair and assigns the two bots to the two opponent
-    # seats (random side assignment). Mutually exclusive with hard_bot_sampling.
-    hard_bot_pair_sampling: dict = dataclasses.field(default_factory=dict)
     # Stratified replay: sample proportionally from per-bucket sub-populations.
     # Keys are bucket names; values are weights (normalized at load time).
     # Empty dict → uniform sampling (default). Accepted but no-op at runtime:
@@ -217,91 +352,23 @@ class TrainConfig:
     # cap (sample uniformly across all samples in the buffer). E.g. 0.05 means
     # 5% of every batch is K=1, 95% is K>1 (real decisions).
     max_forced_k1_replay_frac: float = 1.0
-    fresh_optimizer: bool = False   # no-op: checkpoints never save optimizer state
-    fresh_replay: bool = False      # no-op: checkpoints never save buffer state
-    latest_vs_latest_frac: float = 1.0    # fraction of episodes that are pure self-play
-    latest_vs_hard_bot_frac: float = 0.0  # fraction of episodes vs hard-bot opponents
-    latest_odd_probability: float = 0.5   # fraction of vs-hard-bot episodes with latest on odd team
 
     def __post_init__(self) -> None:
-        if self.model_type not in ("seat_nets", "shared_heads", "shared_trick_heads"):
+        if self.model_type not in (MODEL_TYPE_GUANZERO, MODEL_TYPE_DART):
             raise ValueError(
                 f"Unknown model_type {self.model_type!r}; expected "
-                f"'seat_nets', 'shared_heads', or 'shared_trick_heads'"
+                f"{MODEL_TYPE_GUANZERO!r} or {MODEL_TYPE_DART!r}"
             )
-        if not 0.0 <= self.latest_vs_latest_frac <= 1.0:
+        if self.actor_batch_lanes < 1:
             raise ValueError(
-                f"latest_vs_latest_frac must be in [0, 1]; got {self.latest_vs_latest_frac}"
+                f"actor_batch_lanes must be >= 1; got {self.actor_batch_lanes}"
             )
-        if not 0.0 <= self.latest_vs_hard_bot_frac <= 1.0:
+        if self.checkpoint_save_type not in ("weight", "full"):
             raise ValueError(
-                f"latest_vs_hard_bot_frac must be in [0, 1]; got {self.latest_vs_hard_bot_frac}"
+                "checkpoint_save_type must be 'weight' or 'full'; "
+                f"got {self.checkpoint_save_type!r}"
             )
-        if not 0.0 <= self.latest_odd_probability <= 1.0:
-            raise ValueError(
-                f"latest_odd_probability must be in [0, 1]; got {self.latest_odd_probability}"
-            )
-        if self.latest_vs_latest_frac + self.latest_vs_hard_bot_frac > 1.0 + 1e-9:
-            raise ValueError(
-                "latest_vs_latest_frac + latest_vs_hard_bot_frac must be ≤ 1; "
-                f"got {self.latest_vs_latest_frac} + {self.latest_vs_hard_bot_frac}"
-            )
-        if self.population_pool and self.hard_bot_pool:
-            raise ValueError(
-                "population_pool and hard_bot_pool are mutually exclusive — pick one."
-            )
-        # YAML loads tuple-typed fields as list; coerce so the field's declared
-        # type is honoured everywhere downstream.
-        if isinstance(self.population_pool, list):
-            self.population_pool = tuple(self.population_pool)
-        if isinstance(self.hard_bot_pool, list):
-            self.hard_bot_pool = tuple(self.hard_bot_pool)
-        if self.hard_bot_sampling:
-            unknown = set(self.hard_bot_sampling) - set(self.hard_bot_pool)
-            if unknown:
-                raise ValueError(
-                    f"hard_bot_sampling keys not in hard_bot_pool: {sorted(unknown)}"
-                )
-            if any(w <= 0 for w in self.hard_bot_sampling.values()):
-                raise ValueError(
-                    f"hard_bot_sampling weights must be positive; got {self.hard_bot_sampling}"
-                )
-            total = sum(self.hard_bot_sampling.values())
-            self.hard_bot_sampling = {k: v / total for k, v in self.hard_bot_sampling.items()}
-        if self.hard_bot_pair_sampling:
-            if self.hard_bot_sampling:
-                raise ValueError(
-                    "hard_bot_sampling and hard_bot_pair_sampling are mutually exclusive — "
-                    "pick one."
-                )
-            pool_names = set(self.hard_bot_pool)
-            for key in self.hard_bot_pair_sampling:
-                parts = key.split("_")
-                if len(parts) != 2:
-                    raise ValueError(
-                        f"hard_bot_pair_sampling key {key!r} must be '<a>_<b>'"
-                    )
-                a, b = parts
-                if a > b:
-                    raise ValueError(
-                        f"hard_bot_pair_sampling key {key!r} must be alphabetized "
-                        f"(use {b}_{a} instead)"
-                    )
-                unknown = {a, b} - pool_names
-                if unknown:
-                    raise ValueError(
-                        f"hard_bot_pair_sampling key {key!r} references bots "
-                        f"not in hard_bot_pool: {sorted(unknown)}"
-                    )
-            if any(w <= 0 for w in self.hard_bot_pair_sampling.values()):
-                raise ValueError(
-                    f"hard_bot_pair_sampling weights must be positive; "
-                    f"got {self.hard_bot_pair_sampling}"
-                )
-            total = sum(self.hard_bot_pair_sampling.values())
-            self.hard_bot_pair_sampling = {
-                k: v / total for k, v in self.hard_bot_pair_sampling.items()
-            }
+        self.opponents = _opponent_config_from_raw(self.opponents)
         if self.replay_mix:
             valid_keys = {
                 "general", "hard_bot_general", "coordination_endgame",
@@ -334,12 +401,18 @@ class TrainConfig:
         Accepts:
         * Flat YAML form:   ``{"hidden_lstm": 256, "epsilon_start": 0.1, ...}``
         * Nested form:      ``{"qnet": {...}, "epsilon": {...}, ...}``
-          (produced by ``dataclasses.asdict`` on a nested ``TrainConfig``)
-        * Old checkpoint dicts: removed fields are silently dropped.
+          (produced by ``dataclasses.asdict`` on a ``TrainConfig`` — the
+          format used by checkpoint serialisation)
 
         This is the preferred loader in ``DartBot.load()`` and anywhere a
         checkpoint or YAML ``config`` dict is deserialised.
         """
+        removed = sorted(set(d) & _REMOVED_OPPONENT_KEYS)
+        if removed:
+            raise ValueError(
+                f"Removed opponent config key(s): {removed}. Use the nested 'opponents' block."
+            )
+
         if dataclasses.is_dataclass(d.get("qnet")):
             d = {
                 **d,
@@ -354,56 +427,73 @@ class TrainConfig:
                     if dataclasses.is_dataclass(d.get("inference"))
                     else d.get("inference")
                 ),
+                "opponents": (
+                    dataclasses.asdict(d["opponents"])
+                    if dataclasses.is_dataclass(d.get("opponents"))
+                    else d.get("opponents")
+                ),
             }
 
         if isinstance(d.get("qnet"), dict):
-            # ── Nested form (new checkpoints / round-tripped asdict) ──
-            qnet_d = {
-                _QNET_RENAMED_FIELDS.get(k, k): v
-                for k, v in d["qnet"].items()
-                if _QNET_RENAMED_FIELDS.get(k, k) in _QNET_FIELDS
-            }
+            # ── Nested form (checkpoints / round-tripped asdict) ──
+            _reject_unknown_keys("qnet", d["qnet"], set(_QNET_FIELDS))
+            qnet_d = dict(d["qnet"])
             qnet      = QNetConfig(**qnet_d)
             epsilon_kw: dict[str, Any] = {}
             inference_kw: dict[str, Any] = {}
+            valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "inference", "opponents"}
+            valid_nested_top = (
+                valid_top
+                | {"qnet", "epsilon", "inference", "opponents"}
+                | set(_EPSILON_FLAT_MAP)
+                | set(_INFERENCE_FLAT_MAP)
+            )
+            _reject_unknown_keys("TrainConfig", d, valid_nested_top)
             for k, v in d.items():
                 if k in _EPSILON_FLAT_MAP:
                     epsilon_kw[_EPSILON_FLAT_MAP[k]] = v
                 elif k in _INFERENCE_FLAT_MAP:
                     inference_kw[_INFERENCE_FLAT_MAP[k]] = v
             if isinstance(d.get("epsilon"), dict):
+                _reject_unknown_keys(
+                    "epsilon",
+                    d["epsilon"],
+                    _dataclass_field_names(EpsilonConfig) | set(_EPSILON_FLAT_MAP),
+                )
                 for k, v in d["epsilon"].items():
                     epsilon_kw[_EPSILON_FLAT_MAP.get(k, k)] = v
             if isinstance(d.get("inference"), dict):
+                _reject_unknown_keys("inference", d["inference"], _dataclass_field_names(InferenceConfig))
                 inference_kw.update(d["inference"])
             epsilon   = EpsilonConfig(**epsilon_kw)
             inference = InferenceConfig(**inference_kw)
-            skip = {"qnet", "epsilon", "inference"} | _REMOVED_FIELDS
-            valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "inference"}
-            top = {k: v for k, v in d.items() if k in valid_top and k not in skip}
-            return cls(qnet=qnet, epsilon=epsilon, inference=inference, **top)
+            top = {k: v for k, v in d.items() if k in valid_top}
+            return cls(
+                qnet=qnet,
+                epsilon=epsilon,
+                inference=inference,
+                opponents=_opponent_config_from_raw(d.get("opponents")),
+                **top,
+            )
 
-        # ── Flat form (YAML files, old checkpoints) ──
-        # epsilon_latest shorthand: sets start/final to the same value and decay to 0
-        if "epsilon_latest" in d:
-            lat = d["epsilon_latest"]
-            d = dict(d)
-            d.setdefault("epsilon_start", lat)
-            d.setdefault("epsilon_final", lat)
-            d.setdefault("epsilon_decay_updates", 0)
-
+        # ── Flat form (YAML files) ──
         qnet_kw:      dict[str, Any] = {}
         epsilon_kw:   dict[str, Any] = {}
         inference_kw: dict[str, Any] = {}
-        valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "inference"}
+        valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "inference", "opponents"}
+        valid_flat = (
+            valid_top
+            | set(_QNET_FIELDS)
+            | set(_EPSILON_FLAT_MAP)
+            | set(_INFERENCE_FLAT_MAP)
+            | {"opponents"}
+        )
+        _reject_unknown_keys("TrainConfig", d, valid_flat)
         top_kw: dict[str, Any] = {}
+        opponents = _opponent_config_from_raw(d.get("opponents"))
 
         for k, v in d.items():
-            if k in _REMOVED_FIELDS:
-                continue
-            if k in _QNET_RENAMED_FIELDS:
-                qnet_kw[_QNET_RENAMED_FIELDS[k]] = v
-            elif k in _QNET_FIELDS:
+            if k in _QNET_FIELDS:
                 qnet_kw[k] = v
             elif k in _EPSILON_FLAT_MAP:
                 epsilon_kw[_EPSILON_FLAT_MAP[k]] = v
@@ -411,12 +501,12 @@ class TrainConfig:
                 inference_kw[_INFERENCE_FLAT_MAP[k]] = v
             elif k in valid_top:
                 top_kw[k] = v
-            # else: silently ignore unknown keys
 
         return cls(
             qnet      = QNetConfig(**qnet_kw),
             epsilon   = EpsilonConfig(**epsilon_kw),
             inference = InferenceConfig(**inference_kw),
+            opponents = opponents,
             **top_kw,
         )
 
@@ -431,36 +521,17 @@ def load_config_from_yaml(path: str | Path) -> TrainConfig:
     return TrainConfig.from_flat_dict(raw)
 
 
-def shared_head_qnet_config(cfg: TrainConfig):
-    """Assemble SharedHeadQNetConfig from TrainConfig flat fields."""
-    from .model.q_network import SharedHeadQNetConfig
+def dart_qnet_config(cfg: TrainConfig):
+    """Assemble ``DartQNetConfig`` from ``TrainConfig`` flat fields."""
+    from .model.q_network import DartQNetConfig
 
-    return SharedHeadQNetConfig(
-        role_d_model=cfg.shared_head_role_d_model,
-        history_hidden=cfg.shared_head_history_hidden,
-        global_hidden=cfg.shared_head_global_hidden,
-        action_hidden=cfg.shared_head_action_hidden,
-        trunk_hidden=cfg.shared_head_trunk_hidden,
-        trunk_layers=cfg.shared_head_trunk_layers,
-        dropout=cfg.qnet.dropout,
-    )
-
-
-def shared_trick_head_qnet_config(cfg: TrainConfig):
-    """Assemble SharedTrickHeadQNetConfig from TrainConfig flat fields.
-
-    The hyperparameter set is identical to shared_heads; only the routing /
-    embedding structure differs (no seat_emb, wider player_blocks).
-    """
-    from .model.q_network import SharedTrickHeadQNetConfig
-
-    return SharedTrickHeadQNetConfig(
-        role_d_model=cfg.shared_head_role_d_model,
-        history_hidden=cfg.shared_head_history_hidden,
-        global_hidden=cfg.shared_head_global_hidden,
-        action_hidden=cfg.shared_head_action_hidden,
-        trunk_hidden=cfg.shared_head_trunk_hidden,
-        trunk_layers=cfg.shared_head_trunk_layers,
+    return DartQNetConfig(
+        role_d_model=cfg.dart_role_d_model,
+        history_hidden=cfg.dart_history_hidden,
+        global_hidden=cfg.dart_global_hidden,
+        action_hidden=cfg.dart_action_hidden,
+        trunk_hidden=cfg.dart_trunk_hidden,
+        trunk_layers=cfg.dart_trunk_layers,
         dropout=cfg.qnet.dropout,
     )
 
@@ -487,8 +558,16 @@ __all__ = [
     "QNetConfig",
     "EpsilonConfig",
     "InferenceConfig",
-    "shared_head_qnet_config",
-    "shared_trick_head_qnet_config",
+    "CheckpointSaveType",
+    "EpisodeMixConfig",
+    "FrozenPoolConfig",
+    "HardBotConfig",
+    "OpponentConfig",
+    "OpponentSamplingConfig",
+    "MODEL_TYPE_GUANZERO",
+    "MODEL_TYPE_DART",
+    "ModelType",
+    "dart_qnet_config",
     "load_config_from_yaml",
     "load_config_from_cli",
 ]

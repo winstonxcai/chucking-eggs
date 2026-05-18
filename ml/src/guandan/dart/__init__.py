@@ -5,7 +5,13 @@ Behavior Regulating* (arXiv:2402.13582). See ``config.TrainConfig`` for
 the hyperparameter surface and ``train.train`` for the entry point.
 """
 
-from .runtime.actor import play_episode
+from .runtime.actor import (
+    LaneConfig,
+    SeatPolicy,
+    all_latest_seats,
+    play_episode,
+    play_episodes_batched,
+)
 from .data.buffer import (
     ReplayBuffer,
     RoleAwareReplayBuffer,
@@ -14,11 +20,13 @@ from .data.buffer import (
     collate_role_encoded,
 )
 from .config import (
+    MODEL_TYPE_DART,
+    MODEL_TYPE_GUANZERO,
+    dart_qnet_config,
     EpsilonConfig,
     InferenceConfig,
     QNetConfig,
     TrainConfig,
-    shared_head_qnet_config,
 )
 from .model.encoder import (
     CARD_ID_DIM,
@@ -43,27 +51,19 @@ from .model.encoding.role_encoder import (
     absolute_player,
     relative_role,
 )
-from .model.q_network import DartQNet, SharedHeadQNet, SharedHeadQNetConfig, init_seat_nets
+from .model.q_network import DartQNet, DartQNetConfig, GuanZeroQNet, init_guanzero_nets
 from .data.returns import compute_mc_returns
 
 __all__ = [
-    # config
+    # config / production DART
     "TrainConfig",
-    "QNetConfig",
     "EpsilonConfig",
-    "InferenceConfig",
-    "shared_head_qnet_config",
-    # encoder
-    "StateActionEncoder",
-    "ENCODE_CHANNEL_SHAPES",
-    "ENCODE_CHANNEL_KEYS",
-    "ENCODE_STATE_KEYS",
-    "ENCODE_ACTION_KEYS",
+    "MODEL_TYPE_DART",
+    "dart_qnet_config",
     "CARD_ID_DIM",
     "HISTORY_LEN",
     "card_to_id",
     "id_to_card",
-    "static_dim",
     "RoleAwareStateActionEncoder",
     "relative_role",
     "absolute_player",
@@ -71,18 +71,30 @@ __all__ = [
     "REL_NEXT_OPP",
     "REL_PARTNER",
     "REL_PREV_OPP",
-    # network
     "DartQNet",
-    "SharedHeadQNet",
-    "SharedHeadQNetConfig",
-    "init_seat_nets",
-    # data
-    "ReplayBuffer",
+    "DartQNetConfig",
     "RoleAwareReplayBuffer",
-    "collate_base_encoded",
     "collate_grouped_encoded",
     "collate_role_encoded",
     "compute_mc_returns",
-    # actor
+    "LaneConfig",
+    "SeatPolicy",
+    "all_latest_seats",
     "play_episode",
+    "play_episodes_batched",
+    # GuanZero comparison baseline
+    "MODEL_TYPE_GUANZERO",
+    "QNetConfig",
+    "StateActionEncoder",
+    "ENCODE_CHANNEL_SHAPES",
+    "ENCODE_CHANNEL_KEYS",
+    "ENCODE_STATE_KEYS",
+    "ENCODE_ACTION_KEYS",
+    "static_dim",
+    "GuanZeroQNet",
+    "init_guanzero_nets",
+    "ReplayBuffer",
+    "collate_base_encoded",
+    # systems ablation
+    "InferenceConfig",
 ]

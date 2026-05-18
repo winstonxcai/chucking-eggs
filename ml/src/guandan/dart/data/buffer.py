@@ -27,6 +27,8 @@ can sample a balanced minibatch even when an episode contributed unevenly.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import torch
 
@@ -41,14 +43,11 @@ from ..model.encoding.role_encoder import (
     ROLE_ENCODE_CHANNEL_KEYS,
     ROLE_ENCODE_CHANNEL_SHAPES,
     ROLE_ENCODE_STATE_KEYS,
-    ROLE_ENCODE_TRICK_ACTION_KEYS,
-    ROLE_ENCODE_TRICK_CHANNEL_KEYS,
-    ROLE_ENCODE_TRICK_CHANNEL_SHAPES,
 )
 
-# Integer-scalar fields stored as int8 (head-routing keys). All other fields
-# are uint8 multi-hot / one-hot encodings.
-_INT_FIELDS: frozenset[str] = frozenset({"seat_id", "trick_head_id"})
+# Integer-scalar fields stored as int8. All other fields are uint8 multi-hot /
+# one-hot encodings.
+_INT_FIELDS: frozenset[str] = frozenset({"trick_head_id"})
 from .returns import TrainSample
 
 BUCKET_NAMES = ["general_self_play", "hard_bot_general", "coordination_endgame"]
@@ -71,8 +70,9 @@ class ReplayBuffer:
         per key, single H2D per key, uint8→float32 cast on GPU.
     """
 
-    def __init__(self, capacity_per_player: int = 50_000) -> None:
+    def __init__(self, capacity_per_player: int = 50_000, seed: int | None = None) -> None:
         self.capacity = capacity_per_player
+        self.rng = np.random.default_rng(seed)
         # {player: {key: ndarray[capacity, *shape] uint8}}
         self.fields: dict[int, dict[str, np.ndarray]] = {
             p: {
@@ -166,7 +166,7 @@ class ReplayBuffer:
             return None
         # randint with replacement is ~3× faster than random.sample for our
         # batch sizes and the off-policy DMC objective is replacement-tolerant.
-        idx = np.random.randint(0, n, size=batch_size)
+        idx = self.rng.integers(0, n, size=batch_size)
         batch: dict[str, torch.Tensor] = {}
         for k in _KEYS:
             arr = self.fields[player][k][idx]  # uint8 [B, *shape]
@@ -189,7 +189,7 @@ class ReplayBuffer:
         if n == 0:
             return []
         k = min(batch_size, n)
-        idx = np.random.choice(n, size=k, replace=False)
+        idx = self.rng.choice(n, size=k, replace=False)
         out: list[TrainSample] = []
         for i in idx:
             i_int = int(i)
@@ -200,36 +200,63 @@ class ReplayBuffer:
             out.append(TrainSample(player, enc, float(self.returns[player][i_int])))
         return out
 
+    def state_dict(self) -> dict[str, Any]:
+        """Return a compact, serializable snapshot for exact training resume."""
+        fields: dict[int, dict[str, torch.Tensor]] = {}
+        returns: dict[int, torch.Tensor] = {}
+        for p in range(4):
+            n = self.sizes[p]
+            fields[p] = {
+                k: torch.from_numpy(v[:n].copy())
+                for k, v in self.fields[p].items()
+            }
+            returns[p] = torch.from_numpy(self.returns[p][:n].copy())
+        return {
+            "capacity": self.capacity,
+            "fields": fields,
+            "returns": returns,
+            "write_idx": dict(self.write_idx),
+            "sizes": dict(self.sizes),
+            "rng_state": self.rng.bit_generator.state,
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore a snapshot produced by ``state_dict``."""
+        if int(state["capacity"]) != self.capacity:
+            raise ValueError(
+                f"ReplayBuffer capacity mismatch: checkpoint={state['capacity']} "
+                f"current={self.capacity}"
+            )
+        for p in range(4):
+            n = int(state["sizes"][p])
+            for k in _KEYS:
+                self.fields[p][k].fill(0)
+                arr = state["fields"][p][k].cpu().numpy()
+                self.fields[p][k][:n] = arr.astype(self.fields[p][k].dtype, copy=False)
+            self.returns[p].fill(0)
+            ret = state["returns"][p].cpu().numpy()
+            self.returns[p][:n] = ret.astype(np.float32, copy=False)
+            self.write_idx[p] = int(state["write_idx"][p])
+            self.sizes[p] = n
+        self.rng.bit_generator.state = state["rng_state"]
+
 
 class RoleAwareReplayBuffer:
-    """Single circular replay buffer for the shared-head role-aware model.
+    """Single circular replay buffer for the Dart role-aware model.
 
-    Schema is mode-aware: pass ``head_scheme="trick_relative"`` for the
-    256-wide player_blocks + ``trick_head_id`` schema (used by
-    ``SharedTrickHeadQNet``). Default is the legacy 252-wide + ``seat_id``
-    schema (used by ``SharedHeadQNet``).
+    Uses the Dart schema: 256-wide ``player_blocks`` plus ``trick_head_id``.
     """
 
     def __init__(
         self,
         capacity: int = 200_000,
-        head_scheme: str = "absolute_seat",
+        seed: int | None = None,
     ) -> None:
-        if head_scheme not in ("absolute_seat", "trick_relative"):
-            raise ValueError(
-                f"head_scheme must be 'absolute_seat' or 'trick_relative'; "
-                f"got {head_scheme!r}"
-            )
         self.capacity = capacity
-        self.head_scheme = head_scheme
-        if head_scheme == "trick_relative":
-            self.channel_shapes = ROLE_ENCODE_TRICK_CHANNEL_SHAPES
-            self.channel_keys = ROLE_ENCODE_TRICK_CHANNEL_KEYS
-            self.head_field = "trick_head_id"
-        else:
-            self.channel_shapes = ROLE_ENCODE_CHANNEL_SHAPES
-            self.channel_keys = ROLE_ENCODE_CHANNEL_KEYS
-            self.head_field = "seat_id"
+        self.rng = np.random.default_rng(seed)
+        self.channel_shapes = ROLE_ENCODE_CHANNEL_SHAPES
+        self.channel_keys = ROLE_ENCODE_CHANNEL_KEYS
+        self.head_field = "trick_head_id"
         self.fields: dict[str, np.ndarray] = {}
         for k, shape in self.channel_shapes.items():
             dtype = np.int8 if k in _INT_FIELDS else np.uint8
@@ -258,11 +285,7 @@ class RoleAwareReplayBuffer:
         return self.capacity if self.full else self.ptr
 
     def size_by_seat(self) -> dict[int, int]:
-        """Return stored sample counts by head-routing key (0..3).
-
-        For ``head_scheme="absolute_seat"`` the buckets are absolute seats.
-        For ``head_scheme="trick_relative"`` they are trick-relative head ids.
-        """
+        """Return stored sample counts by trick-relative head id (0..3)."""
         n = self.size()
         if n == 0:
             return {p: 0 for p in range(4)}
@@ -353,6 +376,61 @@ class RoleAwareReplayBuffer:
         self.ptr = (self.ptr + n) % self.capacity
         self.full = self.full or end >= self.capacity
 
+    def state_dict(self) -> dict[str, Any]:
+        """Return a compact snapshot of stored samples and sampler RNG state."""
+        n = self.size()
+        tag_names = [name for name, _ in self._TAG_FIELDS]
+        return {
+            "capacity": self.capacity,
+            "ptr": self.ptr,
+            "full": self.full,
+            "size": n,
+            "fields": {
+                k: torch.from_numpy(self.fields[k][:n].copy())
+                for k in self.channel_keys
+            },
+            "returns": torch.from_numpy(self.returns[:n].copy()),
+            "bucket": torch.from_numpy(self.bucket[:n].copy()),
+            "tags": {
+                name: torch.from_numpy(getattr(self, name)[:n].copy())
+                for name in tag_names
+            },
+            "rng_state": self.rng.bit_generator.state,
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore a snapshot produced by ``state_dict``."""
+        if int(state["capacity"]) != self.capacity:
+            raise ValueError(
+                f"RoleAwareReplayBuffer capacity mismatch: checkpoint={state['capacity']} "
+                f"current={self.capacity}"
+            )
+        n = int(state["size"])
+        if n > self.capacity:
+            raise ValueError(f"buffer state has {n} samples for capacity {self.capacity}")
+
+        for k in self.channel_keys:
+            self.fields[k].fill(0)
+            arr = state["fields"][k].cpu().numpy()
+            self.fields[k][:n] = arr.astype(self.fields[k].dtype, copy=False)
+
+        self.returns.fill(0)
+        self.returns[:n] = state["returns"].cpu().numpy().astype(np.float32, copy=False)
+        self.bucket.fill(0)
+        self.bucket[:n] = state["bucket"].cpu().numpy().astype(np.int8, copy=False)
+
+        tags = state["tags"]
+        for name, dtype in self._TAG_FIELDS:
+            arr = getattr(self, name)
+            fill = np.nan if dtype == np.float32 and name == "q_gap" else 0
+            arr.fill(fill)
+            restored = tags[name].cpu().numpy().astype(dtype, copy=False)
+            arr[:n] = restored
+
+        self.ptr = int(state["ptr"])
+        self.full = bool(state["full"])
+        self.rng.bit_generator.state = state["rng_state"]
+
     def sample_batch(
         self,
         batch_size: int,
@@ -366,7 +444,7 @@ class RoleAwareReplayBuffer:
         n = self.size()
         if n < batch_size:
             raise ValueError(f"buffer has {n} samples, need {batch_size}")
-        idx = np.random.randint(0, n, size=batch_size)
+        idx = self.rng.integers(0, n, size=batch_size)
         return self._sample_indices(idx, device, return_tags=return_tags)
 
     def sample_batch_balanced(
@@ -378,11 +456,7 @@ class RoleAwareReplayBuffer:
     ) -> tuple[dict[str, torch.Tensor], torch.Tensor] | tuple[
         dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor]
     ]:
-        """Stratified sample with approximately equal rows per head bucket.
-
-        Bucket interpretation depends on ``self.head_scheme``: absolute seats
-        for ``absolute_seat``, trick-relative head ids for ``trick_relative``.
-        """
+        """Stratified sample with approximately equal rows per trick-head bucket."""
         n = self.size()
         ids = self.fields[self.head_field][:n].astype(np.int64, copy=False)
         counts = [batch_size // 4] * 4
@@ -395,9 +469,9 @@ class RoleAwareReplayBuffer:
                 raise ValueError(
                     f"{self.head_field} bucket {p} has {len(seat_idx)} samples, need {count}"
                 )
-            idx_parts.append(np.random.choice(seat_idx, size=count, replace=True))
+            idx_parts.append(self.rng.choice(seat_idx, size=count, replace=True))
         idx = np.concatenate(idx_parts)
-        np.random.shuffle(idx)
+        self.rng.shuffle(idx)
         return self._sample_indices(idx, device, return_tags=return_tags)
 
     def sample_batch_balanced_k1_capped(
@@ -426,7 +500,7 @@ class RoleAwareReplayBuffer:
             n_free_target = batch_size
             k1_part = np.empty(0, dtype=np.int64)
         else:
-            k1_part = np.random.choice(k1_idx_all, size=n_k1_target, replace=True)
+            k1_part = self.rng.choice(k1_idx_all, size=n_k1_target, replace=True)
 
         free_mask = ~k1_mask
         ids = self.fields[self.head_field][:n].astype(np.int64, copy=False)
@@ -441,10 +515,10 @@ class RoleAwareReplayBuffer:
                     f"head {p} has {len(head_free)} K>1 samples; need {count} "
                     f"(K=1 cap={max_k1_frac})"
                 )
-            free_parts.append(np.random.choice(head_free, size=count, replace=True))
+            free_parts.append(self.rng.choice(head_free, size=count, replace=True))
 
         idx = np.concatenate([k1_part, *free_parts])
-        np.random.shuffle(idx)
+        self.rng.shuffle(idx)
         return self._sample_indices(idx, device, return_tags=return_tags)
 
     def sample_batch_stratified(
@@ -507,13 +581,13 @@ class RoleAwareReplayBuffer:
             n_draw = remaining if i == len(mix_items) - 1 else max(1, round(batch_size * frac))
             n_draw = min(n_draw, remaining)
             pool = _pool_for(key)
-            idx_parts.append(np.random.choice(pool, size=n_draw, replace=True))
+            idx_parts.append(self.rng.choice(pool, size=n_draw, replace=True))
             remaining -= n_draw
             if remaining <= 0:
                 break
 
         idx = np.concatenate(idx_parts)
-        np.random.shuffle(idx)
+        self.rng.shuffle(idx)
         return self._sample_indices(idx, device, return_tags=return_tags)
 
     def _sample_indices(
@@ -580,14 +654,10 @@ def collate_role_encoded(
     device: str | torch.device = "cpu",
     action_keys: tuple[str, ...] | None = None,
 ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
-    """Collate role-encoded decisions for shared-head forward_grouped.
+    """Collate role-encoded decisions for Dart ``forward_grouped``.
 
     ``action_keys`` selects which fields land in the action batch. Defaults to
-    ``ROLE_ENCODE_ACTION_KEYS`` (legacy absolute_seat schema). Pass
-    ``ROLE_ENCODE_TRICK_ACTION_KEYS`` for the trick_relative schema.
-
-    Auto-detection: if ``action_keys`` is None and the first encoded row has a
-    ``trick_head_id`` key, the trick action keys are used.
+    the Dart action keys.
     """
     if not encoded_groups:
         raise ValueError("encoded_groups must be non-empty")
@@ -595,12 +665,7 @@ def collate_role_encoded(
         raise ValueError("encoded_groups cannot contain empty decisions")
 
     if action_keys is None:
-        first_row = encoded_groups[0][0]
-        action_keys = (
-            ROLE_ENCODE_TRICK_ACTION_KEYS
-            if "trick_head_id" in first_row
-            else ROLE_ENCODE_ACTION_KEYS
-        )
+        action_keys = ROLE_ENCODE_ACTION_KEYS
 
     state_batch = {
         k: torch.from_numpy(np.stack([group[0][k] for group in encoded_groups], axis=0))

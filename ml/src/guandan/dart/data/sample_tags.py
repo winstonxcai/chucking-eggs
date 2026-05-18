@@ -64,27 +64,35 @@ EPISODE_MODE_NAMES = {
 
 
 # ── Opponent registry ────────────────────────────────────────────────────
-# Hard-coded bot IDs 1..9; checkpoint pool entries start at 10.
+# Bot IDs 1..13 are owned by agent classes (Agent.sample_tag); adding a new
+# bot to AGENT_REGISTRY with a non-zero sample_tag automatically registers it.
+# Checkpoint pool entries start at OPPONENT_CHECKPOINT_BASE (must exceed max bot ID).
 
-OPPONENT_NONE      = 0   # pure self-play
-OPPONENT_STRATEGIC = 1
-OPPONENT_YAOJI     = 2
-OPPONENT_JIDAN     = 3
-OPPONENT_HEURISTIC = 4
-OPPONENT_XINGDREAM = 5
-OPPONENT_GREEDY    = 6
-OPPONENT_RANDOM    = 7
-OPPONENT_CHECKPOINT_BASE = 10  # checkpoint pool: BASE + pool_idx (0..63)
+from ...agents import AGENT_REGISTRY  # no circular import: agents never imports dart
+
+OPPONENT_NONE            = 0   # pure self-play (no named bot opponent)
+OPPONENT_CHECKPOINT_BASE = 20  # checkpoint pool: BASE + pool_idx (0..63)
 
 OPPONENT_BY_NAME: dict[str, int] = {
-    "strategic": OPPONENT_STRATEGIC,
-    "yaoji":     OPPONENT_YAOJI,
-    "jidan":     OPPONENT_JIDAN,
-    "heuristic": OPPONENT_HEURISTIC,
-    "xingdream": OPPONENT_XINGDREAM,
-    "greedy":    OPPONENT_GREEDY,
-    "random":    OPPONENT_RANDOM,
+    name: cls.sample_tag
+    for name, cls in AGENT_REGISTRY.items()
+    if cls.sample_tag != 0
 }
+
+# Convenience aliases — derived from OPPONENT_BY_NAME so callers don't change.
+OPPONENT_STRATEGIC = OPPONENT_BY_NAME["strategic"]
+OPPONENT_YAOJI     = OPPONENT_BY_NAME["yaoji"]
+OPPONENT_JIDAN     = OPPONENT_BY_NAME["jidan"]
+OPPONENT_HEURISTIC = OPPONENT_BY_NAME["heuristic"]
+OPPONENT_XINGDREAM = OPPONENT_BY_NAME["xingdream"]
+OPPONENT_GREEDY    = OPPONENT_BY_NAME["greedy"]
+OPPONENT_RANDOM    = OPPONENT_BY_NAME["random"]
+OPPONENT_NOAI      = OPPONENT_BY_NAME["noai"]
+OPPONENT_LALALA    = OPPONENT_BY_NAME["lalala"]
+OPPONENT_LIUZHA    = OPPONENT_BY_NAME["liuzha"]
+OPPONENT_HULALALA  = OPPONENT_BY_NAME["hulalala"]
+OPPONENT_EZ        = OPPONENT_BY_NAME["ez"]
+OPPONENT_WJSD      = OPPONENT_BY_NAME["wjsd"]
 
 # Top opponents to emit grid cells for (capped at 6 for tractability).
 # Used by learner aggregation: `opp_phase_*` cells are indexed 0..5 over this
@@ -228,9 +236,11 @@ __all__ = [
     "EPISODE_MODE_SELF_PLAY", "EPISODE_MODE_VS_CHECKPOINT",
     "EPISODE_MODE_VS_HARD_BOT", "EPISODE_MODE_NAMES",
     # Opponents
-    "OPPONENT_NONE", "OPPONENT_STRATEGIC", "OPPONENT_YAOJI", "OPPONENT_JIDAN",
-    "OPPONENT_HEURISTIC", "OPPONENT_XINGDREAM", "OPPONENT_GREEDY",
-    "OPPONENT_RANDOM", "OPPONENT_CHECKPOINT_BASE",
+    "OPPONENT_NONE", "OPPONENT_CHECKPOINT_BASE",
+    "OPPONENT_STRATEGIC", "OPPONENT_YAOJI", "OPPONENT_JIDAN",
+    "OPPONENT_HEURISTIC", "OPPONENT_XINGDREAM", "OPPONENT_GREEDY", "OPPONENT_RANDOM",
+    "OPPONENT_NOAI", "OPPONENT_LALALA", "OPPONENT_LIUZHA", "OPPONENT_HULALALA",
+    "OPPONENT_EZ", "OPPONENT_WJSD",
     "OPPONENT_BY_NAME", "OPP_GRID_TOP",
     # Action classes
     "ACTION_CLASS_PASS", "ACTION_CLASS_SINGLE", "ACTION_CLASS_PAIR_TRIPLE",

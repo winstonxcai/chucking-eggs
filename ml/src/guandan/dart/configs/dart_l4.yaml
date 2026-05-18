@@ -7,6 +7,7 @@
 #     --updates 50000 --run-name dart_l4_50k --seed 0
 
 n_actors: 32
+actor_batch_lanes: 40
 sync_interval_updates: 1000
 sync_jitter_updates: 250
 actor_push_batch_size: 512
@@ -14,16 +15,17 @@ sample_queue_maxsize: 64
 max_drain_batches_per_loop: 16
 publish_interval_updates: 200
 checkpoint_every_updates: 2500
+checkpoint_save_type: full
 log_every_updates: 10
 updates_per_learner_step: 1
 
-model_type: shared_trick_heads
-shared_head_role_d_model: 128
-shared_head_history_hidden: 256
-shared_head_global_hidden: 128
-shared_head_action_hidden: 128
-shared_head_trunk_hidden: 1024
-shared_head_trunk_layers: 4
+model_type: Dart
+dart_role_d_model: 128
+dart_history_hidden: 256
+dart_global_hidden: 128
+dart_action_hidden: 128
+dart_trunk_hidden: 1024
+dart_trunk_layers: 4
 dropout: 0.0
 
 use_inference_server: false
@@ -48,12 +50,23 @@ buffer_min_size: 32768
 epsilon_start: 0.01
 epsilon_final: 0.01
 epsilon_decay_updates: 20000
-epsilon_frozen: 0.00
 is_partner_visible: true
 
-latest_vs_latest_frac: 1.0
-latest_vs_hard_bot_frac: 0.0
-population_pool: []
+opponents:
+  latest_team_odd_probability: 0.5
+  episode_mix:
+    self_play: 1.0
+    frozen_pool: 0.0
+    hard_bot: 0.0
+  frozen_pool:
+    checkpoints: []
+    epsilon: 0.0
+    sampling: uniform
+  hard_bot:
+    bots: []
+    sampling:
+      type: uniform
+      weights: {}
 
 max_forced_k1_replay_frac: 0.05
 

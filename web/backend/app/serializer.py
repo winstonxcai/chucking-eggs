@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 from guandan.cards import BOMB_TYPES, Card, ComboType, Rank, Suit, is_wild, level_order_key
-from guandan.combos import Combo, _add_straight_flushes, generate_all_leads, generate_responses
+from guandan.combos import Combo, generate_all_leads, generate_responses
 from guandan.game import GuanDanEnv
 
 SUIT_SYMBOLS = {Suit.SPADE: "\u2660", Suit.HEART: "\u2665", Suit.DIAMOND: "\u2666", Suit.CLUB: "\u2663"}
@@ -140,9 +140,10 @@ def _compute_sf_options(
     Deduplicates by natural-card set so each unique SF appears only once.
     """
     ungrouped = {c for c in hand if f"{c.rank}-{c.suit}-{c.deck}" not in grouped_ids}
-    wilds = [c for c in ungrouped if is_wild(c, level_rank)]
-    sf_combos: list[Combo] = []
-    _add_straight_flushes(sf_combos, ungrouped, wilds, level_rank)
+    sf_combos = [
+        combo for combo in generate_all_leads(ungrouped, level_rank)
+        if combo.type == ComboType.STRAIGHT_FLUSH
+    ]
 
     options: dict[str, list[dict]] = {"0": [], "1": [], "2": [], "3": []}
     seen: set[frozenset] = set()

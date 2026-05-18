@@ -4145,3 +4145,304 @@ Results saved to `ml/runs/wr_matrix/results_0515_1629.json`.
   expectations, sitting below random in rating.
 - Target for trained agent remains: ≥85% vs strategic, yaoji, jidan.
 
+---
+
+## 2026-05-17 — Dart actor throughput: intra-actor batching beats IPC batching
+
+Goal: optimize actor production without revisiting the Rust rollout path. Prior
+results showed Rust rollout was slower/at best parity because Q-forward dominates
+the decision cost, and shared inference regressed due to IPC + learner/GPU
+contention. The new approach batches **inside each actor process**: one actor
+interleaves several self-play env lanes and submits their pending decisions in a
+single grouped Q-forward.
+
+### Implementation
+
+- `play_episodes_batched(...)` in `dart/runtime/actor.py`: pure self-play lane
+  scheduler, batching greedy decisions across active envs in one process.
+- `argmax_q_batched(...)`: collates multiple encoded decision groups and returns
+  per-decision argmax + Q-gap.
+- `actor_batch_lanes` in `TrainConfig`, with old `env_lanes_per_actor` accepted
+  as an alias.
+- `worker.py` uses the batched path only for local pure self-play; hard-bot,
+  frozen-checkpoint, and inference-server episodes keep the existing single
+  episode path.
+- `q_network.py` extends the existing grouped-forward first-layer decomposition
+  from single-state to multi-state grouped calls, avoiding repeated first-layer
+  work for shared state/history features.
+- Bench tools:
+  - `ml/scripts/util/bench_actor_throughput.py`
+  - `ml/scripts/modal/bench_actor_throughput_modal.py`
+
+### Local 8-worker sanity
+
+Mac/local CPU, 8 spawned workers, 32 episodes/worker, shared trick-head net,
+`epsilon=0`, `torch_threads=1`:
+
+| lanes | wall_s | ep/s | samples/s |
+|------:|-------:|-----:|----------:|
+| 1 | 30.230 | 8.468 | 1169.2 |
+| 8 | 12.267 | 20.870 | 2886.5 |
+
+Lane-8 gives **2.46×** local 8-worker actor throughput.
+
+### Modal 32-vCPU sweep
+
+All Modal runs used profile/account `winstoncai`, 32 spawned worker processes,
+CPU-only container (`cpu=32`), shared trick-head model, `epsilon=0`,
+`torch_threads=1`.
+
+Broad sweep, 32 episodes/worker:
+
+| lanes | wall_s | ep/s | samples/s |
+|------:|-------:|-----:|----------:|
+| 1 | 25.315 | 40.450 | 5622.8 |
+| 2 | 21.791 | 46.993 | 6561.1 |
+| 4 | 18.281 | 56.013 | 7818.3 |
+| 8 | 14.397 | 71.128 | 9925.2 |
+| 16 | 13.499 | 75.860 | 10574.0 |
+| 32 | 12.847 | 79.708 | 11101.1 |
+
+Rollover check, 64 episodes/worker:
+
+| lanes | wall_s | ep/s | samples/s |
+|------:|-------:|-----:|----------:|
+| 16 | 20.362 | 100.577 | 14007.3 |
+| 32 | 19.151 | 106.938 | 14892.7 |
+| 64 | 21.314 | 96.087 | 13382.7 |
+
+Narrow sweep, 64 episodes/worker:
+
+| lanes | wall_s | ep/s | samples/s |
+|------:|-------:|-----:|----------:|
+| 24 | 18.783 | 109.032 | 15210.3 |
+| 32 | 18.705 | 109.491 | 15234.4 |
+| 40 | 18.374 | 111.465 | 15550.4 |
+| 48 | 19.224 | 106.534 | 14858.3 |
+
+Confirmation sweep, 96 episodes/worker:
+
+| lanes | wall_s | ep/s | samples/s |
+|------:|-------:|-----:|----------:|
+| 32 | 21.994 | 139.672 | 19442.6 |
+| 36 | 23.986 | 128.073 | 17768.8 |
+| 40 | 21.643 | 141.938 | 19775.1 |
+| 44 | 22.898 | 134.161 | 18654.5 |
+
+Final apples-to-apples speedup, 96 episodes/worker:
+
+| lanes | wall_s | ep/s | samples/s |
+|------:|-------:|-----:|----------:|
+| 1 | 53.275 | 57.663 | 8006.9 |
+| 40 | 18.803 | 163.377 | 22721.8 |
+
+**Result:** `actor_batch_lanes=40` is the measured Modal 32-vCPU optimum for raw
+actor throughput. It is **2.84× faster** than the old single-lane actor path by
+samples/sec (`22721.8 / 8006.9`) and **2.83× faster** by episodes/sec.
+
+### Integrated 1000-update smoke
+
+Ran the updated `dart_l4.yaml` on Modal under account/profile `winstoncai`:
+
+```bash
+python3 -m modal run ml/scripts/modal/train_dart_modal.py \
+  --updates 1000 \
+  --run-name dart_l4_lanes40_smoke_1k_wait \
+  --seed 0 \
+  --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml \
+  --device cuda \
+  --wait
+```
+
+Run URL: `https://modal.com/apps/winstoncai/main/ap-PmYTrBGqQaXxRX3QppZH5X`
+
+The run completed successfully and wrote
+`/runs/dart/dart_l4_lanes40_smoke_1k_wait/checkpoints/final.pt`. The learner
+stopped after 1013 updates; metrics were logged through update 1010.
+
+Config confirmation from the Modal run:
+
+| setting | value |
+|--------:|------:|
+| `n_actors` | 32 |
+| `actor_batch_lanes` | 40 |
+| `batch_size` | 4096 |
+| `target_replay_ratio` | 1.0 |
+| `max_replay_ratio` | 1.25 |
+| `total_updates_target` | 1000 |
+| `device` | cuda |
+
+Steady-state learner metrics after update 200:
+
+| metric | mean | median | final logged |
+|-------:|-----:|-------:|-------------:|
+| actor fresh samples/sec | 26434.3 | 26349.9 | 25002.9 |
+| learner samples/sec | 33084.5 | 31974.4 | 31330.3 |
+| learner updates/sec | 8.1 | 7.8 | 7.6 |
+| queue depth | 64.0 | 64.0 | 64.0 |
+| replay cumulative | 1.2 | 1.2 | 1.2 |
+
+Final logged counters: `fresh_samples_total=3307520`, `buffer_total=400000`,
+`throttle_sleeps=1054`, `throttle_sleep_s=52.7`.
+
+Interpretation: the actor queue stayed full after warmup and the replay
+controller spent 52.7s throttling, so this smoke was not actor-starved. The
+integrated actor-side rate settled around 25-26k samples/sec, roughly 3.1-3.3x
+the old single-lane raw actor baseline of 8006.9 samples/sec. The controlled
+raw actor benchmark remains the apples-to-apples speedup claim: 2.84x.
+
+Shutdown note: after the learner reached the target, several actors did not exit
+within the join timeout and were terminated, with some final queue-put drops
+while the queues were closing. This happened after training completion and did
+not affect the checkpoint or throughput conclusion.
+
+### Integrated 1000-update smoke rerun after per-seat dispatch refactor
+
+Re-ran the same Modal L4 smoke after unifying per-seat episode dispatch:
+
+```bash
+uv run modal run ml/scripts/modal/train_dart_modal.py \
+  --updates 1000 \
+  --run-name dart_l4_lanes40_smoke_1k_refactor \
+  --seed 0 \
+  --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml \
+  --device cuda \
+  --wait
+```
+
+Run URL: `https://modal.com/apps/winstoncai/main/ap-CI37RQlKilIPTPz9IZ4cAE`
+
+The run completed successfully and wrote
+`/runs/dart/dart_l4_lanes40_smoke_1k_refactor/checkpoints/final.pt`. The learner
+stopped after 1002 updates; metrics were logged through update 1000.
+
+Steady-state learner metrics after update 200:
+
+| metric | prior mean | rerun mean | rerun median | rerun final logged |
+|-------:|-----------:|-----------:|-------------:|-------------------:|
+| actor fresh samples/sec | 26434.3 | 26583.7 | 26096.9 | 23190.4 |
+| learner samples/sec | 33084.5 | 33245.7 | 32643.4 | 22914.0 |
+| learner updates/sec | 8.1 | 8.1 | 8.0 | 5.6 |
+| queue depth | 64.0 | 64.0 | 64.0 | 64.0 |
+| replay cumulative | 1.2 | 1.2 | 1.2 | 1.2 |
+
+Final logged counters: `fresh_samples_total=3274240`, `buffer_total=400000`,
+`throttle_sleeps=1084`, `throttle_sleep_s=54.2`.
+
+Conclusion: no speed regression from the per-seat dispatch refactor. The
+steady-state actor production mean is slightly higher than the prior smoke
+(+0.6%), the learner remains throttled with a full actor queue, and the final
+row is lower only because the last short interval is noisy.
+
+### Takeaways
+
+- The useful batching boundary is inside the actor process, not across actors
+  through an inference server. It amortizes Torch dispatch and model forward
+  without IPC.
+- Throughput improves up to roughly 32-40 lanes, then falls by 48-64 lanes as
+  lane scheduling/collation overhead overtakes additional batching gains.
+- `dart_l4.yaml` now uses `actor_batch_lanes: 40`.
+- `dart_mps.yaml` remains at `actor_batch_lanes: 8`; the 40-lane optimum is
+  specific to Modal 32-vCPU CPU actor production and should not be assumed for
+  local MPS without a separate sweep.
+
+## 2026-05-18 — Dart eval env-lanes: batched Q-forwards speed up CPU eval
+
+Follow-up to the actor-lane work above. Applied the same per-process env-lane
+idea to `ml/scripts/eval/eval_dart.py`: each eval worker now interleaves several
+active games and batches Dart Q-forwards across pending lane decisions, while
+rule-based opponent moves step immediately. This preserves the existing paired
+fixed-deck eval structure and process sharding, but adds `--lanes` inside each
+worker chunk.
+
+Benchmark setup:
+
+- Checkpoint: `ml/runs/dart_v5_baseline_400k/checkpoints/update_00202500.pt`
+- Opponent: `strategic`
+- Hardware: local Apple M1 Pro CPU
+- Device/start method: `--device cpu --start-method fork`
+- Thread env: `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1`
+- These are runtime-only benchmarks. Short-run WR varies across repeated
+  process-based evals and lane counts, so WR was not used as a correctness or
+  quality signal here.
+
+Single-worker sweep, 40 total paired eval games:
+
+| workers | lanes | games | wall_s | games/s | speedup |
+|--------:|------:|------:|-------:|--------:|--------:|
+| 1 | 1  | 40 | 3.992 | 10.02 | 1.00x |
+| 1 | 2  | 40 | 2.980 | 13.42 | 1.34x |
+| 1 | 4  | 40 | 2.554 | 15.66 | 1.56x |
+| 1 | 8  | 40 | 2.055 | 19.46 | 1.94x |
+| 1 | 16 | 40 | 1.645 | 24.31 | 2.43x |
+
+Four-worker sweep, 80 total paired eval games:
+
+| workers | lanes | games | wall_s | games/s | speedup |
+|--------:|------:|------:|-------:|--------:|--------:|
+| 4 | 1  | 80 | 4.093 | 19.54 | 1.00x |
+| 4 | 4  | 80 | 2.485 | 32.20 | 1.65x |
+| 4 | 8  | 80 | 1.968 | 40.65 | 2.08x |
+| 4 | 16 | 80 | 1.597 | 50.10 | 2.56x |
+
+Eight-worker sweep, 160 total paired eval games:
+
+| workers | lanes | games | wall_s | games/s | speedup |
+|--------:|------:|------:|-------:|--------:|--------:|
+| 8 | 1  | 160 | 5.665 | 28.24 | 1.00x |
+| 8 | 4  | 160 | 4.287 | 37.32 | 1.32x |
+| 8 | 8  | 160 | 3.586 | 44.62 | 1.58x |
+| 8 | 16 | 160 | 2.450 | 65.31 | 2.31x |
+
+Conclusion: eval lanes are useful. On this local CPU eval workload,
+`--workers 8 --lanes 16` reached ~65 games/s and was the fastest setting tested,
+2.31x faster than 8 workers with single-lane eval and 6.5x faster than the
+single-worker single-lane baseline. The default `--lanes 8` is conservative;
+`--lanes 16` is a better local-throughput setting for this checkpoint/opponent
+pair unless a larger sweep shows a regression on longer runs or harder bots.
+
+### Full default-opponent eval target: 1000 games each
+
+Follow-up benchmark for the actual sweep shape: 1000 paired eval games against
+each default `eval_dart.py` opponent. This excludes `noai`, so the run covers
+12 opponents and 12,000 total games:
+
+`random, greedy, heuristic, strategic, xingdream, lalala, liuzha, hulalala,
+yaoji, jidan, ez, wjsd`.
+
+First, a 1000-game `strategic` sweep checked larger lane counts and worker
+counts with enough seeds per worker for `lanes=32/64` to matter:
+
+| workers | lanes | games | wall_s | games/s |
+|--------:|------:|------:|-------:|--------:|
+| 8  | 16 | 1000 | 13.520 | 73.97 |
+| 8  | 32 | 1000 | **8.288** | **120.66** |
+| 8  | 64 | 1000 | 9.154 | 109.24 |
+| 10 | 32 | 1000 | 8.760 | 114.15 |
+| 12 | 32 | 1000 | 9.609 | 104.07 |
+
+Then the full 12-opponent workload was measured for the likely best setting and
+one extra-worker challenger:
+
+| workers | lanes | opponents | total games | wall_s | wall_min | games/s |
+|--------:|------:|----------:|------------:|-------:|---------:|--------:|
+| 8  | 32 | 12 | 12000 | **97.358** | **1.62** | **123.26** |
+| 10 | 32 | 12 | 12000 | 114.772 | 1.91 | 104.56 |
+
+Recommendation for local full evals:
+
+```bash
+PYTHONPATH=ml/src \
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
+uv run python ml/scripts/eval/eval_dart.py \
+  --checkpoint ml/runs/<run>/checkpoints/<checkpoint>.pt \
+  --opponent random greedy heuristic strategic xingdream lalala liuzha hulalala yaoji jidan ez wjsd \
+  --games 1000 \
+  --workers 8 \
+  --lanes 32 \
+  --device cpu
+```
+
+Conclusion: for the default 12-bot eval set, `--workers 8 --lanes 32` is the
+fastest measured local setting. Higher lanes (`64`) and more workers (`10/12`)
+were slower on this M1 Pro workload.

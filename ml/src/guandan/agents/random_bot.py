@@ -13,6 +13,7 @@ class RandomBot(Agent):
     label = "Random"
     description = "Plays completely at random."
     source = "In-house"
+    sample_tag = 7
 
     def act(self, env, player: int):
         return random.choice(env.legal_moves(player))

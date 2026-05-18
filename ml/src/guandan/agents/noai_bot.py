@@ -34,6 +34,7 @@ class NoAIBot(Agent):
     description = "Fudan 2nd Prize · Chen Yuguan."
     source = "Fudan"
     award = "2nd Prize · Chen Yuguan"
+    sample_tag = 8
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

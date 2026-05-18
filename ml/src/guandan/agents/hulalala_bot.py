@@ -56,6 +56,7 @@ class HulalalaBot(Agent):
     description = "SEU 3rd Prize · 2020 NJUPT entry."
     source = "SEU"
     award = "3rd Prize"
+    sample_tag = 11
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

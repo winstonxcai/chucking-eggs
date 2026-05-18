@@ -15,15 +15,14 @@ from .combos import Combo, generate_all_leads, generate_responses
 
 
 class GuanDanEnv:
-    def __init__(self, level_rank: int = Rank.TWO):
+    def __init__(self, level_rank: int = Rank.TWO, seed: int | None = None):
         self.level_rank = level_rank
-        self.reset()
+        self.reset(seed=seed)
 
     def reset(self, seed: int | None = None) -> None:
-        if seed is not None:
-            random.seed(seed)
+        rng = random.Random(seed) if seed is not None else random
         deck = make_deck()
-        random.shuffle(deck)
+        rng.shuffle(deck)
         self.hands: list[set[Card]] = [
             set(deck[0:27]),
             set(deck[27:54]),
@@ -42,9 +41,7 @@ class GuanDanEnv:
         # Per-seat histogram of bomb tiers played so far. 9 tiers: BOMB_4 .. BOMB_JOKER
         # (ComboType values 8..16). Updated in _handle_play.
         self.bombs_played: np.ndarray = np.zeros((4, 9), dtype=np.uint8)
-        self.current_player: int = random.randint(0, 3)
-        if seed is not None:
-            random.seed()  # restore global randomness
+        self.current_player: int = rng.randint(0, 3)
         self.current_trick: Combo | None = None
         self.trick_winner: int | None = None
         self.consecutive_passes: int = 0  # counts all passes since last play (incl. auto)

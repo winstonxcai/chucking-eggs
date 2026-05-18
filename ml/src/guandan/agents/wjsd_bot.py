@@ -80,6 +80,7 @@ class WjsdBot(Agent):
     description = "SAU 3rd Prize · 2020 NJUPT entry."
     source = "SAU"
     award = "3rd Prize"
+    sample_tag = 13
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

@@ -188,6 +188,7 @@ class HeuristicBot(Agent):
     label = "Heuristic"
     description = "Intermediate rule-based play."
     source = "In-house"
+    sample_tag = 4
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

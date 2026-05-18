@@ -70,6 +70,7 @@ class StrategicBot(Agent):
     label = "Strategic"
     description = "Reads the table."
     source = "In-house"
+    sample_tag = 1
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

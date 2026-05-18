@@ -56,6 +56,7 @@ class LiuzhaBot(Agent):
     description = "SEU 2nd Prize · 2020 NJUPT entry."
     source = "SEU"
     award = "2nd Prize"
+    sample_tag = 10
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

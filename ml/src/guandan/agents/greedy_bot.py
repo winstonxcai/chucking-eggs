@@ -22,6 +22,7 @@ class GreedyBot(Agent):
     label = "Greedy"
     description = "Plays it safe."
     source = "In-house"
+    sample_tag = 6
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

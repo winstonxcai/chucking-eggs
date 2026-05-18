@@ -1,9 +1,8 @@
 """Combo classification, generation, comparison, and move generation.
 
 Move generation (``generate_all_leads`` and ``generate_responses``) is
-delegated to the ``guandan_rs`` Rust extension. Build with::
-
-    cd ml/src/guandan_rs && maturin develop --release
+provided by ``guandan_rs``. That package uses the optional native
+``_guandan_rs`` extension when installed and otherwise falls back to Python.
 """
 
 from __future__ import annotations

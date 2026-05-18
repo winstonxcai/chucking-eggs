@@ -6,9 +6,9 @@ Usage:
     agent = make_agent("strategic", level_rank=Rank.TWO)
     combo = agent.act(env, player)
 
-RL/ML/search agents (DartBot and predecessors) were removed as of 2026-04-24;
-use ``make_agent("dart", checkpoint=<path>)`` to load a trained DartBot.
-See ``ml/LOGBOOK.md`` for the chronology of prior training attempts.
+Use ``make_agent("dart", checkpoint=<path>)`` to load a trained DART or
+GuanZero comparison checkpoint. See ``ml/LOGBOOK.md`` for the chronology of
+prior training attempts.
 """
 
 from __future__ import annotations
@@ -81,12 +81,18 @@ def make_agent(
     name: str,
     level_rank: int = Rank.TWO,
     checkpoint: str | None = None,
+    **kwargs,
 ) -> Agent:
     if name == "dart":
         if checkpoint is None:
             raise ValueError("make_agent('dart') requires a checkpoint= path")
         from guandan.dart.agent import DartBot  # lazy: avoids torch import for rule-based runs
         return DartBot.load(checkpoint)
+    if name == "llm":
+        from .llm_bot import LLMBot  # lazy: avoids litellm import for rule-based runs
+        if "model" not in kwargs:
+            raise ValueError("make_agent('llm') requires a model= name (e.g. 'gpt-4o-mini')")
+        return LLMBot(level_rank=level_rank, **kwargs)
     cls = AGENT_REGISTRY[name]
     if name == "random":
         return cls()

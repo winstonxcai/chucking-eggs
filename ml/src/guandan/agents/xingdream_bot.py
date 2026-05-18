@@ -21,6 +21,7 @@ class XingDreamBot(Agent):
     description = "8th Place · 2020 NJUPT entry."
     source = "2020 NJUPT"
     award = "8th Place"
+    sample_tag = 5
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

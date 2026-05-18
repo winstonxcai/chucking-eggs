@@ -30,6 +30,8 @@ class JidanBot(Agent):
     description = "NUAA 2nd Prize · 2020 NJUPT entry."
     source = "NUAA"
     award = "2nd Prize"
+    sample_tag = 3
+    coord_target = True
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

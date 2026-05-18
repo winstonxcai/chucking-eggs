@@ -65,6 +65,7 @@ class LalalaBot(Agent):
     description = "SEU 1st Prize · Li Jing (2020)."
     source = "SEU"
     award = "1st Prize · Li Jing"
+    sample_tag = 9
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

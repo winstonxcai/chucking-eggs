@@ -30,6 +30,8 @@ class YaojiBot(Agent):
     description = "NUAA 3rd Prize · 2020 NJUPT entry."
     source = "NUAA"
     award = "3rd Prize"
+    sample_tag = 2
+    coord_target = True
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank

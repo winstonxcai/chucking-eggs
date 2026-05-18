@@ -37,7 +37,7 @@ gamma: 1.0
 batch_size: 2048
 buffer_capacity: 400000
 buffer_capacity_per_player: 100000
-buffer_min_size: 32768
+buffer_min_size: 4096
 
 epsilon_start: 0.01
 epsilon_final: 0.01

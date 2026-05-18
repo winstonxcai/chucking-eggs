@@ -55,6 +55,7 @@ class HulalalaBot(Agent):
     label = "Hulalala"
     description = "SEU 3rd Prize · 2020 NJUPT entry."
     source = "SEU"
+    color = "#bcbd22"
     award = "3rd Prize"
     sample_tag = 11
 

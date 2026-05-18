@@ -70,6 +70,7 @@ class StrategicBot(Agent):
     label = "Strategic"
     description = "Reads the table."
     source = "In-house"
+    color = "#ff7f0e"
     sample_tag = 1
 
     def __init__(self, level_rank: int = Rank.TWO):

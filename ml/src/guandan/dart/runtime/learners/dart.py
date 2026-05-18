@@ -35,7 +35,14 @@ class DartLearner:
     ) -> None:
         self.device = torch.device(device)
         self.q_net = q_net.to(self.device)
-        self.opt = torch.optim.Adam(self.q_net.parameters(), lr=lr, foreach=True)
+        # MPS has shown optimizer-kernel instability on real rollout batches.
+        # Keep foreach on CUDA, where it is a speed win, but use the simpler
+        # Adam path elsewhere so local smoke runs fail less opaquely.
+        self.opt = torch.optim.Adam(
+            self.q_net.parameters(),
+            lr=lr,
+            foreach=self.device.type == "cuda",
+        )
         self.use_bf16 = use_bf16 and self.device.type == "cuda"
         self.max_grad_norm = max_grad_norm
 
@@ -87,13 +94,32 @@ class DartLearner:
             preds = self.q_net(batch)
             loss = F.mse_loss(preds, targets)
 
+        if not torch.isfinite(targets).all():
+            bad = int((~torch.isfinite(targets)).sum().item())
+            raise RuntimeError(f"DartLearner received {bad} non-finite targets")
+        if not torch.isfinite(preds).all():
+            bad = int((~torch.isfinite(preds)).sum().item())
+            raise RuntimeError(f"DartLearner produced {bad} non-finite predictions")
+        if not torch.isfinite(loss):
+            raise RuntimeError(f"DartLearner produced non-finite loss: {float(loss.item())}")
+
         self.opt.zero_grad(set_to_none=True)
         loss.backward()
         grad_norm_total = torch.nn.utils.clip_grad_norm_(
             self.q_net.parameters(),
             self.max_grad_norm,
         )
+        if not torch.isfinite(grad_norm_total):
+            raise RuntimeError(
+                f"DartLearner produced non-finite gradient norm: {float(grad_norm_total.item())}"
+            )
         self.opt.step()
+        for name, param in self.q_net.named_parameters():
+            if not torch.isfinite(param).all():
+                bad = int((~torch.isfinite(param)).sum().item())
+                raise RuntimeError(
+                    f"DartLearner optimizer step produced {bad} non-finite values in {name}"
+                )
 
         suffix = "trick_head"
         with torch.no_grad():

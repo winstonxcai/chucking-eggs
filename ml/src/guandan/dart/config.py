@@ -310,7 +310,8 @@ class TrainConfig:
 
     # Stratified replay: sample proportionally from per-bucket sub-populations.
     # Keys are bucket names; values are weights (normalized at load time).
-    # Empty dict → uniform sampling (default). Accepted but no-op at runtime:
+    # Empty dict → uniform balanced sampling. Non-empty values are consumed by
+    # DartLearner via RoleAwareReplayBuffer.sample_batch_stratified().
     replay_mix: dict = dataclasses.field(default_factory=dict)
     # Cap K=1 (forced-move) samples at this fraction of each batch. 1.0 = no
     # cap (sample uniformly across all samples in the buffer). E.g. 0.05 means
@@ -371,6 +372,11 @@ class TrainConfig:
         This is the preferred loader in ``DartBot.load()`` and anywhere a
         checkpoint or YAML ``config`` dict is deserialised.
         """
+        d = dict(d)
+        if "inference" in d and isinstance(d.get("qnet"), dict):
+            # Older checkpoints carried inference-server settings that are not
+            # part of the local batched actor config.
+            d.pop("inference")
         removed = sorted(set(d) & _REMOVED_OPPONENT_KEYS)
         if removed:
             raise ValueError(

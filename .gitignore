@@ -40,6 +40,9 @@ ml/src/guandan_rs/target/
 # Experiment runs
 runs/
 
+# Personal research notes
+ml/LOGBOOK.md
+
 # Generated images
 *.png
 

@@ -30,12 +30,6 @@ WORKERS = 8
 LANES = 32
 DEVICE = "cpu"
 START_METHOD = "fork"
-CORRUPTED_CHECKPOINTS = {
-    "update_00520000.pt",
-    "update_00522500.pt",
-    "update_00525000.pt",
-    "update_00532500.pt",
-}
 
 
 def _completed_rows(out_path: Path) -> int:
@@ -64,7 +58,6 @@ def _acquire_lock(out_path: Path) -> Path | None:
 
 def _subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
-    env["PYTHONPATH"] = "ml/src" + (f":{env['PYTHONPATH']}" if env.get("PYTHONPATH") else "")
     env.setdefault("OMP_NUM_THREADS", "1")
     env.setdefault("MKL_NUM_THREADS", "1")
     env.setdefault("OPENBLAS_NUM_THREADS", "1")
@@ -82,13 +75,6 @@ def main() -> None:
         flush=True,
     )
     for index, checkpoint in enumerate(checkpoints, start=1):
-        if checkpoint.name in CORRUPTED_CHECKPOINTS:
-            print(
-                f"[{index}/{len(checkpoints)}] skip {checkpoint.name} corrupted",
-                flush=True,
-            )
-            continue
-
         out_path = EVAL_DIR / f"{checkpoint.stem}.json"
         completed = _completed_rows(out_path)
         if completed == len(OPPONENTS):
@@ -114,7 +100,8 @@ def main() -> None:
         )
         cmd = [
             sys.executable,
-            "ml/scripts/eval/eval_dart.py",
+            "-m",
+            "guandan.scripts.eval.eval_dart",
             "--checkpoint",
             str(checkpoint),
             "--opponent",

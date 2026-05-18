@@ -29,6 +29,7 @@ class YaojiBot(Agent):
     label = "Yaoji"
     description = "NUAA 3rd Prize · 2020 NJUPT entry."
     source = "NUAA"
+    color = "#d62728"
     award = "3rd Prize"
     sample_tag = 2
     coord_target = True

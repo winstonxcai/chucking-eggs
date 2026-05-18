@@ -51,6 +51,7 @@ import json
 import logging
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 
@@ -111,6 +112,22 @@ def _install_signal_handlers(stop_event) -> None:
         except (ValueError, OSError):
             # Not on the main thread (test harness, etc.) — skip.
             pass
+
+
+def _tqdm_disabled() -> bool:
+    """Return whether the live progress bar should be suppressed.
+
+    Cloud log collectors such as Modal merge stdout/stderr from multiple
+    processes. A redrawing tqdm bar then interleaves with learner/actor log
+    lines even when each process writes cleanly. Default to disabling the bar
+    outside an interactive terminal, with an env override for local debugging.
+    """
+    setting = os.environ.get("DART_TQDM", "").strip().lower()
+    if setting in {"0", "false", "no", "off"}:
+        return True
+    if setting in {"1", "true", "yes", "on"}:
+        return False
+    return not sys.stderr.isatty()
 
 
 # ─── Stage helpers ───────────────────────────────────────────
@@ -175,6 +192,7 @@ def _run_progress_loop(
         total=target_updates * batch_size,
         initial=resume_updates * batch_size,
         desc="learner", unit="samp", unit_scale=True, dynamic_ncols=True,
+        disable=_tqdm_disabled(),
     )
     last_count = resume_updates
     try:

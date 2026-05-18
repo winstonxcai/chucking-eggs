@@ -304,6 +304,7 @@ class LLMBot(Agent):
     label = "LLM"
     description = "Tool-augmented LLM that picks from the enumerated legal action set."
     source = "In-house"
+    color = "#6b6ecf"
 
     def __init__(
         self,

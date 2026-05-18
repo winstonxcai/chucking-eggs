@@ -22,6 +22,7 @@ class GreedyBot(Agent):
     label = "Greedy"
     description = "Plays it safe."
     source = "In-house"
+    color = "#1f77b4"
     sample_tag = 6
 
     def __init__(self, level_rank: int = Rank.TWO):

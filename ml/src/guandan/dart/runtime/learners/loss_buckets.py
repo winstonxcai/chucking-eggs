@@ -1,9 +1,8 @@
 """Per-batch metric stratification helpers for the learner.
 
-Provides the bucket tensor builders and grid/marginal emitters that annotate
-each gradient step's loss by phase, trick-role, opponent, epsilon, etc.
-Consumed by DartLearner.update() and exposed here so analysis scripts
-can reconstruct the same bucketing offline.
+Emitted metric keys are schema-backed and human-readable, e.g.
+``phase_role_opening__leading_loss``. See ``loss_bucket_schema.py`` for the
+axis labels and key contract.
 """
 
 from __future__ import annotations
@@ -12,61 +11,58 @@ import torch
 import torch.nn.functional as F
 
 from ...data.sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
-
-
-PHASE_KEY_PREFIXES = (
-    "phase_role_", "phase_pair_", "source_phase_", "opp_phase_",
-    "action_phase_", "epsilon_", "is_pass_", "is_bomb_",
-    "k_bucket_", "q_gap_", "team_", "reward_",
+from .loss_bucket_schema import (
+    GridSpec,
+    LOSS_BUCKET_GRIDS,
+    LOSS_BUCKET_MARGINALS,
+    LOSS_BUCKET_SCHEMA,
+    MarginalSpec,
+    PHASE_KEY_PREFIXES,
 )
 
 
 def _emit_grid(
     metrics: dict[str, float | None],
-    key_prefix: str,
+    spec: GridSpec,
     axis_a: torch.Tensor,
     axis_b: torch.Tensor,
-    n_a: int,
-    n_b: int,
     preds: torch.Tensor,
     targets: torch.Tensor,
     min_n: int = 32,
 ) -> None:
     total = max(axis_a.shape[0], 1)
-    for a in range(n_a):
-        for b in range(n_b):
+    for a in range(len(spec.axis_a.labels)):
+        for b in range(len(spec.axis_b.labels)):
             mask = (axis_a == a) & (axis_b == b)
             n = int(mask.sum().item())
-            cell = a * n_b + b
-            metrics[f"{key_prefix}_{cell}_n"] = n
-            metrics[f"{key_prefix}_{cell}_frac"] = n / total
+            metrics[spec.key(a, b, "n")] = n
+            metrics[spec.key(a, b, "frac")] = n / total
             if n < min_n:
-                metrics[f"{key_prefix}_{cell}_loss"] = None
+                metrics[spec.key(a, b, "loss")] = None
             else:
-                metrics[f"{key_prefix}_{cell}_loss"] = float(
+                metrics[spec.key(a, b, "loss")] = float(
                     F.mse_loss(preds[mask], targets[mask]).item()
                 )
 
 
 def _emit_marginal(
     metrics: dict[str, float | None],
-    key_prefix: str,
+    spec: MarginalSpec,
     axis: torch.Tensor,
-    n_levels: int,
     preds: torch.Tensor,
     targets: torch.Tensor,
     min_n: int = 32,
 ) -> None:
     total = max(axis.shape[0], 1)
-    for a in range(n_levels):
+    for a in range(len(spec.axis.labels)):
         mask = axis == a
         n = int(mask.sum().item())
-        metrics[f"{key_prefix}_{a}_n"] = n
-        metrics[f"{key_prefix}_{a}_frac"] = n / total
+        metrics[spec.key(a, "n")] = n
+        metrics[spec.key(a, "frac")] = n / total
         if n < min_n:
-            metrics[f"{key_prefix}_{a}_loss"] = None
+            metrics[spec.key(a, "loss")] = None
         else:
-            metrics[f"{key_prefix}_{a}_loss"] = float(
+            metrics[spec.key(a, "loss")] = float(
                 F.mse_loss(preds[mask], targets[mask]).item()
             )
 
@@ -126,42 +122,69 @@ def _emit_phase_aggregations(
     q_gap = tags["q_gap"].float()
     terminal_reward = tags["terminal_reward"].float()
 
-    _emit_grid(metrics, "phase_role", phase_self, trick_role, 3, 3, preds, targets)
-    _emit_grid(metrics, "phase_pair", phase_self, phase_partner, 3, 4, preds, targets)
-    _emit_grid(metrics, "source_phase", episode_mode, phase_self, 3, 3, preds, targets)
+    grids = {spec.name: spec for spec in LOSS_BUCKET_GRIDS}
+    marginals = {spec.name: spec for spec in LOSS_BUCKET_MARGINALS}
+
+    _emit_grid(metrics, grids["phase_role"], phase_self, trick_role, preds, targets)
+    _emit_grid(metrics, grids["phase_pair"], phase_self, phase_partner, preds, targets)
+    _emit_grid(metrics, grids["source_phase"], episode_mode, phase_self, preds, targets)
 
     opp_idx = _opp_grid_index_tensor(opponent_id)
     keep = opp_idx >= 0
     if keep.any():
         _emit_grid(
-            metrics, "opp_phase",
+            metrics,
+            grids["opp_phase"],
             opp_idx[keep], phase_self[keep],
-            len(OPP_GRID_TOP), 3,
             preds[keep], targets[keep],
         )
     else:
-        for a in range(len(OPP_GRID_TOP)):
-            for b in range(3):
-                cell = a * 3 + b
-                metrics[f"opp_phase_{cell}_n"] = 0
-                metrics[f"opp_phase_{cell}_frac"] = 0.0
-                metrics[f"opp_phase_{cell}_loss"] = None
+        _emit_grid(
+            metrics,
+            grids["opp_phase"],
+            torch.empty(0, dtype=torch.long, device=opponent_id.device),
+            torch.empty(0, dtype=torch.long, device=opponent_id.device),
+            preds[:0], targets[:0],
+        )
 
-    lookup = torch.as_tensor(ACTION_CLASS_LOOKUP, dtype=torch.long, device=action_type.device)
+    lookup = torch.as_tensor(
+        ACTION_CLASS_LOOKUP,
+        dtype=torch.long,
+        device=action_type.device,
+    )
     action_class = lookup[action_type.clamp(min=0, max=lookup.numel() - 1)]
-    _emit_grid(metrics, "action_phase", action_class, phase_self, 6, 3, preds, targets)
+    _emit_grid(metrics, grids["action_phase"], action_class, phase_self, preds, targets)
 
-    _emit_marginal(metrics, "epsilon", chosen_by_epsilon, 2, preds, targets)
-    _emit_marginal(metrics, "is_pass", is_pass, 2, preds, targets)
-    _emit_marginal(metrics, "is_bomb", is_bomb, 2, preds, targets)
-    _emit_marginal(metrics, "k_bucket", _k_bucket_tensor(num_legal_actions), 4, preds, targets)
-    _emit_marginal(metrics, "q_gap", _q_gap_bucket_tensor(q_gap), 4, preds, targets)
-    _emit_marginal(metrics, "team", latest_team, 2, preds, targets)
-    _emit_marginal(metrics, "reward", _reward_bucket_tensor(terminal_reward), 4, preds, targets)
+    _emit_marginal(metrics, marginals["epsilon"], chosen_by_epsilon, preds, targets)
+    _emit_marginal(metrics, marginals["is_pass"], is_pass, preds, targets)
+    _emit_marginal(metrics, marginals["is_bomb"], is_bomb, preds, targets)
+    _emit_marginal(
+        metrics,
+        marginals["k_bucket"],
+        _k_bucket_tensor(num_legal_actions),
+        preds,
+        targets,
+    )
+    _emit_marginal(
+        metrics,
+        marginals["q_gap"],
+        _q_gap_bucket_tensor(q_gap),
+        preds,
+        targets,
+    )
+    _emit_marginal(metrics, marginals["team"], latest_team, preds, targets)
+    _emit_marginal(
+        metrics,
+        marginals["reward"],
+        _reward_bucket_tensor(terminal_reward),
+        preds,
+        targets,
+    )
 
 
 __all__ = [
     "PHASE_KEY_PREFIXES",
+    "LOSS_BUCKET_SCHEMA",
     "_emit_grid",
     "_emit_marginal",
     "_k_bucket_tensor",

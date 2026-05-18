@@ -33,6 +33,7 @@ class NoAIBot(Agent):
     label = "NoAI"
     description = "Fudan 2nd Prize · Chen Yuguan."
     source = "Fudan"
+    color = "#393b79"
     award = "2nd Prize · Chen Yuguan"
     sample_tag = 8
 

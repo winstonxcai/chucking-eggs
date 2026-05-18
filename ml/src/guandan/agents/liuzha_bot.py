@@ -55,6 +55,7 @@ class LiuzhaBot(Agent):
     label = "Liuzha"
     description = "SEU 2nd Prize · 2020 NJUPT entry."
     source = "SEU"
+    color = "#7f7f7f"
     award = "2nd Prize"
     sample_tag = 10
 

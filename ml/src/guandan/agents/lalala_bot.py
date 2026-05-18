@@ -64,6 +64,7 @@ class LalalaBot(Agent):
     label = "Lalala"
     description = "SEU 1st Prize · Li Jing (2020)."
     source = "SEU"
+    color = "#e377c2"
     award = "1st Prize · Li Jing"
     sample_tag = 9
 

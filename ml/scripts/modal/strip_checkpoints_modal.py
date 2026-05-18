@@ -48,6 +48,7 @@ def strip_remote(run_name: str, force: bool = False) -> list[str]:
             "checkpoint_format_version": ckpt.get("checkpoint_format_version"),
             "total_updates":             ckpt.get("total_updates"),
             "episode":                   ckpt.get("episode"),
+            "config":                    ckpt.get("config"),
             "q_net":                     ckpt["q_net"],
         }
         torch.save(slim, dst)

@@ -71,6 +71,7 @@ AGENT_META: dict[str, dict] = {
         "label": cls.label,
         "description": cls.description,
         "source": cls.source,
+        "color": cls.color,
         **({"award": cls.award} if cls.award is not None else {}),
     }
     for name, cls in AGENT_REGISTRY.items()

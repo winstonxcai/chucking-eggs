@@ -60,6 +60,16 @@ _KEYS = ENCODE_CHANNEL_KEYS
 Batch = tuple[dict[str, torch.Tensor], torch.Tensor]
 
 
+def _non_blocking_numpy_to_device(device: str | torch.device) -> bool:
+    """Only request async NumPy→device copies for CUDA.
+
+    Replay sampling uses NumPy fancy-indexing, which returns temporary arrays.
+    MPS does not benefit from ``non_blocking=True`` here and can observe
+    corrupted target values from these temporaries in short local smoke runs.
+    """
+    return torch.device(device).type == "cuda"
+
+
 class ReplayBuffer:
     """Per-player circular FIFO buffer of contiguous uint8 arrays.
 
@@ -168,12 +178,13 @@ class ReplayBuffer:
         # batch sizes and the off-policy DMC objective is replacement-tolerant.
         idx = self.rng.integers(0, n, size=batch_size)
         batch: dict[str, torch.Tensor] = {}
+        non_blocking = _non_blocking_numpy_to_device(device)
         for k in _KEYS:
             arr = self.fields[player][k][idx]  # uint8 [B, *shape]
-            t = torch.from_numpy(arr).to(device, non_blocking=True)
+            t = torch.from_numpy(arr).to(device, non_blocking=non_blocking)
             batch[k] = t.float()  # GPU-side cast, free relative to PCIe copy
         targets = torch.from_numpy(self.returns[player][idx]).to(
-            device, non_blocking=True
+            device, non_blocking=non_blocking
         )
         return batch, targets
 
@@ -598,16 +609,17 @@ class RoleAwareReplayBuffer:
         return_tags: bool = False,
     ):
         batch: dict[str, torch.Tensor] = {}
+        non_blocking = _non_blocking_numpy_to_device(device)
         for k in self.channel_keys:
-            t = torch.from_numpy(self.fields[k][idx]).to(device, non_blocking=True)
+            t = torch.from_numpy(self.fields[k][idx]).to(device, non_blocking=non_blocking)
             batch[k] = t.long() if k in _INT_FIELDS else t.float()
-        targets = torch.from_numpy(self.returns[idx]).to(device, non_blocking=True)
+        targets = torch.from_numpy(self.returns[idx]).to(device, non_blocking=non_blocking)
         if not return_tags:
             return batch, targets
         tags: dict[str, torch.Tensor] = {}
         for name, _ in self._TAG_FIELDS:
             arr = getattr(self, name)[idx]
-            tags[name] = torch.from_numpy(arr.copy()).to(device, non_blocking=True)
+            tags[name] = torch.from_numpy(arr.copy()).to(device, non_blocking=non_blocking)
         return batch, targets, tags
 
 

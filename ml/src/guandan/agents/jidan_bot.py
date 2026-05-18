@@ -29,6 +29,7 @@ class JidanBot(Agent):
     label = "Jidan"
     description = "NUAA 2nd Prize · 2020 NJUPT entry."
     source = "NUAA"
+    color = "#8c564b"
     award = "2nd Prize"
     sample_tag = 3
     coord_target = True

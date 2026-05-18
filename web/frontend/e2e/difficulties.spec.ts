@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-// All 13 agents ordered by calibrated ELO (see runs/wr_matrix/elos.json)
+// All 13 agents ordered by calibrated ELO (see ml/results/wr_matrix/elos.json)
 const difficulties = [
   "ez",
   "wjsd",

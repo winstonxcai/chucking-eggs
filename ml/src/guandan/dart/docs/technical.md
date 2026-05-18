@@ -293,6 +293,37 @@ Depends on which one.
 
 ---
 
+## How are learner loss buckets named?
+
+Loss-bucket metrics in `metrics_learner.jsonl` are schema-backed rather than
+integer-cell encoded. The schema lives in
+`runtime/learners/loss_bucket_schema.py` and defines every axis label used by
+`runtime/learners/loss_buckets.py`.
+
+Grid metrics use:
+
+```text
+<metric>_<axis_a_label>__<axis_b_label>_<stat>
+```
+
+For example, `phase_role_opening__leading_loss` is the MSE for samples where
+the acting player is in the opening phase and is leading a new trick.
+Marginal metrics use:
+
+```text
+<metric>_<axis_label>_<stat>
+```
+
+For example, `q_gap_pivotal_n` counts sampled decisions where the greedy
+Q-value gap was below 0.05. Each emitted cell has `_n`, `_frac`, and `_loss`;
+`_loss` is `null` when the cell has too few samples for a stable estimate.
+
+The top-level prefixes (`phase_role_`, `q_gap_`, etc.) are still stable so the
+learner can split scalar losses from diagnostic bucket payloads without knowing
+the full axis cardinality.
+
+---
+
 ## What is the queue used for exactly?
 
 Its only job is transferring sample batches from actor processes to the learner's ReplayBuffer. The actor and learner live in separate OS processes with separate memory — the actor cannot call `buffer.push()` directly. The queue is the only shared channel.

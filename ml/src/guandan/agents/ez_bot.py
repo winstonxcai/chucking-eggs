@@ -31,6 +31,7 @@ class EzBot(Agent):
     label = "Ez"
     description = "HYIT 3rd Prize · 2020 NJUPT entry."
     source = "HYIT"
+    color = "#17becf"
     award = "3rd Prize"
     sample_tag = 12
     coord_target = True

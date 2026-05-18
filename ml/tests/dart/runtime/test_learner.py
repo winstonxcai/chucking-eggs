@@ -10,6 +10,11 @@ from guandan.dart.data.buffer import RoleAwareReplayBuffer
 from guandan.dart.config import QNetConfig
 from guandan.dart.model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_SHAPES
 from guandan.dart.runtime.learners.dart import DartLearner
+from guandan.dart.runtime.learners.loss_bucket_schema import (
+    LOSS_BUCKET_GRIDS,
+    LOSS_BUCKET_MARGINALS,
+    LOSS_BUCKET_SCHEMA,
+)
 from guandan.dart.runtime.weights import (
     load_latest_weights,
     publish_weights,
@@ -163,24 +168,17 @@ def test_per_bucket_loss_emitted_all_grids():
     metrics = learner.update(buf, batch_size=128)
 
     assert metrics is not None
-    # All five grids: phase_role(9), phase_pair(12), source_phase(9), opp_phase(18), action_phase(18)
-    for prefix, n_cells in [
-        ("phase_role", 9), ("phase_pair", 12), ("source_phase", 9),
-        ("opp_phase", 18), ("action_phase", 18),
-    ]:
-        for c in range(n_cells):
-            assert f"{prefix}_{c}_n" in metrics
-            assert f"{prefix}_{c}_frac" in metrics
-            assert f"{prefix}_{c}_loss" in metrics
-    # All seven marginals
-    for prefix, n_cells in [
-        ("epsilon", 2), ("is_pass", 2), ("is_bomb", 2),
-        ("k_bucket", 4), ("q_gap", 4), ("team", 2), ("reward", 4),
-    ]:
-        for c in range(n_cells):
-            assert f"{prefix}_{c}_n" in metrics
-            assert f"{prefix}_{c}_frac" in metrics
-            assert f"{prefix}_{c}_loss" in metrics
+    for spec in LOSS_BUCKET_GRIDS:
+        for a in range(len(spec.axis_a.labels)):
+            for b in range(len(spec.axis_b.labels)):
+                assert spec.key(a, b, "n") in metrics
+                assert spec.key(a, b, "frac") in metrics
+                assert spec.key(a, b, "loss") in metrics
+    for spec in LOSS_BUCKET_MARGINALS:
+        for level in range(len(spec.axis.labels)):
+            assert spec.key(level, "n") in metrics
+            assert spec.key(level, "frac") in metrics
+            assert spec.key(level, "loss") in metrics
 
 
 def test_sparse_cell_emits_null_loss():
@@ -197,11 +195,14 @@ def test_sparse_cell_emits_null_loss():
 
     metrics = learner.update(buf, batch_size=32)
     assert metrics is not None
-    # Cell 0 (a=0, b=0) is populated; cells 1..8 are empty → None loss.
-    assert metrics["phase_role_0_n"] > 0
-    for c in range(1, 9):
-        assert metrics[f"phase_role_{c}_n"] == 0
-        assert metrics[f"phase_role_{c}_loss"] is None
+    phase_role = next(spec for spec in LOSS_BUCKET_GRIDS if spec.name == "phase_role")
+    assert metrics[phase_role.key(0, 0, "n")] > 0
+    for a in range(len(phase_role.axis_a.labels)):
+        for b in range(len(phase_role.axis_b.labels)):
+            if (a, b) == (0, 0):
+                continue
+            assert metrics[phase_role.key(a, b, "n")] == 0
+            assert metrics[phase_role.key(a, b, "loss")] is None
 
 
 def test_q_gap_nan_handled():
@@ -216,7 +217,18 @@ def test_q_gap_nan_handled():
 
     metrics = learner.update(buf, batch_size=64)
     assert metrics is not None
-    assert metrics["q_gap_0_n"] > 0
-    # Other q_gap buckets should be empty.
-    for c in range(1, 4):
-        assert metrics[f"q_gap_{c}_n"] == 0
+    q_gap = next(spec for spec in LOSS_BUCKET_MARGINALS if spec.name == "q_gap")
+    assert metrics[q_gap.key(0, "n")] > 0
+    for c in range(1, len(q_gap.axis.labels)):
+        assert metrics[q_gap.key(c, "n")] == 0
+
+
+def test_loss_bucket_schema_documents_named_keys():
+    phase_role = next(spec for spec in LOSS_BUCKET_GRIDS if spec.name == "phase_role")
+    assert phase_role.key(0, 0, "loss") == "phase_role_opening__leading_loss"
+    assert LOSS_BUCKET_SCHEMA["phase_role"]["axis_a"] == ("opening", "midgame", "endgame")
+    assert LOSS_BUCKET_SCHEMA["phase_role"]["axis_b"] == (
+        "leading",
+        "following_partner_alive",
+        "following_partner_out",
+    )

@@ -188,6 +188,7 @@ class HeuristicBot(Agent):
     label = "Heuristic"
     description = "Intermediate rule-based play."
     source = "In-house"
+    color = "#2ca02c"
     sample_tag = 4
 
     def __init__(self, level_rank: int = Rank.TWO):

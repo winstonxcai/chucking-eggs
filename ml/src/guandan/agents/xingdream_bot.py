@@ -20,6 +20,7 @@ class XingDreamBot(Agent):
     label = "Xingdream"
     description = "8th Place · 2020 NJUPT entry."
     source = "2020 NJUPT"
+    color = "#9467bd"
     award = "8th Place"
     sample_tag = 5
 

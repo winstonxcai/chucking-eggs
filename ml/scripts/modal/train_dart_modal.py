@@ -80,6 +80,9 @@ def train_remote(
     env["PYTHONPATH"] = "/root/ml/src:" + env.get("PYTHONPATH", "")
     # Stream learner/train logs to stdout so `modal run` shows live progress.
     env["DART_STREAM_LOGS"] = "1"
+    # Modal merges stdout/stderr from parent + child processes; live tqdm
+    # redraws interleave with learner log lines in that collector.
+    env["DART_TQDM"] = "0"
     # Keep weight publish/sync IO off the network-attached Modal volume.
     env["DART_WEIGHT_DIR"] = "/tmp/dart_weights"
     if profile:
@@ -134,8 +137,6 @@ def main(
     wait: bool = False,
 ) -> None:
     if dry_run:
-        import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
         from guandan.dart.config import load_config_from_yaml
         local_path = _local_config_path(config_path)
         cfg = load_config_from_yaml(local_path)

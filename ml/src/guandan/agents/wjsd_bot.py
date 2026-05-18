@@ -79,6 +79,7 @@ class WjsdBot(Agent):
     label = "Wjsd"
     description = "SAU 3rd Prize · 2020 NJUPT entry."
     source = "SAU"
+    color = "#aec7e8"
     award = "3rd Prize"
     sample_tag = 13
 

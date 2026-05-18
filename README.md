@@ -111,12 +111,12 @@ phase (0→20k) is slower at ~1.4 upd/s.
 
 ```bash
 # Win rate vs a specific opponent (1000 games, paired fixed-deck)
-uv run ml/scripts/eval/eval_dart.py \
+uv run guandan-eval-dart \
     --checkpoint ml/runs/my_run/checkpoints/update_00050000.pt \
     --opponent strategic --games 1000 --out results.json
 
 # Full Glicko-2 leaderboard across all rule-based bots
-uv run ml/scripts/eval/wr_matrix.py --games 200
+uv run guandan-wr-matrix --games 200
 ```
 
 ### Web App (local)
@@ -166,7 +166,7 @@ AGENT_REGISTRY["mybot"] = MyBot
 Then use it anywhere:
 
 ```bash
-uv run ml/scripts/eval/wr_matrix.py --agents mybot,strategic,jidan
+uv run guandan-wr-matrix --agents mybot,strategic,jidan
 ```
 
 Or add it to the training config under `opponents.hard_bot.bots` and give
@@ -205,6 +205,26 @@ flowchart LR
 ```
 
 **DART** (**D**ynamic **A**ction-**R**elative routing for **T**ricks) — 4 shared Q-heads (one per trick position: leading / 1st-resp / across / last-resp). LSTM over move history, role-normalized state encoding, partner hand visible during training.
+
+## Why Partner-Visible?
+
+The intended DART setting is **partner-visible, not full perfect-information**.
+Guan Dan is a partnership game: many strong moves are only strong because they
+help the other seat on your team finish, preserve their control, or avoid
+blocking their hand shape. The purpose of exposing the partner hand is to make
+that coordination target unambiguous and learnable, instead of forcing the
+model to spend most of its capacity inferring its own teammate's private cards.
+In that sense, partner visibility is a research assumption for studying
+cooperative play, not a claim that the policy is directly human-deployable under
+strict hidden-information rules.
+
+This is deliberately different from perfect-information play. The opponent
+hands are not part of the target deployment setting; when an experiment exposes
+opponent cards, it should be read as an oracle diagnostic or ablation that
+measures the ceiling after removing hidden-state uncertainty. The current
+reported checkpoint includes that opponent-hand channel, so the leaderboard
+numbers below are labeled as partner-visible/oracle-style benchmarking in the
+limitations rather than as strict partial-observation performance.
 
 ## Related Work
 

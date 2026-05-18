@@ -25,6 +25,11 @@ from .model.q_network import DartQNet, init_guanzero_nets
 
 
 class DartBot(Agent):
+    label = "DART"
+    description = "Trained DART or GuanZero comparison checkpoint."
+    source = "In-house"
+    color = "#111111"
+
     def __init__(
         self,
         q_nets: dict[int, torch.nn.Module] | DartQNet,

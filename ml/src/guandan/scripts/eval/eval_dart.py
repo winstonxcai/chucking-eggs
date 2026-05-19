@@ -22,6 +22,8 @@ import argparse
 import json
 import math
 import multiprocessing as mp
+import os
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections.abc import Callable
 from pathlib import Path
@@ -35,6 +37,15 @@ DEFAULT_OPPONENTS = [
     name for name in AGENT_REGISTRY
     if name not in {"noai"}
 ]
+
+
+def _tqdm_disabled() -> bool:
+    setting = os.environ.get("DART_TQDM", "").strip().lower()
+    if setting in {"0", "false", "no", "off"}:
+        return True
+    if setting in {"1", "true", "yes", "on"}:
+        return False
+    return not sys.stderr.isatty()
 
 
 # ─── Worker (top-level so spawn can pickle it) ───────────────────────────────
@@ -150,7 +161,12 @@ def run_eval(
             else "spawn"
         )
 
-    n_chunks = max(1, workers * chunks_per_worker)
+    # Workers control process concurrency. Lanes control useful batch width
+    # inside each task. Build lane-sized chunks per opponent, then let the
+    # process pool schedule all opponent chunks globally. This keeps lanes full
+    # even when workers is high relative to per-opponent game count.
+    target_chunk_size = max(1, math.ceil(lanes / chunks_per_worker))
+    n_chunks = max(1, math.ceil(half / target_chunk_size))
     even_chunks = _split(deck_seeds, n_chunks)
     odd_chunks  = _split(deck_seeds, n_chunks)
     tasks = [
@@ -164,7 +180,7 @@ def run_eval(
     ctx = mp.get_context(start_method)
     desc = (
         f"{len(opponents)} opp x {n_games} games "
-        f"({workers}w/{chunks_per_opp}c/{lanes}l)"
+        f"({workers}w/{chunks_per_opp}c/{lanes}l/{len(tasks)} tasks)"
     )
     init_checkpoint: Path | None = checkpoint
     if start_method == "fork":
@@ -180,7 +196,13 @@ def run_eval(
         initargs=(init_checkpoint, device),
     ) as pool:
         futures = [pool.submit(_worker, t) for t in tasks]
-        for f in tqdm(as_completed(futures), total=len(futures), desc=desc, unit="chunk"):
+        for f in tqdm(
+            as_completed(futures),
+            total=len(futures),
+            desc=desc,
+            unit="chunk",
+            disable=_tqdm_disabled(),
+        ):
             opp, we, ne, wo, no = f.result()
             agg[opp]["we"] += we; agg[opp]["ne"] += ne
             agg[opp]["wo"] += wo; agg[opp]["no"] += no
@@ -312,8 +334,9 @@ def main() -> None:
     p.add_argument("--workers", type=int, default=8,
                    help="Worker processes (default 8, sized for local CPU eval throughput).")
     p.add_argument("--chunks-per-worker", type=int, default=1,
-                   help="Chunks per worker per opponent. Higher values reduce tail latency "
-                        "from slow games at the cost of a little task overhead.")
+                   help="Chunk subdivision factor. 1 means chunks are sized to fill the "
+                        "requested lanes; higher values create smaller chunks to reduce "
+                        "tail latency at the cost of task overhead.")
     p.add_argument("--lanes", type=int, default=8,
                    help="Environment lanes per worker chunk. Dart decisions across active "
                         "lanes are batched into grouped Q-forwards.")

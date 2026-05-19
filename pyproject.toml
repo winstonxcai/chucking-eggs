@@ -19,7 +19,7 @@ guandan-wr-matrix = "guandan.scripts.eval.wr_matrix:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-modal = ["modal>=0.64"]
+modal = ["modal>=1.4.2"]
 llm = ["litellm>=1.50"]
 web = [
     "fastapi>=0.104",

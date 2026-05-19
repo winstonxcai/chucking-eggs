@@ -180,6 +180,43 @@ class OpponentConfig:
             )
 
 
+@dataclasses.dataclass
+class EvalConfig:
+    enabled: bool = False
+    opponents: str | tuple[str, ...] = "all"
+    n_eval_games_per_opponent: int = 200
+    every_updates: int = 0
+    workers: int = 0
+    lanes: int = 0
+    device: str = "cpu"
+
+    def __post_init__(self) -> None:
+        if isinstance(self.opponents, list):
+            self.opponents = tuple(self.opponents)
+        if isinstance(self.opponents, tuple):
+            self.opponents = tuple(str(name) for name in self.opponents)
+            if self.opponents == ("all",):
+                self.opponents = "all"
+            elif not self.opponents:
+                raise ValueError("eval.opponents must be 'all' or a non-empty list")
+        elif self.opponents != "all":
+            raise ValueError("eval.opponents must be 'all' or a list of agent names")
+        if self.n_eval_games_per_opponent <= 0:
+            raise ValueError(
+                "eval.n_eval_games_per_opponent must be positive; "
+                f"got {self.n_eval_games_per_opponent}"
+            )
+        if self.n_eval_games_per_opponent % 2 != 0:
+            raise ValueError(
+                "eval.n_eval_games_per_opponent must be even for paired fixed-deck eval; "
+                f"got {self.n_eval_games_per_opponent}"
+            )
+        for name in ("every_updates", "workers", "lanes"):
+            value = getattr(self, name)
+            if value < 0:
+                raise ValueError(f"eval.{name} must be >= 0; got {value}")
+
+
 # Flat YAML key → EpsilonConfig field name
 _EPSILON_FLAT_MAP: dict[str, str] = {
     "epsilon_start":         "start",
@@ -235,6 +272,31 @@ def _opponent_config_from_raw(raw: Any) -> OpponentConfig:
     )
 
 
+def _eval_config_from_raw(raw: Any) -> EvalConfig:
+    if raw is None:
+        return EvalConfig()
+    if isinstance(raw, EvalConfig):
+        return raw
+    if dataclasses.is_dataclass(raw):
+        raw = dataclasses.asdict(raw)
+    if not isinstance(raw, dict):
+        raise TypeError(f"eval must be a dict or EvalConfig; got {type(raw).__name__}")
+    _reject_unknown_keys(
+        "eval",
+        raw,
+        {
+            "enabled",
+            "opponents",
+            "n_eval_games_per_opponent",
+            "every_updates",
+            "workers",
+            "lanes",
+            "device",
+        },
+    )
+    return EvalConfig(**raw)
+
+
 # ─── TrainConfig ─────────────────────────────────────────────
 
 
@@ -254,6 +316,7 @@ class TrainConfig:
     qnet:      QNetConfig      = dataclasses.field(default_factory=QNetConfig)
     epsilon:   EpsilonConfig   = dataclasses.field(default_factory=EpsilonConfig)
     opponents: OpponentConfig = dataclasses.field(default_factory=OpponentConfig)
+    eval:      EvalConfig      = dataclasses.field(default_factory=EvalConfig)
 
     # ── Core hypers ─────────────────────────────────────────
     model_type: ModelType = MODEL_TYPE_DART
@@ -334,6 +397,7 @@ class TrainConfig:
                 f"got {self.checkpoint_save_type!r}"
             )
         self.opponents = _opponent_config_from_raw(self.opponents)
+        self.eval = _eval_config_from_raw(self.eval)
         if self.replay_mix:
             valid_keys = {
                 "general", "hard_bot_general", "coordination_endgame",
@@ -396,6 +460,11 @@ class TrainConfig:
                     if dataclasses.is_dataclass(d.get("opponents"))
                     else d.get("opponents")
                 ),
+                "eval": (
+                    dataclasses.asdict(d["eval"])
+                    if dataclasses.is_dataclass(d.get("eval"))
+                    else d.get("eval")
+                ),
             }
 
         if isinstance(d.get("qnet"), dict):
@@ -404,10 +473,10 @@ class TrainConfig:
             qnet_d = dict(d["qnet"])
             qnet      = QNetConfig(**qnet_d)
             epsilon_kw: dict[str, Any] = {}
-            valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "opponents"}
+            valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "opponents", "eval"}
             valid_nested_top = (
                 valid_top
-                | {"qnet", "epsilon", "opponents"}
+                | {"qnet", "epsilon", "opponents", "eval"}
                 | set(_EPSILON_FLAT_MAP)
             )
             _reject_unknown_keys("TrainConfig", d, valid_nested_top)
@@ -428,22 +497,24 @@ class TrainConfig:
                 qnet=qnet,
                 epsilon=epsilon,
                 opponents=_opponent_config_from_raw(d.get("opponents")),
+                eval=_eval_config_from_raw(d.get("eval")),
                 **top,
             )
 
         # ── Flat form (YAML files) ──
         qnet_kw:      dict[str, Any] = {}
         epsilon_kw:   dict[str, Any] = {}
-        valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "opponents"}
+        valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "opponents", "eval"}
         valid_flat = (
             valid_top
             | set(_QNET_FIELDS)
             | set(_EPSILON_FLAT_MAP)
-            | {"opponents"}
+            | {"opponents", "eval"}
         )
         _reject_unknown_keys("TrainConfig", d, valid_flat)
         top_kw: dict[str, Any] = {}
         opponents = _opponent_config_from_raw(d.get("opponents"))
+        eval_cfg = _eval_config_from_raw(d.get("eval"))
 
         for k, v in d.items():
             if k in _QNET_FIELDS:
@@ -457,6 +528,7 @@ class TrainConfig:
             qnet      = QNetConfig(**qnet_kw),
             epsilon   = EpsilonConfig(**epsilon_kw),
             opponents = opponents,
+            eval      = eval_cfg,
             **top_kw,
         )
 
@@ -513,6 +585,7 @@ __all__ = [
     "HardBotConfig",
     "OpponentConfig",
     "OpponentSamplingConfig",
+    "EvalConfig",
     "MODEL_TYPE_GUANZERO",
     "MODEL_TYPE_DART",
     "ModelType",

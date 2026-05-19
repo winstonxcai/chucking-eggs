@@ -8,16 +8,25 @@
 
 n_actors: 32
 actor_batch_lanes: 40
-sync_interval_updates: 1000
-sync_jitter_updates: 250
+sync_interval_updates: 5000
+sync_jitter_updates: 1000
 actor_push_batch_size: 512
 sample_queue_maxsize: 64
 max_drain_batches_per_loop: 16
 publish_interval_updates: 200
-checkpoint_every_updates: 2500
-checkpoint_save_type: full
+checkpoint_every_updates: 25000
+checkpoint_save_type: weight
 log_every_updates: 10
 updates_per_learner_step: 1
+
+eval:
+  enabled: true
+  opponents: [yaoji, ez, jidan, strategic]
+  n_eval_games_per_opponent: 10000
+  every_updates: 0  # 0 = checkpoint_every_updates
+  workers: 0        # 0 = n_actors
+  lanes: 0          # 0 = actor_batch_lanes
+  device: cpu
 
 model_type: Dart
 dart_role_d_model: 128
@@ -60,7 +69,7 @@ opponents:
       type: uniform
       weights: {}
 
-max_forced_k1_replay_frac: 0.05
+max_forced_k1_replay_frac: 0.0
 
 device: cuda
 use_bf16_learner: true

@@ -19,6 +19,15 @@ checkpoint_save_type: weight
 log_every_updates: 10
 updates_per_learner_step: 1
 
+eval:
+  enabled: false
+  opponents: all
+  n_eval_games_per_opponent: 200
+  every_updates: 0  # 0 = checkpoint_every_updates
+  workers: 0        # 0 = n_actors
+  lanes: 0          # 0 = actor_batch_lanes
+  device: cpu
+
 model_type: Dart
 dart_role_d_model: 128
 dart_history_hidden: 256

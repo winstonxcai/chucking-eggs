@@ -267,6 +267,7 @@ def play_episodes_batched(
     gamma: float = 1.0,
     profiler: PhaseProfiler | None = None,
     rng: random.Random | None = None,
+    stop_event: object | None = None,
 ) -> list[list[TrainSample]]:
     """Roll episode lanes, batching greedy Q-forwards by acting network."""
     _validate_lanes(lanes, q_nets, encoder)
@@ -283,6 +284,9 @@ def play_episodes_batched(
         trajectories.append([])
 
     while any(active):
+        if stop_event is not None and stop_event.is_set():
+            return [[] for _ in lanes]
+
         pending: list[dict] = []
         for lane_idx in range(len(lanes)):
             if not active[lane_idx]:

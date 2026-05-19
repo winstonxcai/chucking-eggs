@@ -58,6 +58,7 @@ def actor_loop(
     stop_event:   "mp.Event",
     weight_dir:   Path,
     run_dir:      Path | None = None,
+    pause_event:  "mp.Event | None" = None,
 ) -> None:
     """Run self-play continuously and push stacked sample batches to the learner."""
     from ..config import TrainConfig
@@ -101,7 +102,7 @@ def actor_loop(
     def _push_buffered() -> None:
         nonlocal dropped_batches
         batch_size = cfg.actor_push_batch_size
-        while len(accumulator) >= batch_size:
+        while len(accumulator) >= batch_size and not stop_event.is_set():
             with prof.time("buffer_stack"):
                 msg = accumulator.pop_message(
                     batch_size,
@@ -118,6 +119,8 @@ def actor_loop(
                 try:
                     sample_queue.put(msg, timeout=5)
                 except queue.Full as exc:
+                    if stop_event.is_set():
+                        return
                     dropped_batches += 1
                     if dropped_batches <= 3 or dropped_batches % 20 == 0:
                         logger.warning(
@@ -125,6 +128,8 @@ def actor_loop(
                             actor_id, dropped_batches, exc,
                         )
                 except (BrokenPipeError, EOFError, OSError, ValueError) as exc:
+                    if stop_event.is_set():
+                        return
                     if not _is_closed_queue_error(exc):
                         raise
                     dropped_batches += 1
@@ -134,7 +139,21 @@ def actor_loop(
                             actor_id, dropped_batches, exc,
                         )
 
+    was_paused = False
+    force_next_sync = False
     while not stop_event.is_set():
+        if pause_event is not None and pause_event.is_set():
+            if not was_paused:
+                logger.info("actor-%d paused for checkpoint eval", actor_id)
+                was_paused = True
+            while pause_event.is_set() and not stop_event.is_set():
+                time.sleep(0.2)
+            if was_paused and not stop_event.is_set():
+                logger.info("actor-%d resumed after checkpoint eval", actor_id)
+                was_paused = False
+                force_next_sync = True
+            continue
+
         prev_version = local_version
         with prof.time("weight_sync"):
             local_version, local_updates, global_updates = sync_actor_weights(
@@ -142,8 +161,9 @@ def actor_loop(
                 weight_dir,
                 local_version=local_version,
                 local_updates=local_updates,
-                sync_threshold=sync_threshold,
+                sync_threshold=0 if force_next_sync else sync_threshold,
             )
+            force_next_sync = False
         if local_version > prev_version:
             sync_threshold = jitter_sync_threshold(cfg, rng)
             runtime.refresh_actor_nets()
@@ -163,7 +183,10 @@ def actor_loop(
             gamma=cfg.gamma,
             profiler=prof,
             rng=rng,
+            stop_event=stop_event,
         )
+        if stop_event.is_set():
+            break
 
         for lane, samples in zip(lanes, samples_per_lane):
             accumulator.append_lane(lane, samples)
@@ -193,6 +216,11 @@ def actor_loop(
     if dropped_batches:
         logger.warning("actor-%d: dropped %d sample batches (queue full/closed)", actor_id, dropped_batches)
     pools.log_summary(logger)
+    try:
+        sample_queue.cancel_join_thread()
+        sample_queue.close()
+    except Exception:
+        pass
 
 
 __all__ = ["actor_loop"]

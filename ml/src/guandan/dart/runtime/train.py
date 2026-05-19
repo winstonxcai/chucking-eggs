@@ -50,7 +50,9 @@ import dataclasses
 import json
 import logging
 import os
+import queue
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -130,6 +132,89 @@ def _tqdm_disabled() -> bool:
     return not sys.stderr.isatty()
 
 
+def _resolve_eval_opponents(cfg: TrainConfig) -> list[str]:
+    from guandan.scripts.eval.eval_dart import DEFAULT_OPPONENTS
+
+    opponents = cfg.eval.opponents
+    if opponents == "all":
+        return list(DEFAULT_OPPONENTS)
+    requested = list(opponents)
+    unknown = set(requested) - set(DEFAULT_OPPONENTS)
+    if unknown:
+        raise ValueError(
+            f"eval.opponents has unknown or unsupported agent(s): {sorted(unknown)}. "
+            f"Valid: {DEFAULT_OPPONENTS}"
+        )
+    return requested
+
+
+def _run_checkpoint_eval(
+    cfg: TrainConfig,
+    layout: RunLayout,
+    request: dict,
+    logger: logging.Logger,
+) -> None:
+    updates = int(request["updates"])
+    checkpoint = Path(request["checkpoint"])
+    eval_dir = layout.run_dir / "eval"
+    out_path = eval_dir / f"{checkpoint.stem}.json"
+    log_path = eval_dir / f"{checkpoint.stem}.log"
+    opponents = _resolve_eval_opponents(cfg)
+    workers = cfg.eval.workers or cfg.n_actors
+    lanes = cfg.eval.lanes or cfg.actor_batch_lanes
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "guandan.scripts.eval.eval_dart",
+        "--checkpoint",
+        str(checkpoint),
+        "--opponent",
+        *opponents,
+        "--games",
+        str(cfg.eval.n_eval_games_per_opponent),
+        "--workers",
+        str(workers),
+        "--lanes",
+        str(lanes),
+        "--device",
+        cfg.eval.device,
+        "--seed",
+        str(cfg.seed),
+        "--out",
+        str(out_path),
+    ]
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "checkpoint eval start update=%d opponents=%d games/opponent=%d workers=%d lanes=%d → %s",
+        updates,
+        len(opponents),
+        cfg.eval.n_eval_games_per_opponent,
+        workers,
+        lanes,
+        out_path,
+    )
+    env = os.environ.copy()
+    env["DART_TQDM"] = "0"
+    env["PYTHONUNBUFFERED"] = "1"
+    with log_path.open("w") as log_file:
+        log_file.write("$ " + " ".join(cmd) + "\n\n")
+        log_file.flush()
+        result = subprocess.run(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            env=env,
+            check=False,
+        )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"checkpoint eval failed for update {updates} "
+            f"(exit={result.returncode}); see {log_path}"
+        )
+    logger.info("checkpoint eval complete update=%d → %s", updates, out_path)
+
+
 # ─── Stage helpers ───────────────────────────────────────────
 
 
@@ -143,11 +228,20 @@ def _spawn_learner(
     update_counter,
     weights_ready,
     resume_checkpoint: Path | None,
+    pause_event=None,
+    eval_request_queue=None,
+    eval_done_event=None,
 ):
     proc = ctx.Process(
         target=learner_loop,
         args=(cfg_dict, sample_queue, stop_event, weight_dir, layout.run_dir, update_counter),
-        kwargs={"weights_ready": weights_ready, "resume_checkpoint": resume_checkpoint},
+        kwargs={
+            "weights_ready": weights_ready,
+            "resume_checkpoint": resume_checkpoint,
+            "pause_event": pause_event,
+            "eval_request_queue": eval_request_queue,
+            "eval_done_event": eval_done_event,
+        },
         daemon=True,
         name="learner",
     )
@@ -163,13 +257,14 @@ def _spawn_actors(
     stop_event,
     weight_dir: Path,
     layout: RunLayout,
+    pause_event=None,
 ) -> list:
     procs = []
     for actor_id in range(cfg.n_actors):
         p = ctx.Process(
             target=actor_loop,
             args=(actor_id, cfg_dict, sample_queue, stop_event, weight_dir),
-            kwargs={"run_dir": layout.run_dir},
+            kwargs={"run_dir": layout.run_dir, "pause_event": pause_event},
             daemon=True,
             name=f"actor-{actor_id}",
         )
@@ -179,12 +274,17 @@ def _spawn_actors(
 
 
 def _run_progress_loop(
+    cfg: TrainConfig,
+    layout: RunLayout,
     update_counter,
     target_updates: int,
     batch_size: int,
     learner_proc,
     actor_procs: list,
     stop_event,
+    pause_event=None,
+    eval_request_queue=None,
+    eval_done_event=None,
 ) -> str | None:
     """Drive the tqdm bar and watch for crashes. Returns abort_reason or None."""
     resume_updates = int(update_counter.value)
@@ -195,6 +295,7 @@ def _run_progress_loop(
         disable=_tqdm_disabled(),
     )
     last_count = resume_updates
+    logger = logging.getLogger("dart")
     try:
         while not stop_event.is_set():
             time.sleep(_WATCHER_POLL_INTERVAL_S)
@@ -202,12 +303,34 @@ def _run_progress_loop(
             delta = min(count - last_count, target_updates - last_count)
             bar.update(delta * batch_size)
             last_count = count
+            if eval_request_queue is not None and eval_done_event is not None:
+                while True:
+                    try:
+                        request = eval_request_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    try:
+                        _run_checkpoint_eval(cfg, layout, request, logger)
+                    except Exception as exc:
+                        logger.exception("%s", exc)
+                        stop_event.set()
+                        if pause_event is not None:
+                            pause_event.clear()
+                        eval_done_event.set()
+                        return str(exc)
+                    if pause_event is not None:
+                        pause_event.clear()
+                    eval_done_event.set()
             if not learner_proc.is_alive():
+                if count >= target_updates and learner_proc.exitcode == 0:
+                    return None
                 return f"Learner exited (code={learner_proc.exitcode})"
             for ap in actor_procs:
                 if not ap.is_alive() and ap.exitcode not in (0, None):
                     return f"{ap.name} died (code={ap.exitcode})"
             if count >= target_updates:
+                if cfg.eval.enabled and learner_proc.is_alive():
+                    continue
                 return None
         return None  # signal-driven shutdown
     finally:
@@ -247,8 +370,11 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     ctx            = mp.get_context("spawn")
     sample_queue   = ctx.Queue(maxsize=cfg.sample_queue_maxsize)
     stop_event     = ctx.Event()
+    pause_event    = ctx.Event()
     weights_ready  = ctx.Event()
     update_counter = ctx.Value("q", 0)   # int64; learner advances per gradient step
+    eval_request_queue = ctx.Queue() if cfg.eval.enabled else None
+    eval_done_event = ctx.Event() if cfg.eval.enabled else None
     cfg_dict       = dataclasses.asdict(cfg)
 
     _install_signal_handlers(stop_event)
@@ -256,6 +382,9 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     learner_proc = _spawn_learner(
         ctx, cfg_dict, sample_queue, stop_event,
         weight_dir, layout, update_counter, weights_ready, resume_checkpoint,
+        pause_event=pause_event,
+        eval_request_queue=eval_request_queue,
+        eval_done_event=eval_done_event,
     )
     logger.info("Learner started (pid=%d)", learner_proc.pid)
     logger.info("Waiting for initial weights → %s", weight_dir)
@@ -269,7 +398,7 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
 
     actor_procs = _spawn_actors(
         ctx, cfg, cfg_dict, sample_queue, stop_event,
-        weight_dir, layout,
+        weight_dir, layout, pause_event=pause_event,
     )
 
     logger.info("Dart | %d actors + 1 learner", cfg.n_actors)
@@ -279,8 +408,11 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     abort_reason: str | None = None
     try:
         abort_reason = _run_progress_loop(
-            update_counter, target_updates, cfg.batch_size,
+            cfg, layout, update_counter, target_updates, cfg.batch_size,
             learner_proc, actor_procs, stop_event,
+            pause_event=pause_event,
+            eval_request_queue=eval_request_queue,
+            eval_done_event=eval_done_event,
         )
     finally:
         if abort_reason:

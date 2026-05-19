@@ -459,6 +459,9 @@ def learner_loop(
     update_counter:    "mp.Value | None" = None,
     weights_ready:     "mp.Event | None" = None,
     resume_checkpoint: Path | None = None,
+    pause_event:       "mp.Event | None" = None,
+    eval_request_queue: "mp.Queue | None" = None,
+    eval_done_event:   "mp.Event | None" = None,
 ) -> None:
     """Central learner process for faithful persistent actor-learner DMC.
 
@@ -564,9 +567,11 @@ def learner_loop(
         last_ticked = total_updates
 
         # 4. Publish weights
+        published_this_tick = False
         if total_updates % cfg.publish_interval_updates == 0:
             version += 1
             adapter.publish(weight_dir, version, total_updates)
+            published_this_tick = True
             logger.debug("weights published version=%d", version)
 
         # 5. Checkpoint
@@ -574,6 +579,41 @@ def learner_loop(
             ckpt = layout.update_checkpoint(total_updates)
             adapter.checkpoint(ckpt, total_updates, save_type=cfg.checkpoint_save_type)
             logger.info("checkpoint → %s (%s)", ckpt, cfg.checkpoint_save_type)
+            eval_interval = cfg.eval.every_updates or cfg.checkpoint_every_updates
+            if (
+                cfg.eval.enabled
+                and eval_request_queue is not None
+                and eval_done_event is not None
+                and total_updates % eval_interval == 0
+            ):
+                if not published_this_tick:
+                    version += 1
+                    adapter.publish(weight_dir, version, total_updates)
+                    logger.info("weights published version=%d for checkpoint eval", version)
+                if pause_event is not None:
+                    pause_event.set()
+                eval_done_event.clear()
+                eval_request_queue.put({
+                    "updates": total_updates,
+                    "checkpoint": str(ckpt),
+                })
+                logger.info("waiting for checkpoint eval @ update %d", total_updates)
+                while not stop_event.is_set():
+                    drained_eval = 0
+                    while drained_eval < cfg.max_drain_batches_per_loop:
+                        try:
+                            msg = sample_queue.get_nowait()
+                        except Exception:
+                            break
+                        fresh_samples_total += adapter.drain_message(msg)
+                        drained_since_log += 1
+                        cumulative_drained += 1
+                        drained_eval += 1
+                    if eval_done_event.wait(timeout=0.2):
+                        break
+                if stop_event.is_set():
+                    break
+                logger.info("checkpoint eval complete @ update %d", total_updates)
 
         # 6. Metrics log
         if total_updates % cfg.log_every_updates == 0:
@@ -637,6 +677,10 @@ def learner_loop(
             last_log_t = now
             last_log_updates = total_updates
             last_log_fresh_samples = fresh_samples_total
+
+        if cfg.total_updates_target and total_updates >= cfg.total_updates_target:
+            logger.info("target updates reached: %d", total_updates)
+            break
 
     # Final checkpoint on clean shutdown
     if total_updates > 0:

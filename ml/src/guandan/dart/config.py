@@ -94,7 +94,7 @@ SamplingType = Literal["uniform", "weighted", "pair_weighted"]
 @dataclasses.dataclass
 class OpponentSamplingConfig:
     type: SamplingType = "uniform"
-    weights: dict = dataclasses.field(default_factory=dict)
+    weights: dict[str, float] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.type not in ("uniform", "weighted", "pair_weighted"):
@@ -189,6 +189,7 @@ class EvalConfig:
     workers: int = 0
     lanes: int = 0
     device: str = "cpu"
+    max_wait_s: float = 300.0
 
     def __post_init__(self) -> None:
         if isinstance(self.opponents, list):
@@ -215,6 +216,8 @@ class EvalConfig:
             value = getattr(self, name)
             if value < 0:
                 raise ValueError(f"eval.{name} must be >= 0; got {value}")
+        if self.max_wait_s <= 0:
+            raise ValueError(f"eval.max_wait_s must be > 0; got {self.max_wait_s}")
 
 
 # Flat YAML key → EpsilonConfig field name
@@ -292,6 +295,7 @@ def _eval_config_from_raw(raw: Any) -> EvalConfig:
             "workers",
             "lanes",
             "device",
+            "max_wait_s",
         },
     )
     return EvalConfig(**raw)
@@ -375,7 +379,7 @@ class TrainConfig:
     # Keys are bucket names; values are weights (normalized at load time).
     # Empty dict → uniform balanced sampling. Non-empty values are consumed by
     # DartLearner via RoleAwareReplayBuffer.sample_batch_stratified().
-    replay_mix: dict = dataclasses.field(default_factory=dict)
+    replay_mix: dict[str, float] = dataclasses.field(default_factory=dict)
     # Cap K=1 (forced-move) samples at this fraction of each batch. 1.0 = no
     # cap (sample uniformly across all samples in the buffer). E.g. 0.05 means
     # 5% of every batch is K=1, 95% is K>1 (real decisions).

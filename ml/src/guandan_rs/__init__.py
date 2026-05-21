@@ -15,7 +15,9 @@ try:
         mc_rollout,
         mc_rollout_batch,
     )
+    HAS_NATIVE = True
 except ImportError:
+    HAS_NATIVE = False
     from guandan.cards import (
         BOMB_SIZE_TO_TYPE,
         BOMB_TYPES,
@@ -510,7 +512,7 @@ except ImportError:
                             ComboType.STRAIGHT_FLUSH,
                             ranks_needed[-1],
                             selected,
-                            length=5,
+                            length=0,
                             wild_count=wilds_used,
                         )
                     )
@@ -539,10 +541,24 @@ except ImportError:
                 out.extend([rank, suit])
         return tuple(out)
 
+try:
+    from _guandan_rs import select_legal as select_legal  # type: ignore[import-not-found]
+except ImportError:
+
+    def select_legal(hand, level_rank, trick):
+        legal = (
+            generate_all_leads(hand, level_rank)
+            if trick is None
+            else generate_responses(hand, level_rank, trick)
+        )
+        return dedup_strategic(legal)
+
 __all__ = [
     "dedup_strategic",
     "generate_all_leads",
     "generate_responses",
+    "select_legal",
     "mc_rollout",
     "mc_rollout_batch",
+    "HAS_NATIVE",
 ]

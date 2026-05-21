@@ -20,6 +20,7 @@ from typing import Iterable
 
 import numpy as np
 
+from ..constants import NUM_PLAYERS, PARTNER_OFFSET
 from ...cards import CARD_ID_DIM, Card, ComboType, card_to_id, id_to_card
 from ...combos import Combo
 from ...game import GuanDanEnv
@@ -73,9 +74,9 @@ def _behavior_eligibility(
     legal_moves: list[Combo],
 ) -> _BehaviorEligibility:
     """Precompute coordination-flag predicates shared by all candidate actions."""
-    partner = (player + 2) % 4
-    opp_left = (player + 1) % 4
-    opp_right = (player - 1) % 4
+    partner = (player + PARTNER_OFFSET) % NUM_PLAYERS
+    opp_left = (player + 1) % NUM_PLAYERS
+    opp_right = (player - 1) % NUM_PLAYERS
     is_leading = env.current_trick is None
 
     active_opp_sizes = [

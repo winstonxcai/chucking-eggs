@@ -15,6 +15,7 @@ from typing import Mapping, TypedDict
 
 import numpy as np
 
+from ..constants import NUM_PLAYERS
 
 # Engine ``get_rewards()`` returns ±3 / ±2 / ±1 depending on team finish
 # order. Normalize by 3 so MC targets fall in [-1, 1] — matches the scale
@@ -96,7 +97,7 @@ def compute_mc_returns(
     """
     norm = normalize_terminal_rewards(terminal_rewards)
 
-    by_player: dict[int, list[int]] = {p: [] for p in range(4)}
+    by_player: dict[int, list[int]] = {p: [] for p in range(NUM_PLAYERS)}
     for idx, step in enumerate(trajectory):
         by_player[step["player"]].append(idx)
 

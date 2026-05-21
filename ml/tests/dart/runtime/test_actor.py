@@ -46,6 +46,54 @@ def _with_seats(base, replacements):
     return tuple(seats)
 
 
+def _script_combo(key: int) -> Combo:
+    return Combo(ComboType.SINGLE, key, [])
+
+
+class _ScriptedLaneEnv:
+    def __init__(self, legal_by_step: list[list[Combo]]) -> None:
+        self.legal_by_step = legal_by_step
+        self.step_idx = 0
+        self.stepped_actions: list[Combo] = []
+        self.current_player = 0
+        self.current_trick = None
+        self.trick_winner = None
+        self.hands = [set(range(5)), set(range(5)), set(range(5)), set(range(5))]
+        self.is_out = [False, False, False, False]
+        self.done = False
+
+    def step(self, combo: Combo):
+        self.stepped_actions.append(combo)
+        self.step_idx += 1
+        if self.step_idx >= len(self.legal_by_step):
+            self.done = True
+        return self.current_player, self.done
+
+    def is_leading(self) -> bool:
+        return self.current_trick is None
+
+    def get_rewards(self) -> dict[int, float]:
+        return {0: 3.0, 1: -3.0, 2: 3.0, 3: -3.0}
+
+
+class _CountingScriptEncoder:
+    def __init__(self) -> None:
+        self.encode_all_calls = 0
+        self.encode_one_calls = 0
+
+    def encode_all(self, env, player, legal_moves):
+        self.encode_all_calls += 1
+        return [{"choice": i} for i, _move in enumerate(legal_moves)]
+
+    def encode_one(self, env, player, action, legal_moves):
+        self.encode_one_calls += 1
+        return {"selected": legal_moves.index(action)}
+
+
+def _scripted_q_nets() -> dict[int, object]:
+    return {p: object() for p in range(4)}
+
+
 def test_one_episode_returns_team_signed_samples():
     encoder = StateActionEncoder()
     q_nets = init_guanzero_nets(QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2))
@@ -300,6 +348,94 @@ def test_batched_role_episode_groups_same_frozen_net(monkeypatch):
     assert (id(frozen_a), 2) in calls
     assert (id(frozen_b), 1) in calls
     assert any(net_id == id(latest) for net_id, _ in calls)
+
+
+def test_batched_rollout_drains_lanes_until_q_needed(monkeypatch):
+    forced = [_script_combo(Rank.THREE)]
+    q_options_a = [_script_combo(Rank.FOUR), _script_combo(Rank.FIVE)]
+    q_options_b = [_script_combo(Rank.SIX), _script_combo(Rank.SEVEN)]
+    scripts = {
+        101: [forced, q_options_a],
+        102: [q_options_b],
+    }
+    envs: list[_ScriptedLaneEnv] = []
+
+    def fake_env(seed=None):
+        env = _ScriptedLaneEnv(scripts[seed])
+        envs.append(env)
+        return env
+
+    def fake_select_legal(env, player):
+        return env.legal_by_step[env.step_idx]
+
+    q_forward_widths: list[int] = []
+
+    def fake_argmax_q_batched(net, encoded_groups, device, **kwargs):
+        q_forward_widths.append(len(encoded_groups))
+        return [(0, float("nan")) for _ in encoded_groups]
+
+    monkeypatch.setattr(actor_mod, "GuanDanEnv", fake_env)
+    monkeypatch.setattr(actor_mod, "select_legal", fake_select_legal)
+    monkeypatch.setattr(actor_mod, "argmax_q_batched", fake_argmax_q_batched)
+
+    samples_per_lane = play_episodes_batched(
+        q_nets=_scripted_q_nets(),
+        encoder=_CountingScriptEncoder(),
+        lanes=[
+            LaneConfig(seed=101, seats=all_latest_seats(0.0)),
+            LaneConfig(seed=102, seats=all_latest_seats(0.0)),
+        ],
+        device="cpu",
+        gamma=1.0,
+        record_forced_k1_samples=False,
+    )
+
+    assert q_forward_widths == [2]
+    assert [len(samples) for samples in samples_per_lane] == [1, 1]
+    assert [len(env.stepped_actions) for env in envs] == [2, 1]
+
+
+def test_forced_k1_recording_flag_only_controls_sample_emission(monkeypatch):
+    forced = [_script_combo(Rank.THREE)]
+    envs: list[_ScriptedLaneEnv] = []
+
+    def fake_env(seed=None):
+        env = _ScriptedLaneEnv({201: [forced], 202: [forced]}[seed])
+        envs.append(env)
+        return env
+
+    def fake_select_legal(env, player):
+        return env.legal_by_step[env.step_idx]
+
+    monkeypatch.setattr(actor_mod, "GuanDanEnv", fake_env)
+    monkeypatch.setattr(actor_mod, "select_legal", fake_select_legal)
+
+    skip_encoder = _CountingScriptEncoder()
+    skipped = play_episodes_batched(
+        q_nets=_scripted_q_nets(),
+        encoder=skip_encoder,
+        lanes=[LaneConfig(seed=201, seats=all_latest_seats(0.0))],
+        device="cpu",
+        gamma=1.0,
+        record_forced_k1_samples=False,
+    )
+
+    keep_encoder = _CountingScriptEncoder()
+    kept = play_episodes_batched(
+        q_nets=_scripted_q_nets(),
+        encoder=keep_encoder,
+        lanes=[LaneConfig(seed=202, seats=all_latest_seats(0.0))],
+        device="cpu",
+        gamma=1.0,
+        record_forced_k1_samples=True,
+    )
+
+    assert skipped == [[]]
+    assert skip_encoder.encode_one_calls == 0
+    assert len(kept[0]) == 1
+    assert kept[0][0].num_legal_actions == 1
+    assert keep_encoder.encode_one_calls == 1
+    assert [len(env.stepped_actions) for env in envs] == [1, 1]
 
 
 def test_random_episode_uses_selected_action_encoding_fast_path():

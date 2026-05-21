@@ -1,4 +1,4 @@
-# Dart Debugging
+# Debugging
 
 For stepping through one training episode without the multiprocess trainer,
 construct the model, encoder, replay buffer, and learner directly:

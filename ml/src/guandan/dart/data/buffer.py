@@ -32,6 +32,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from ..constants import NUM_PLAYERS
 from ..model.encoding.base_encoder import (
     ENCODE_ACTION_KEYS,
     ENCODE_CHANNEL_KEYS,
@@ -89,13 +90,13 @@ class ReplayBuffer:
                 k: np.zeros((capacity_per_player, *shape), dtype=np.uint8)
                 for k, shape in _KEY_SHAPES.items()
             }
-            for p in range(4)
+            for p in range(NUM_PLAYERS)
         }
         self.returns: dict[int, np.ndarray] = {
-            p: np.zeros(capacity_per_player, dtype=np.float32) for p in range(4)
+            p: np.zeros(capacity_per_player, dtype=np.float32) for p in range(NUM_PLAYERS)
         }
-        self.write_idx: dict[int, int] = {p: 0 for p in range(4)}
-        self.sizes: dict[int, int] = {p: 0 for p in range(4)}
+        self.write_idx: dict[int, int] = {p: 0 for p in range(NUM_PLAYERS)}
+        self.sizes: dict[int, int] = {p: 0 for p in range(NUM_PLAYERS)}
 
     # ─── introspection ───────────────────────────────────────
 
@@ -107,7 +108,7 @@ class ReplayBuffer:
 
     def clear(self) -> None:
         """Reset all write pointers and sizes without reallocating storage."""
-        for p in range(4):
+        for p in range(NUM_PLAYERS):
             self.write_idx[p] = 0
             self.sizes[p] = 0
 
@@ -142,7 +143,7 @@ class ReplayBuffer:
         stacked array.
         """
         cap = self.capacity
-        for p in range(4):
+        for p in range(NUM_PLAYERS):
             mask = players == p
             n = int(mask.sum())
             if n == 0:
@@ -215,7 +216,7 @@ class ReplayBuffer:
         """Return a compact, serializable snapshot for exact training resume."""
         fields: dict[int, dict[str, torch.Tensor]] = {}
         returns: dict[int, torch.Tensor] = {}
-        for p in range(4):
+        for p in range(NUM_PLAYERS):
             n = self.sizes[p]
             fields[p] = {
                 k: torch.from_numpy(v[:n].copy())
@@ -238,7 +239,7 @@ class ReplayBuffer:
                 f"ReplayBuffer capacity mismatch: checkpoint={state['capacity']} "
                 f"current={self.capacity}"
             )
-        for p in range(4):
+        for p in range(NUM_PLAYERS):
             n = int(state["sizes"][p])
             for k in _KEYS:
                 self.fields[p][k].fill(0)
@@ -299,9 +300,9 @@ class RoleAwareReplayBuffer:
         """Return stored sample counts by trick-relative head id (0..3)."""
         n = self.size()
         if n == 0:
-            return {p: 0 for p in range(4)}
+            return {p: 0 for p in range(NUM_PLAYERS)}
         ids = self.fields[self.head_field][:n].astype(np.int64, copy=False)
-        return {p: int(np.sum(ids == p)) for p in range(4)}
+        return {p: int(np.sum(ids == p)) for p in range(NUM_PLAYERS)}
 
     # Per-sample diagnostic tag fields written/read alongside the encoded
     # buffers. Mirrors the queue-message keys from worker.py.
@@ -470,8 +471,8 @@ class RoleAwareReplayBuffer:
         """Stratified sample with approximately equal rows per trick-head bucket."""
         n = self.size()
         ids = self.fields[self.head_field][:n].astype(np.int64, copy=False)
-        counts = [batch_size // 4] * 4
-        for p in range(batch_size % 4):
+        counts = [batch_size // NUM_PLAYERS] * NUM_PLAYERS
+        for p in range(batch_size % NUM_PLAYERS):
             counts[p] += 1
         idx_parts = []
         for p, count in enumerate(counts):
@@ -515,8 +516,8 @@ class RoleAwareReplayBuffer:
 
         free_mask = ~k1_mask
         ids = self.fields[self.head_field][:n].astype(np.int64, copy=False)
-        counts = [n_free_target // 4] * 4
-        for p in range(n_free_target % 4):
+        counts = [n_free_target // NUM_PLAYERS] * NUM_PLAYERS
+        for p in range(n_free_target % NUM_PLAYERS):
             counts[p] += 1
         free_parts: list[np.ndarray] = []
         for p, count in enumerate(counts):

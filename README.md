@@ -65,6 +65,18 @@ uv run maturin develop --release --manifest-path ml/src/guandan_rs/Cargo.toml
 uses automatically when present. If you re-run `uv sync`, re-run the maturin
 step to restore native acceleration.
 
+## Documentation
+
+- [Development setup](docs/DEVELOPMENT.md)
+- [Configuration guide](docs/CONFIG.md)
+- [Evaluation guide](docs/EVALUATION.md)
+- [Architecture map](docs/ARCHITECTURE.md)
+- [Debugging](docs/DEBUGGING.md)
+- [Profiling](docs/PROFILING.md)
+- [Backend API and WebSocket protocol](docs/API.md)
+- [Release process](docs/RELEASE.md)
+- [Contributing](docs/CONTRIBUTING.md)
+
 ### Training — Local (MPS)
 
 DART is the production training path. We tested centralized GPU inference-server
@@ -84,7 +96,7 @@ Outputs go to `ml/runs/my_run/` — `train.log`, `metrics_learner.jsonl`, `check
 ### Training — Modal GPU (L4 learner + 32 vCPU actors, ~$2.50/hr)
 
 1. [Create a Modal account](https://modal.com) and install the CLI: `pip install modal && modal setup`
-2. Create a volume for run outputs: `modal volume create pvguan-runs`
+2. Create a volume for run outputs: `modal volume create dart-runs`
 3. Launch:
 
 ```bash
@@ -100,12 +112,36 @@ modal run --detach ml/scripts/modal/train_dart_modal.py \
 
 Download the checkpoint when done:
 ```bash
-modal volume get pvguan-runs dart/my_run/checkpoints/update_00050000.pt .
+modal volume get dart-runs dart/my_run/checkpoints/update_00050000.pt .
 ```
+
+Set `DART_MODAL_VOL=<volume-name>` or `DART_HF_CACHE=<volume-name>` before
+`modal run` if you want to use existing Modal volumes instead of the defaults.
 
 **Reference cost for a full run (0→200k updates):** ~30 hours, ~$75 across
 multiple resumes. Steady-state throughput is ~1.8 upd/s on L4; the cold-start
 phase (0→20k) is slower at ~1.4 upd/s.
+
+Recent Modal throughput smokes show why DART uses intra-actor lane batching.
+Numbers below are post-warmup means from 1000-update runs and report accepted
+fresh actor samples/sec in `metrics_learner.jsonl`:
+
+| GPU | GuanZero-style `32 x 1` | DART `32 x 128` | DART speedup |
+|---|---:|---:|---:|
+| L4 | 4,640 | 19,765 | **4.3×** |
+| A10G | 4,889 | 22,383 | **4.6×** |
+
+The `32 x 1` shape is actor-limited: the learner queue stays near empty. The
+`32 x 128` shape is no longer actor-limited in these smokes: the learner queue
+is mostly full and throughput is governed by learner speed and replay-ratio
+throttling.
+
+### Troubleshooting
+
+- If `_guandan_rs` is missing, the pure-Python fallback keeps tests and local play working but is slower. Rebuild with `uv run maturin develop --release --manifest-path ml/src/guandan_rs/Cargo.toml`.
+- If `uv sync` appears to remove the native extension, rerun the `maturin develop` command.
+- Exact bitwise training reproducibility is not guaranteed across CUDA/cuDNN kernels. Checkpoints restore learner RNG and actor RNG state for process-level resume consistency, but deterministic CUDA algorithms are not forced by default because they can reduce throughput or reject supported kernels.
+- For Modal log noise, use `DART_TQDM=0`; the launcher sets this automatically.
 
 ### Evaluation
 

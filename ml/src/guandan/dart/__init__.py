@@ -12,6 +12,7 @@ from .runtime.actor import (
     play_episode,
     play_episodes_batched,
 )
+from .constants import NUM_PLAYERS, OTHER_PLAYER_OFFSETS, PARTNER_OFFSET
 from .data.buffer import (
     ReplayBuffer,
     RoleAwareReplayBuffer,
@@ -55,6 +56,9 @@ from .data.returns import compute_mc_returns
 
 __all__ = [
     # config / production DART
+    "NUM_PLAYERS",
+    "PARTNER_OFFSET",
+    "OTHER_PLAYER_OFFSETS",
     "TrainConfig",
     "EpsilonConfig",
     "MODEL_TYPE_DART",

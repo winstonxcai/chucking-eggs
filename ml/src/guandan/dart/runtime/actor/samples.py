@@ -42,6 +42,7 @@ class QueueBatchMeta:
     version: int
     local_updates: int
     global_updates: int
+    actor_rng_state: dict[str, Any] | None = None
 
 
 class ActorSampleAccumulator:
@@ -107,6 +108,8 @@ class ActorSampleAccumulator:
             "returns":        np.asarray(self._returns[:batch_size], dtype=np.float32),
             "buckets":        np.asarray(self._buckets[:batch_size], dtype=np.int8),
         }
+        if meta.actor_rng_state is not None:
+            msg["actor_rng_state"] = meta.actor_rng_state
         for name, dtype in _TAG_DTYPES.items():
             msg[name] = np.asarray(self._tags[name][:batch_size], dtype=dtype)
         if self._include_players:

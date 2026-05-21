@@ -59,12 +59,33 @@ def test_actor_sample_accumulator_stacks_and_pops_batches():
     assert msg["version"] == 3
     assert msg["local_updates"] == 100
     assert msg["global_updates"] == 120
+    assert "actor_rng_state" not in msg
     assert msg["stacked"]["state"].tolist() == [1.0, 2.0]
     assert msg["stacked"]["action"].tolist() == [2.0, 3.0]
     assert msg["players"].tolist() == [0, 2]
     assert msg["returns"].tolist() == [1.0, 2.0]
     assert msg["num_legal_actions"].tolist() == [5, 5]
     assert len(acc) == 1
+
+
+def test_actor_sample_accumulator_can_attach_rng_state():
+    acc = ActorSampleAccumulator(channel_keys=("state", "action"), include_players=True)
+    lane = LaneConfig(seed=1, seats=all_latest_seats(0.0), tags=EpisodeTags())
+    acc.append_lane(lane, [_sample(0, 1.0)])
+
+    msg = acc.pop_message(
+        1,
+        QueueBatchMeta(
+            actor_id=7,
+            version=3,
+            local_updates=100,
+            global_updates=120,
+            actor_rng_state={"actor_random": "state"},
+        ),
+    )
+
+    assert msg is not None
+    assert msg["actor_rng_state"] == {"actor_random": "state"}
 
 
 def test_queue_error_classifier_only_accepts_closed_queue_errors():

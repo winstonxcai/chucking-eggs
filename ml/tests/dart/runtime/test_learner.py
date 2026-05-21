@@ -19,6 +19,7 @@ from guandan.dart.runtime.weights import (
     load_latest_weights,
     publish_weights,
     publish_weights_dart,
+    read_latest_metadata,
 )
 from guandan.dart.model.q_network import DartQNet, DartQNetConfig, init_guanzero_nets
 from guandan.dart.runtime.actor.runtime import maybe_sync_weights
@@ -103,6 +104,16 @@ def test_publish_and_load_weights():
         assert snapshot is not None
         assert snapshot.version == 1
         assert (weight_dir / "weights_1.pt").exists()
+
+
+def test_read_latest_metadata_warns_on_corrupt_file(caplog):
+    with tempfile.TemporaryDirectory() as td:
+        weight_dir = Path(td) / "weights"
+        weight_dir.mkdir()
+        (weight_dir / "latest.txt").write_text("not-a-version")
+
+        assert read_latest_metadata(weight_dir) is None
+        assert "corrupted latest.txt" in caplog.text
 
 
 def test_dart_learner_update_step_changes_params_and_returns_metrics():

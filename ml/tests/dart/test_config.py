@@ -96,6 +96,14 @@ def test_checkpoint_save_type_validation():
         TrainConfig(checkpoint_save_type="weights")
 
 
+def test_eval_timeout_config_parses_and_validates():
+    cfg = TrainConfig.from_flat_dict({"eval": {"enabled": True, "max_wait_s": 12.5}})
+    assert cfg.eval.max_wait_s == 12.5
+
+    with pytest.raises(ValueError, match="eval.max_wait_s"):
+        TrainConfig.from_flat_dict({"eval": {"max_wait_s": 0}})
+
+
 def test_model_type_dart_loads_and_factory(tmp_path):
     path = tmp_path / "dart.yaml"
     path.write_text(yaml.safe_dump({

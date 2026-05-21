@@ -90,6 +90,18 @@ def test_beats_free_lead():
     assert single.beats(None, LEVEL_RANK)
 
 
+def test_beats_is_asymmetric_for_strictly_stronger_moves():
+    cases = [
+        (Combo(ComboType.SINGLE, Rank.ACE, []), Combo(ComboType.SINGLE, Rank.KING, [])),
+        (Combo(ComboType.PAIR, Rank.TWO, []), Combo(ComboType.PAIR, Rank.ACE, [])),
+        (Combo(ComboType.BOMB_5, Rank.FIVE, []), Combo(ComboType.BOMB_4, Rank.ACE, [])),
+        (Combo(ComboType.STRAIGHT_FLUSH, Rank.NINE, []), Combo(ComboType.BOMB_5, Rank.ACE, [])),
+    ]
+    for stronger, weaker in cases:
+        assert stronger.beats(weaker, LEVEL_RANK)
+        assert not weaker.beats(stronger, LEVEL_RANK)
+
+
 # ─── Movegen tests ──────────────────────────────────────
 
 

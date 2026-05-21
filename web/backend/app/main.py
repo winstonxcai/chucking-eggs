@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -19,6 +20,7 @@ from slowapi.util import get_remote_address
 
 from .ai_service import AGENT_INFO, AIService
 from .game_manager import GameManager, LOBBY_TIMEOUT
+from .game_room import HUMAN_TURN_TIMEOUT_S
 from .redis_client import close_redis
 from . import db
 from .elo import BOT_LEADERBOARD_ENTRIES

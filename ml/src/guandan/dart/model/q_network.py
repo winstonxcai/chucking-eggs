@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..constants import NUM_PLAYERS
 from ..config import QNetConfig
 from .encoder import CARD_ID_DIM, HISTORY_LEN
 from .encoding.base_encoder import static_dim
@@ -204,7 +205,7 @@ def init_guanzero_nets(cfg: QNetConfig) -> dict[int, GuanZeroQNet]:
     All four networks share the same architecture; they are trained
     independently on per-seat replay buffers.
     """
-    return {p: GuanZeroQNet(cfg) for p in range(4)}
+    return {p: GuanZeroQNet(cfg) for p in range(NUM_PLAYERS)}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -238,7 +239,7 @@ class DartQNet(nn.Module):
     def __init__(self, cfg: DartQNetConfig) -> None:
         super().__init__()
         d = cfg.role_d_model
-        self.role_emb = nn.Embedding(4, d)
+        self.role_emb = nn.Embedding(NUM_PLAYERS, d)
         self.player_mlp = nn.Sequential(
             nn.Linear(self.PLAYER_BLOCK_DIM, d),
             nn.ReLU(),
@@ -246,7 +247,7 @@ class DartQNet(nn.Module):
             nn.ReLU(),
         )
         self.history_lstm = nn.LSTM(
-            input_size=CARD_ID_DIM + 4 + 1,
+            input_size=CARD_ID_DIM + NUM_PLAYERS + 1,
             hidden_size=cfg.history_hidden,
             batch_first=True,
         )
@@ -264,7 +265,7 @@ class DartQNet(nn.Module):
             nn.Linear(cfg.action_hidden, cfg.action_hidden),
             nn.ReLU(),
         )
-        trunk_in = 4 * d + cfg.history_hidden + cfg.global_hidden + cfg.action_hidden
+        trunk_in = NUM_PLAYERS * d + cfg.history_hidden + cfg.global_hidden + cfg.action_hidden
         layers: list[nn.Module] = []
         for i in range(cfg.trunk_layers):
             layers.append(nn.Linear(trunk_in if i == 0 else cfg.trunk_hidden, cfg.trunk_hidden))
@@ -272,13 +273,17 @@ class DartQNet(nn.Module):
             if cfg.dropout > 0:
                 layers.append(nn.Dropout(cfg.dropout))
         self.trunk = nn.Sequential(*layers)
-        self.heads = nn.ModuleList([nn.Linear(cfg.trunk_hidden, 1) for _ in range(4)])
+        self.heads = nn.ModuleList(
+            [nn.Linear(cfg.trunk_hidden, 1) for _ in range(NUM_PLAYERS)]
+        )
 
     def _state_features(
         self, batch: dict[str, torch.Tensor]
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         b = batch["player_blocks"].shape[0]
-        role_ids = torch.arange(4, device=batch["player_blocks"].device).expand(b, 4)
+        role_ids = torch.arange(
+            NUM_PLAYERS, device=batch["player_blocks"].device
+        ).expand(b, NUM_PLAYERS)
         z_p = (self.player_mlp(batch["player_blocks"].float()) + self.role_emb(role_ids)).flatten(1)
         hist_in = torch.cat(
             [

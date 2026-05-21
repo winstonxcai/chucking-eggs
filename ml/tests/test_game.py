@@ -98,6 +98,22 @@ def test_rewards_zero_sum():
         assert total == 0.0, f"Rewards not zero-sum: {rewards} (total={total})"
 
 
+def test_reward_table_values_are_pinned():
+    env = GuanDanEnv()
+
+    cases = [
+        ([0, 2, 1, 3], {0: 3.0, 2: 3.0, 1: -3.0, 3: -3.0}),
+        ([0, 1, 2, 3], {0: 2.0, 2: 2.0, 1: -2.0, 3: -2.0}),
+        ([0, 1, 3, 2], {0: 1.0, 2: 1.0, 1: -1.0, 3: -1.0}),
+        ([1, 0, 2, 3], {0: -1.0, 2: -1.0, 1: 1.0, 3: 1.0}),
+        ([1, 0, 3, 2], {0: -2.0, 2: -2.0, 1: 2.0, 3: 2.0}),
+        ([1, 3, 0, 2], {0: -3.0, 2: -3.0, 1: 3.0, 3: 3.0}),
+    ]
+    for finish_order, expected in cases:
+        env.finish_order = finish_order
+        assert env.get_rewards() == expected
+
+
 def test_finish_order_has_all_players():
     """Finish order should contain all 4 players exactly once."""
     env = GuanDanEnv()

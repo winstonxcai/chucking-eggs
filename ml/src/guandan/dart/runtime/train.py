@@ -206,6 +206,7 @@ def _run_checkpoint_eval(
             stderr=subprocess.STDOUT,
             env=env,
             check=False,
+            timeout=cfg.eval.max_wait_s,
         )
     if result.returncode != 0:
         raise RuntimeError(
@@ -258,19 +259,38 @@ def _spawn_actors(
     weight_dir: Path,
     layout: RunLayout,
     pause_event=None,
+    actor_rng_states: dict[int, dict] | None = None,
 ) -> list:
     procs = []
     for actor_id in range(cfg.n_actors):
         p = ctx.Process(
             target=actor_loop,
             args=(actor_id, cfg_dict, sample_queue, stop_event, weight_dir),
-            kwargs={"run_dir": layout.run_dir, "pause_event": pause_event},
+            kwargs={
+                "run_dir": layout.run_dir,
+                "pause_event": pause_event,
+                "resume_actor_rng_state": (
+                    actor_rng_states.get(actor_id) if actor_rng_states else None
+                ),
+            },
             daemon=True,
             name=f"actor-{actor_id}",
         )
         p.start()
         procs.append(p)
     return procs
+
+
+def _load_actor_rng_states(resume_checkpoint: Path | None) -> dict[int, dict] | None:
+    if resume_checkpoint is None:
+        return None
+    import torch
+
+    ckpt = torch.load(resume_checkpoint, map_location="cpu", weights_only=False)
+    raw = ckpt.get("actor_rng_states")
+    if not raw:
+        return None
+    return {int(actor_id): state for actor_id, state in raw.items()}
 
 
 def _run_progress_loop(
@@ -376,6 +396,7 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     eval_request_queue = ctx.Queue() if cfg.eval.enabled else None
     eval_done_event = ctx.Event() if cfg.eval.enabled else None
     cfg_dict       = dataclasses.asdict(cfg)
+    actor_rng_states = _load_actor_rng_states(resume_checkpoint)
 
     _install_signal_handlers(stop_event)
 
@@ -399,6 +420,7 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     actor_procs = _spawn_actors(
         ctx, cfg, cfg_dict, sample_queue, stop_event,
         weight_dir, layout, pause_event=pause_event,
+        actor_rng_states=actor_rng_states,
     )
 
     logger.info("Dart | %d actors + 1 learner", cfg.n_actors)

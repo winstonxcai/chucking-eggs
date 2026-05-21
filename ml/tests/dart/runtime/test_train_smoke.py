@@ -83,6 +83,7 @@ def test_train_smoke_runs_to_completion(tmp_path):
     assert rows, "expected at least one metrics row"
     assert all(r["_schema"] == METRICS_SCHEMA_VERSION for r in rows)
     assert rows[-1]["updates"] >= 5
+    assert "throttle_drained_since_last_log" in rows[-1]
 
     train_log = (run_dir / "train.log").read_text()
     assert "Learner started" in train_log

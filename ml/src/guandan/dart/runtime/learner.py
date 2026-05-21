@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import dataclasses
 import multiprocessing as mp
+import queue
 import time
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 import torch
 
+from ..constants import NUM_PLAYERS
 from ..data.buffer import ReplayBuffer, RoleAwareReplayBuffer
 from ..model.checkpoint import (
     CheckpointSaveType,
@@ -88,7 +90,12 @@ class LearnerProtocol(Protocol):
         ...
 
     def checkpoint(
-        self, path: Path, updates: int, *, save_type: CheckpointSaveType = "full"
+        self,
+        path: Path,
+        updates: int,
+        *,
+        save_type: CheckpointSaveType = "full",
+        actor_rng_states: dict[int, dict] | None = None,
     ) -> None:
         """Write a checkpoint to ``path``."""
         ...
@@ -177,7 +184,7 @@ class _SeatAdapter:
 
     def is_ready(self) -> bool:
         cfg = self._cfg
-        return all(self._buffer.size(p) >= cfg.buffer_min_size for p in range(4))
+        return all(self._buffer.size(p) >= cfg.buffer_min_size for p in range(NUM_PLAYERS))
 
     def step(self) -> StepResult | None:
         cfg = self._cfg
@@ -192,7 +199,12 @@ class _SeatAdapter:
         publish_weights(self._learner.q_nets, weight_dir, version, updates)
 
     def checkpoint(
-        self, path: Path, updates: int, *, save_type: CheckpointSaveType = "full"
+        self,
+        path: Path,
+        updates: int,
+        *,
+        save_type: CheckpointSaveType = "full",
+        actor_rng_states: dict[int, dict] | None = None,
     ) -> None:
         save_checkpoint_base(
             path,
@@ -202,12 +214,13 @@ class _SeatAdapter:
             learner_state=self._learner.state_dict(),
             replay_state=self._buffer.state_dict(),
             rng_state=capture_torch_rng_state(),
+            actor_rng_states=actor_rng_states,
             save_type=save_type,
         )
 
     def resume(self, path: Path) -> int:
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
-        for p in range(4):
+        for p in range(NUM_PLAYERS):
             net = self._learner.q_nets[p]
             getattr(net, "_orig_mod", net).load_state_dict(ckpt["q_nets"][p])
         self._learner.load_state_dict(ckpt.get("learner_state"))
@@ -231,8 +244,10 @@ class _SeatAdapter:
             "updates":                 upd,
             "version":                 timing["version"],
             "buffer_total":            self._buffer.total_size(),
-            "buffer_per_player":       {p: self._buffer.size(p) for p in range(4)},
-            "loss":                    {k: round(v, 6) for k, v in result.loss.items()},
+            "buffer_per_player":       {
+                p: self._buffer.size(p) for p in range(NUM_PLAYERS)
+            },
+            "loss":                    {k: float(v) for k, v in result.loss.items()},
             "elapsed_s":               round(elapsed, 1),
             "upd_per_sec":             round(upd_per_sec, 3),
             "samples_per_sec":         round(upd_per_sec * cfg.batch_size, 1),
@@ -240,6 +255,7 @@ class _SeatAdapter:
             "queue_depth":             timing["queue_depth"],
             "gpu_mem_gb":              timing["gpu_mem_gb"],
             "drained_since_last_log":  timing["drained_since_log"],
+            "throttle_drained_since_last_log": timing["throttle_drained_since_log"],
             "cumulative_drained":      timing["cumulative_drained"],
             "fresh_samples_total":     timing["fresh_samples_total"],
             "actor_rate_samp_per_sec": round(timing["ema_actor_rate"], 1),
@@ -247,6 +263,11 @@ class _SeatAdapter:
             "replay_cumulative":       timing["cum_replay"],
             "throttle_sleeps":         timing["n_throttle_sleeps"],
             "throttle_sleep_s":        round(timing["throttle_sleep_total_s"], 2),
+            "actor_update_lag":        timing["actor_update_lag"],
+            "actor_update_lag_max":    timing["actor_update_lag_max"],
+            "actor_update_lag_mean":   timing["actor_update_lag_mean"],
+            "actor_version_lag":       timing["actor_version_lag"],
+            "actor_version_lag_max":   timing["actor_version_lag_max"],
         }
 
     def log_progress(self, logger: Any, result: StepResult, timing: dict) -> None:
@@ -335,7 +356,7 @@ class _DartAdapter:
     def is_ready(self) -> bool:
         cfg = self._cfg
         return min(self._buffer.size_by_seat().values()) >= max(
-            cfg.buffer_min_size, cfg.batch_size // 4
+            cfg.buffer_min_size, cfg.batch_size // NUM_PLAYERS
         )
 
     def step(self) -> StepResult | None:
@@ -353,7 +374,7 @@ class _DartAdapter:
             if any(k.startswith(p) for p in PHASE_KEY_PREFIXES)
         }
         scalar_loss = {
-            k: (round(v, 6) if isinstance(v, (int, float)) and v is not None else v)
+            k: (float(v) if isinstance(v, (int, float)) and v is not None else v)
             for k, v in metrics.items()
             if k not in phase_payload
         }
@@ -363,7 +384,12 @@ class _DartAdapter:
         publish_weights_dart(self._learner.q_net, weight_dir, version, updates)
 
     def checkpoint(
-        self, path: Path, updates: int, *, save_type: CheckpointSaveType = "full"
+        self,
+        path: Path,
+        updates: int,
+        *,
+        save_type: CheckpointSaveType = "full",
+        actor_rng_states: dict[int, dict] | None = None,
     ) -> None:
         save_checkpoint_dart(
             path,
@@ -373,6 +399,7 @@ class _DartAdapter:
             learner_state=self._learner.state_dict(),
             replay_state=self._buffer.state_dict(),
             rng_state=capture_torch_rng_state(),
+            actor_rng_states=actor_rng_states,
             save_type=save_type,
         )
 
@@ -405,6 +432,7 @@ class _DartAdapter:
             "samples_per_sec":         round(upd_per_sec * self._cfg.batch_size, 1),
             "queue_depth":             timing["queue_depth"],
             "drained_since_last_log":  timing["drained_since_log"],
+            "throttle_drained_since_last_log": timing["throttle_drained_since_log"],
             "cumulative_drained":      timing["cumulative_drained"],
             "fresh_samples_total":     timing["fresh_samples_total"],
             "actor_rate_samp_per_sec": round(timing["ema_actor_rate"], 1),
@@ -412,6 +440,11 @@ class _DartAdapter:
             "replay_cumulative":       timing["cum_replay"],
             "throttle_sleeps":         timing["n_throttle_sleeps"],
             "throttle_sleep_s":        round(timing["throttle_sleep_total_s"], 2),
+            "actor_update_lag":        timing["actor_update_lag"],
+            "actor_update_lag_max":    timing["actor_update_lag_max"],
+            "actor_update_lag_mean":   timing["actor_update_lag_mean"],
+            "actor_version_lag":       timing["actor_version_lag"],
+            "actor_version_lag_max":   timing["actor_version_lag_max"],
         }
 
     def log_progress(self, logger: Any, result: StepResult, timing: dict) -> None:
@@ -445,6 +478,36 @@ def _make_adapter(cfg) -> LearnerProtocol:
     if cfg.model_type == MODEL_TYPE_DART:
         return _DartAdapter(cfg)
     return _SeatAdapter(cfg)
+
+
+def _drain_sample_queue(
+    sample_queue: "mp.Queue[Any]",
+    adapter: LearnerProtocol,
+    max_batches: int,
+    actor_rng_states: dict[int, dict] | None = None,
+    actor_stats: dict[int, dict[str, int]] | None = None,
+) -> tuple[int, int]:
+    """Drain up to ``max_batches`` actor batches into replay."""
+    drained_batches = 0
+    drained_samples = 0
+    while drained_batches < max_batches:
+        try:
+            msg = sample_queue.get_nowait()
+            if actor_rng_states is not None and "actor_rng_state" in msg:
+                actor_id = int(msg["actor_id"])
+                actor_rng_states[actor_id] = msg["actor_rng_state"]
+            if actor_stats is not None and "actor_id" in msg:
+                actor_id = int(msg["actor_id"])
+                actor_stats[actor_id] = {
+                    "version": int(msg.get("version", -1)),
+                    "local_updates": int(msg.get("local_updates", 0)),
+                    "global_updates": int(msg.get("global_updates", 0)),
+                }
+            drained_samples += adapter.drain_message(msg)
+            drained_batches += 1
+        except queue.Empty:
+            break
+    return drained_batches, drained_samples
 
 
 # ─── Unified learner process entry-point ──────────────────────────────────────
@@ -519,17 +582,17 @@ def learner_loop(
     ema_actor_rate = 0.0
     n_throttle_sleeps = 0
     throttle_sleep_total_s = 0.0
+    throttle_drained_since_log = 0
+    actor_rng_states: dict[int, dict] = {}
+    actor_stats: dict[int, dict[str, int]] = {}
 
     while not stop_event.is_set():
         # 1. Drain sample queue into replay buffer
-        drained = 0
-        while drained < cfg.max_drain_batches_per_loop:
-            try:
-                msg = sample_queue.get_nowait()
-                fresh_samples_total += adapter.drain_message(msg)
-                drained += 1
-            except Exception:
-                break
+        drained, drained_samples = _drain_sample_queue(
+            sample_queue, adapter, cfg.max_drain_batches_per_loop,
+            actor_rng_states, actor_stats,
+        )
+        fresh_samples_total += drained_samples
         drained_since_log += drained
         cumulative_drained += drained
 
@@ -541,6 +604,19 @@ def learner_loop(
         ):
             session_uses = (total_updates - session_start_updates) * cfg.batch_size
             cum_replay = session_uses / max(fresh_samples_total, 1)
+            if cum_replay > cfg.max_replay_ratio:
+                throttle_drained, throttle_samples = _drain_sample_queue(
+                    sample_queue, adapter, cfg.max_drain_batches_per_loop,
+                    actor_rng_states, actor_stats,
+                )
+                if throttle_drained:
+                    fresh_samples_total += throttle_samples
+                    drained += throttle_drained
+                    drained_since_log += throttle_drained
+                    cumulative_drained += throttle_drained
+                    throttle_drained_since_log += throttle_drained
+                    cum_replay = session_uses / max(fresh_samples_total, 1)
+
             if cum_replay > cfg.max_replay_ratio:
                 extra_fresh = (session_uses / cfg.target_replay_ratio) - fresh_samples_total
                 if extra_fresh > 0 and ema_actor_rate > 0:
@@ -577,7 +653,12 @@ def learner_loop(
         # 5. Checkpoint
         if total_updates % cfg.checkpoint_every_updates == 0:
             ckpt = layout.update_checkpoint(total_updates)
-            adapter.checkpoint(ckpt, total_updates, save_type=cfg.checkpoint_save_type)
+            adapter.checkpoint(
+                ckpt,
+                total_updates,
+                save_type=cfg.checkpoint_save_type,
+                actor_rng_states=actor_rng_states,
+            )
             logger.info("checkpoint → %s (%s)", ckpt, cfg.checkpoint_save_type)
             eval_interval = cfg.eval.every_updates or cfg.checkpoint_every_updates
             if (
@@ -598,19 +679,23 @@ def learner_loop(
                     "checkpoint": str(ckpt),
                 })
                 logger.info("waiting for checkpoint eval @ update %d", total_updates)
+                eval_start = time.monotonic()
                 while not stop_event.is_set():
-                    drained_eval = 0
-                    while drained_eval < cfg.max_drain_batches_per_loop:
-                        try:
-                            msg = sample_queue.get_nowait()
-                        except Exception:
-                            break
-                        fresh_samples_total += adapter.drain_message(msg)
-                        drained_since_log += 1
-                        cumulative_drained += 1
-                        drained_eval += 1
+                    drained_eval, drained_eval_samples = _drain_sample_queue(
+                        sample_queue, adapter, cfg.max_drain_batches_per_loop,
+                        actor_rng_states, actor_stats,
+                    )
+                    fresh_samples_total += drained_eval_samples
+                    drained_since_log += drained_eval
+                    cumulative_drained += drained_eval
                     if eval_done_event.wait(timeout=0.2):
                         break
+                    if time.monotonic() - eval_start > cfg.eval.max_wait_s:
+                        stop_event.set()
+                        raise TimeoutError(
+                            f"checkpoint eval timed out after {cfg.eval.max_wait_s}s "
+                            f"at update {total_updates}"
+                        )
                 if stop_event.is_set():
                     break
                 logger.info("checkpoint eval complete @ update %d", total_updates)
@@ -647,6 +732,16 @@ def learner_loop(
                 round(torch.cuda.memory_allocated() / 1e9, 3)
                 if cfg.device == "cuda" and torch.cuda.is_available() else None
             )
+            actor_update_lag = {
+                actor_id: max(0, total_updates - stats["local_updates"])
+                for actor_id, stats in sorted(actor_stats.items())
+            }
+            actor_version_lag = {
+                actor_id: max(0, version - stats["version"])
+                for actor_id, stats in sorted(actor_stats.items())
+            }
+            actor_lag_values = list(actor_update_lag.values())
+            actor_version_lag_values = list(actor_version_lag.values())
 
             timing = {
                 "updates":               total_updates,
@@ -664,7 +759,18 @@ def learner_loop(
                 "cum_replay":            cum_replay,
                 "n_throttle_sleeps":     n_throttle_sleeps,
                 "throttle_sleep_total_s": throttle_sleep_total_s,
+                "throttle_drained_since_log": throttle_drained_since_log,
                 "session_start_updates": session_start_updates,
+                "actor_update_lag": actor_update_lag,
+                "actor_update_lag_max": max(actor_lag_values) if actor_lag_values else None,
+                "actor_update_lag_mean": (
+                    sum(actor_lag_values) / len(actor_lag_values)
+                    if actor_lag_values else None
+                ),
+                "actor_version_lag": actor_version_lag,
+                "actor_version_lag_max": (
+                    max(actor_version_lag_values) if actor_version_lag_values else None
+                ),
             }
 
             if last_result is not None:
@@ -674,6 +780,7 @@ def learner_loop(
                 adapter.on_profiler_report(logger, interval_dt, interval_upd)
 
             drained_since_log = 0
+            throttle_drained_since_log = 0
             last_log_t = now
             last_log_updates = total_updates
             last_log_fresh_samples = fresh_samples_total
@@ -684,7 +791,12 @@ def learner_loop(
 
     # Final checkpoint on clean shutdown
     if total_updates > 0:
-        adapter.checkpoint(layout.final_checkpoint, total_updates, save_type="full")
+        adapter.checkpoint(
+            layout.final_checkpoint,
+            total_updates,
+            save_type="full",
+            actor_rng_states=actor_rng_states,
+        )
     logger.info("learner stopped after %d updates", total_updates)
     metrics_writer.close()
 

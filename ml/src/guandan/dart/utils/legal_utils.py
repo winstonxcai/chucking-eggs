@@ -12,6 +12,7 @@ native extension when available and falls back to Python otherwise.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Iterable
 
 import guandan_rs
@@ -22,6 +23,8 @@ from ...combos import Combo, _rs_tuple_to_combo
 if TYPE_CHECKING:
     from ...game import GuanDanEnv
 
+logger = logging.getLogger(__name__)
+_warned_python_select_legal = False
 _PASS = Combo(ComboType.PASS, 0, [], 0, 0)
 
 
@@ -33,6 +36,10 @@ def _combo_to_tuple(c: Combo) -> tuple:
         c.length,
         c.wild_count,
     )
+
+
+def _card_to_tuple(card) -> tuple[int, int, int]:
+    return (card.rank, card.suit, card.deck)
 
 
 def dedup_strategic(legal: Iterable[Combo]) -> list[Combo]:
@@ -47,6 +54,19 @@ def select_legal(env: "GuanDanEnv", player: int) -> list[Combo]:
     Appends an explicit PASS move if the player must respond but PASS is
     absent from the raw legal-move set (can happen with strict-response rules).
     """
+    global _warned_python_select_legal
+    if not getattr(guandan_rs, "HAS_NATIVE", False) and not _warned_python_select_legal:
+        logger.warning("guandan_rs native extension unavailable; using slower Python legal-move path")
+        _warned_python_select_legal = True
+
+    if all(hasattr(env, name) for name in ("hands", "level_rank", "current_trick")):
+        hand = [_card_to_tuple(card) for card in env.hands[player]]
+        trick = None if env.current_trick is None else _combo_to_tuple(env.current_trick)
+        return [
+            _rs_tuple_to_combo(t)
+            for t in guandan_rs.select_legal(hand, int(env.level_rank), trick)
+        ]
+
     legal = dedup_strategic(env.legal_moves(player))
     if not env.is_leading() and not any(m.type == ComboType.PASS for m in legal):
         legal.append(_PASS)

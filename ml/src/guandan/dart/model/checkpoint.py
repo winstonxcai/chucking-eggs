@@ -8,12 +8,13 @@ actors use ``WeightSnapshot`` via ``load_latest_weights``.
 from __future__ import annotations
 
 import dataclasses
-import os
 from pathlib import Path
 from typing import Any, Literal
 
 import torch
 import torch.nn as nn
+
+from ..constants import NUM_PLAYERS
 
 CheckpointSaveType = Literal["weight", "full"]
 
@@ -45,6 +46,7 @@ def save_checkpoint_base(
     learner_state: dict | None = None,
     replay_state: dict | None = None,
     rng_state: dict | None = None,
+    actor_rng_states: dict[int, dict] | None = None,
     save_type: CheckpointSaveType = "full",
 ) -> None:
     """Save Q-net state dicts + config to ``path``.
@@ -63,7 +65,7 @@ def save_checkpoint_base(
         "config": dataclasses.asdict(cfg),
         "q_nets": {
             p: unwrap_compiled(q_nets[p]).state_dict()
-            for p in range(4)
+            for p in range(NUM_PLAYERS)
         },
     }
     if save_type == "weight":
@@ -75,6 +77,8 @@ def save_checkpoint_base(
         payload["replay_state"] = replay_state
     if rng_state is not None:
         payload["rng_state"] = rng_state
+    if actor_rng_states is not None:
+        payload["actor_rng_states"] = actor_rng_states
     torch.save(payload, path)
 
 
@@ -90,6 +94,7 @@ def save_checkpoint_dart(
     learner_state: dict | None = None,
     replay_state: dict | None = None,
     rng_state: dict | None = None,
+    actor_rng_states: dict[int, dict] | None = None,
     save_type: CheckpointSaveType = "full",
 ) -> None:
     """Save one Dart Q-net state dict plus config to ``path``."""
@@ -112,6 +117,8 @@ def save_checkpoint_dart(
         payload["replay_state"] = replay_state
     if rng_state is not None:
         payload["rng_state"] = rng_state
+    if actor_rng_states is not None:
+        payload["actor_rng_states"] = actor_rng_states
     torch.save(payload, path)
 
 

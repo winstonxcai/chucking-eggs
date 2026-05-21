@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ....cards import CARD_ID_DIM, ComboType, card_to_id
+from ...constants import NUM_PLAYERS, OTHER_PLAYER_OFFSETS
+from ....cards import CARD_ID_DIM, ComboType
 from ....combos import Combo
 from ....game import GuanDanEnv
 from ..encoder import (
@@ -68,8 +69,8 @@ ENCODE_ACTION_KEYS: tuple[str, ...] = ("candidate_action",)
 
 def _last_action_per_seat(env: GuanDanEnv) -> np.ndarray:
     """(4, 108) — most recent non-pass action by each absolute seat."""
-    out = np.zeros((4, CARD_ID_DIM), dtype=np.float32)
-    seen = [False] * 4
+    out = np.zeros((NUM_PLAYERS, CARD_ID_DIM), dtype=np.float32)
+    seen = [False] * NUM_PLAYERS
     for actor, combo in reversed(env.move_history):
         if seen[actor] or combo.type == ComboType.PASS:
             continue
@@ -83,18 +84,18 @@ def _last_action_per_seat(env: GuanDanEnv) -> np.ndarray:
 def _played_cards_others(env: GuanDanEnv, player: int) -> np.ndarray:
     """(3, 108) — cumulative played cards for each non-self seat, in
     relative order (right=+1, partner=+2, left=+3). Reads cached multihot."""
-    out = np.zeros((3, CARD_ID_DIM), dtype=np.float32)
-    for i, offset in enumerate((1, 2, 3)):
-        seat = (player + offset) % 4
+    out = np.zeros((len(OTHER_PLAYER_OFFSETS), CARD_ID_DIM), dtype=np.float32)
+    for i, offset in enumerate(OTHER_PLAYER_OFFSETS):
+        seat = (player + offset) % NUM_PLAYERS
         out[i] = env.played_multihot[seat]
     return out
 
 
 def _remaining_counts_others(env: GuanDanEnv, player: int) -> np.ndarray:
     """(3, 27) — one-hot remaining-card-count for each non-self seat."""
-    out = np.zeros((3, RANK_BUCKETS), dtype=np.float32)
-    for i, offset in enumerate((1, 2, 3)):
-        seat = (player + offset) % 4
+    out = np.zeros((len(OTHER_PLAYER_OFFSETS), RANK_BUCKETS), dtype=np.float32)
+    for i, offset in enumerate(OTHER_PLAYER_OFFSETS):
+        seat = (player + offset) % NUM_PLAYERS
         n = min(len(env.hands[seat]), RANK_BUCKETS - 1)
         out[i, n] = 1.0
     return out
@@ -123,9 +124,9 @@ def static_dim(is_partner_visible: bool = True) -> int:
     return (
         CARD_ID_DIM                 # own_hand
         + CARD_ID_DIM               # others_hand
-        + 4 * CARD_ID_DIM           # recent_action_each_player
-        + 3 * CARD_ID_DIM           # played_cards_others
-        + 3 * RANK_BUCKETS          # remaining_counts_others
+        + NUM_PLAYERS * CARD_ID_DIM # recent_action_each_player
+        + len(OTHER_PLAYER_OFFSETS) * CARD_ID_DIM   # played_cards_others
+        + len(OTHER_PLAYER_OFFSETS) * RANK_BUCKETS  # remaining_counts_others
         + LEVEL_DIM                 # level
         + BEHAVIOR_DIM              # behavior (now in state)
         + CARD_ID_DIM               # candidate_action
@@ -159,7 +160,7 @@ class StateActionEncoder:
 
         if self.is_partner_visible:
             others_hand = np.zeros(CARD_ID_DIM, dtype=np.float32)
-            for seat in range(4):
+            for seat in range(NUM_PLAYERS):
                 if seat != player:
                     others_hand += env.hand_multihot[seat]
             np.clip(others_hand, 0.0, 1.0, out=others_hand)

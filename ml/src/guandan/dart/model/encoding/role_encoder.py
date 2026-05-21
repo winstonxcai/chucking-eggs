@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ...constants import NUM_PLAYERS, PARTNER_OFFSET
 from ....cards import ComboType
 from ....combos import Combo
 from ....game import GuanDanEnv
@@ -78,12 +79,12 @@ ROLE_ENCODE_CHANNEL_KEYS: tuple[str, ...] = tuple(ROLE_ENCODE_CHANNEL_SHAPES.key
 
 def relative_role(abs_player: int, actor: int) -> int:
     """Return abs_player's role from actor's perspective."""
-    return (abs_player - actor) % 4
+    return (abs_player - actor) % NUM_PLAYERS
 
 
 def absolute_player(actor: int, role: int) -> int:
     """Return absolute seat for role from actor's perspective."""
-    return (actor + role) % 4
+    return (actor + role) % NUM_PLAYERS
 
 
 def _multi_hot(cards) -> np.ndarray:
@@ -116,7 +117,7 @@ def trick_head_id(env: GuanDanEnv, actor: int) -> int:
     """
     if env.current_trick is None:
         return 0
-    return (env.trick_winner - actor) % 4
+    return (env.trick_winner - actor) % NUM_PLAYERS
 
 
 class RoleAwareStateActionEncoder:
@@ -185,9 +186,9 @@ class RoleAwareStateActionEncoder:
         # last non-pass action, and remaining count. Hands are decomposed into
         # dedicated top-level channels (own_hand, partner_hand, others_hand)
         # so the visibility gate is explicit at the channel level.
-        blocks = np.zeros((4, self._player_block_width), dtype=np.uint8)
+        blocks = np.zeros((NUM_PLAYERS, self._player_block_width), dtype=np.uint8)
         last_action = self._last_action_by_role(env, player)
-        for role in range(4):
+        for role in range(NUM_PLAYERS):
             seat = absolute_player(player, role)
             blocks[role, 0:108] = env.played_multihot[seat]
             blocks[role, 108:216] = last_action[role]
@@ -200,20 +201,20 @@ class RoleAwareStateActionEncoder:
             # Per-role trick-position onehot: each role's distance from the
             # leader, in the same counterclockwise convention as trick_head_id.
             leader_role = relative_role(env.trick_winner, player)
-            for role in range(4):
-                trick_pos = (leader_role - role) % 4
+            for role in range(NUM_PLAYERS):
+                trick_pos = (leader_role - role) % NUM_PLAYERS
                 blocks[role, 252 + trick_pos] = 1
 
         own_hand = env.hand_multihot[player].copy()
-        partner_seat = (player + 2) % 4
+        partner_seat = (player + PARTNER_OFFSET) % NUM_PLAYERS
         if self.is_partner_visible:
             partner_hand = env.hand_multihot[partner_seat].copy()
         else:
             partner_hand = np.zeros(CARD_ID_DIM, dtype=np.uint8)
 
         # The 2 opponents only (partner is decomposed separately in partner_hand).
-        next_opp_seat = (player + 1) % 4
-        prev_opp_seat = (player + 3) % 4
+        next_opp_seat = (player + 1) % NUM_PLAYERS
+        prev_opp_seat = (player - 1) % NUM_PLAYERS
         others_hand = env.hand_multihot[next_opp_seat] | env.hand_multihot[prev_opp_seat]
 
         behavior = compute_state_behavior_flags(env, player, legal_moves).astype(
@@ -236,8 +237,8 @@ class RoleAwareStateActionEncoder:
 
     def _last_action_by_role(self, env: GuanDanEnv, player: int) -> np.ndarray:
         """Return latest non-pass action for each relative role."""
-        out = np.zeros((4, CARD_ID_DIM), dtype=np.uint8)
-        seen = [False] * 4
+        out = np.zeros((NUM_PLAYERS, CARD_ID_DIM), dtype=np.uint8)
+        seen = [False] * NUM_PLAYERS
         for actor, combo in reversed(env.move_history):
             role = relative_role(actor, player)
             if seen[role] or combo.type == ComboType.PASS:
@@ -255,7 +256,7 @@ class RoleAwareStateActionEncoder:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Encode recent actions plus actor role and pass bit."""
         actions = np.zeros((HISTORY_LEN, CARD_ID_DIM), dtype=np.uint8)
-        roles = np.zeros((HISTORY_LEN, 4), dtype=np.uint8)
+        roles = np.zeros((HISTORY_LEN, NUM_PLAYERS), dtype=np.uint8)
         is_pass = np.zeros((HISTORY_LEN, 1), dtype=np.uint8)
         recent = env.move_history[-HISTORY_LEN:]
         offset = HISTORY_LEN - len(recent)

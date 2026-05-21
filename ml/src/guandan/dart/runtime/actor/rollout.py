@@ -9,6 +9,7 @@ from typing import Literal
 
 import torch
 
+from ...constants import NUM_PLAYERS, PARTNER_OFFSET
 from ....cards import ComboType
 from ....game import GuanDanEnv
 from ...data.buffer import collate_base_encoded, collate_role_encoded
@@ -72,7 +73,7 @@ SeatPolicies = tuple[SeatPolicy, SeatPolicy, SeatPolicy, SeatPolicy]
 def all_latest_seats(epsilon: float) -> SeatPolicies:
     """Return four latest-policy seats with shared epsilon."""
     p = SeatPolicy.latest(epsilon)
-    return (p, p, p, p)
+    return tuple(p for _ in range(NUM_PLAYERS))  # type: ignore[return-value]
 
 
 @dataclass(frozen=True)
@@ -82,8 +83,11 @@ class LaneConfig:
     tags: EpisodeTags = EpisodeTags()
 
     def __post_init__(self) -> None:
-        if len(self.seats) != 4:
-            raise ValueError(f"LaneConfig.seats must contain 4 policies; got {len(self.seats)}")
+        if len(self.seats) != NUM_PLAYERS:
+            raise ValueError(
+                f"LaneConfig.seats must contain {NUM_PLAYERS} policies; "
+                f"got {len(self.seats)}"
+            )
         if not any(sp.kind == "latest" for sp in self.seats):
             raise ValueError("LaneConfig must contain at least one latest seat")
 
@@ -185,6 +189,8 @@ def argmax_q_batched(
 
     with prof.time("q_collate"):
         state_batch, action_batch, repeats = collate(encoded_groups, device=device)
+    prof.add_count("q_forward_groups", len(encoded_groups))
+    prof.add_count("q_forward_action_rows", sum(len(group) for group in encoded_groups))
     with prof.time(f"q_net_forward{bucket_suffix}"):
         with torch.inference_mode():
             q_vals = net.forward_grouped(state_batch, action_batch, repeats)
@@ -245,6 +251,7 @@ def play_episode(
     gamma: float = 1.0,
     profiler: PhaseProfiler | None = None,
     rng: random.Random | None = None,
+    record_forced_k1_samples: bool = True,
 ) -> list[TrainSample]:
     """Roll one episode. Thin wrapper over ``play_episodes_batched``."""
     return play_episodes_batched(
@@ -255,6 +262,7 @@ def play_episode(
         gamma=gamma,
         profiler=profiler,
         rng=rng,
+        record_forced_k1_samples=record_forced_k1_samples,
     )[0]
 
 
@@ -268,6 +276,7 @@ def play_episodes_batched(
     profiler: PhaseProfiler | None = None,
     rng: random.Random | None = None,
     stop_event: object | None = None,
+    record_forced_k1_samples: bool = True,
 ) -> list[list[TrainSample]]:
     """Roll episode lanes, batching greedy Q-forwards by acting network."""
     _validate_lanes(lanes, q_nets, encoder)
@@ -292,91 +301,95 @@ def play_episodes_batched(
             if not active[lane_idx]:
                 continue
             env = envs[lane_idx]
-            if env.done:
-                active[lane_idx] = False
-                continue
-
-            player = env.current_player
-            policy = lanes[lane_idx].seats[player]
-            if policy.kind == "hard_bot":
-                assert policy.hard_bot_agent is not None
-                with prof.time("hard_bot_act"):
-                    action = policy.hard_bot_agent.act(env, player)
-                with prof.time("env_step"):
-                    env.step(action)
+            while active[lane_idx]:
+                if stop_event is not None and stop_event.is_set():
+                    return [[] for _ in lanes]
                 if env.done:
                     active[lane_idx] = False
-                continue
+                    break
 
-            with prof.time("legal_actions"):
-                legal = select_legal(env, player)
-            k = len(legal)
-            bucket = k_bucket_label(k)
-            prof.add_count("num_decisions", 1)
-            prof.add_count("num_legal_actions", k)
-            prof.add_count(f"decisions_{bucket}", 1)
+                player = env.current_player
+                policy = lanes[lane_idx].seats[player]
+                if policy.kind == "hard_bot":
+                    assert policy.hard_bot_agent is not None
+                    with prof.time("hard_bot_act"):
+                        action = policy.hard_bot_agent.act(env, player)
+                    with prof.time("env_step"):
+                        env.step(action)
+                    if env.done:
+                        active[lane_idx] = False
+                    continue
 
-            is_latest = policy.kind == "latest"
-            partner = (player + 2) % 4
+                with prof.time("legal_actions"):
+                    legal = select_legal(env, player)
+                k = len(legal)
+                bucket = k_bucket_label(k)
+                prof.add_count("num_decisions", 1)
+                prof.add_count("num_legal_actions", k)
+                prof.add_count(f"decisions_{bucket}", 1)
 
-            if k == 1:
-                prof.add_count("shortcut_K1", 1)
-                if is_latest:
-                    with prof.time("encode_selected"):
-                        encoded = encoder.encode_one(env, player, legal[0], legal)
-                    trajectories[lane_idx].append(_trajectory_step(
-                        env=env,
-                        player=player,
-                        partner=partner,
-                        encoded=encoded,
-                        legal=legal,
-                        idx=0,
-                        k=k,
-                        q_gap=float("nan"),
-                        chosen_by_epsilon=0,
-                    ))
-                with prof.time("env_step"):
-                    env.step(legal[0])
-                if env.done:
-                    active[lane_idx] = False
-                continue
+                is_latest = policy.kind == "latest"
+                partner = (player + PARTNER_OFFSET) % NUM_PLAYERS
 
-            if policy_rng.random() < policy.epsilon:
-                idx = policy_rng.randrange(k)
-                prof.add_count("epsilon_random", 1)
-                if is_latest:
-                    with prof.time("encode_selected"):
-                        encoded = encoder.encode_one(env, player, legal[idx], legal)
-                    trajectories[lane_idx].append(_trajectory_step(
-                        env=env,
-                        player=player,
-                        partner=partner,
-                        encoded=encoded,
-                        legal=legal,
-                        idx=idx,
-                        k=k,
-                        q_gap=float("nan"),
-                        chosen_by_epsilon=1,
-                    ))
-                with prof.time("env_step"):
-                    env.step(legal[idx])
-                if env.done:
-                    active[lane_idx] = False
-                continue
+                if k == 1:
+                    prof.add_count("shortcut_K1", 1)
+                    if is_latest and record_forced_k1_samples:
+                        with prof.time("encode_selected"):
+                            encoded = encoder.encode_one(env, player, legal[0], legal)
+                        trajectories[lane_idx].append(_trajectory_step(
+                            env=env,
+                            player=player,
+                            partner=partner,
+                            encoded=encoded,
+                            legal=legal,
+                            idx=0,
+                            k=k,
+                            q_gap=float("nan"),
+                            chosen_by_epsilon=0,
+                        ))
+                    with prof.time("env_step"):
+                        env.step(legal[0])
+                    if env.done:
+                        active[lane_idx] = False
+                    continue
 
-            with prof.time("encode_all"):
-                encoded_list = encoder.encode_all(env, player, legal)
-            pending.append({
-                "lane": lane_idx,
-                "player": player,
-                "partner": partner,
-                "policy": policy,
-                "is_latest": is_latest,
-                "legal": legal,
-                "encoded_list": encoded_list,
-                "k": k,
-                "bucket": bucket,
-            })
+                if policy_rng.random() < policy.epsilon:
+                    idx = policy_rng.randrange(k)
+                    prof.add_count("epsilon_random", 1)
+                    if is_latest:
+                        with prof.time("encode_selected"):
+                            encoded = encoder.encode_one(env, player, legal[idx], legal)
+                        trajectories[lane_idx].append(_trajectory_step(
+                            env=env,
+                            player=player,
+                            partner=partner,
+                            encoded=encoded,
+                            legal=legal,
+                            idx=idx,
+                            k=k,
+                            q_gap=float("nan"),
+                            chosen_by_epsilon=1,
+                        ))
+                    with prof.time("env_step"):
+                        env.step(legal[idx])
+                    if env.done:
+                        active[lane_idx] = False
+                    continue
+
+                with prof.time("encode_all"):
+                    encoded_list = encoder.encode_all(env, player, legal)
+                pending.append({
+                    "lane": lane_idx,
+                    "player": player,
+                    "partner": partner,
+                    "policy": policy,
+                    "is_latest": is_latest,
+                    "legal": legal,
+                    "encoded_list": encoded_list,
+                    "k": k,
+                    "bucket": bucket,
+                })
+                break
 
         if not pending:
             continue

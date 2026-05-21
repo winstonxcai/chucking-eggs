@@ -19,13 +19,14 @@ carries upd_per_sec, queue_depth, gpu_mem_gb, drained_since_last_log.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import modal
 
 app = modal.App("dart-train")
-vol = modal.Volume.from_name("pvguan-runs", create_if_missing=True)
-hf_cache = modal.Volume.from_name("hf-cache", create_if_missing=True)
+vol = modal.Volume.from_name(os.getenv("DART_MODAL_VOL", "dart-runs"), create_if_missing=True)
+hf_cache = modal.Volume.from_name(os.getenv("DART_HF_CACHE", "hf-cache"), create_if_missing=True)
 RUN_VOL = "/runs"
 
 _root = Path(__file__).resolve().parent.parent.parent.parent  # repo root
@@ -73,6 +74,56 @@ def train_remote(
     profile:     bool = False,
     resume:      str | None = None,
 ) -> str:
+    return _run_train_subprocess(
+        updates=updates,
+        run_name=run_name,
+        seed=seed,
+        config_path=config_path,
+        device=device,
+        profile=profile,
+        resume=resume,
+    )
+
+
+@app.function(
+    image=image,
+    gpu="A10G",
+    cpu=32,
+    memory=20 * 1024,
+    timeout=3600 * 12,
+    volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
+    secrets=[modal.Secret.from_name("huggingface-token")],
+)
+def train_remote_a10g(
+    updates:     int,
+    run_name:    str,
+    seed:        int,
+    config_path: str,
+    device:      str,
+    profile:     bool = False,
+    resume:      str | None = None,
+) -> str:
+    return _run_train_subprocess(
+        updates=updates,
+        run_name=run_name,
+        seed=seed,
+        config_path=config_path,
+        device=device,
+        profile=profile,
+        resume=resume,
+    )
+
+
+def _run_train_subprocess(
+    *,
+    updates: int,
+    run_name: str,
+    seed: int,
+    config_path: str,
+    device: str,
+    profile: bool = False,
+    resume: str | None = None,
+) -> str:
     import os
     import subprocess
 
@@ -98,14 +149,21 @@ def train_remote(
     run_dir = f"{RUN_VOL}/dart/{run_name}"
 
     # Auto-detect latest checkpoint in run dir so preemption restarts don't rewind.
+    # Prefer final.pt because clean shutdown writes it as a full checkpoint
+    # (optimizer + replay + RNG), while periodic update checkpoints may be
+    # weight-only depending on config. If the caller passes --resume, respect it.
     import glob
     checkpoints_dir = f"{run_dir}/checkpoints"
-    existing = sorted(glob.glob(f"{checkpoints_dir}/update_*.pt"))
-    if existing:
-        latest = existing[-1]
-        if latest != resume:
-            print(f"Auto-resuming from latest checkpoint: {latest} (passed resume={resume})")
-        resume = latest
+    if resume is None:
+        final_checkpoint = f"{checkpoints_dir}/final.pt"
+        existing = sorted(glob.glob(f"{checkpoints_dir}/update_*.pt"))
+        if os.path.exists(final_checkpoint):
+            print(f"Auto-resuming from final checkpoint: {final_checkpoint}")
+            resume = final_checkpoint
+        elif existing:
+            latest = existing[-1]
+            print(f"Auto-resuming from latest update checkpoint: {latest}")
+            resume = latest
 
     cmd = [
         "python", "-m", "guandan.dart",
@@ -131,6 +189,7 @@ def main(
     seed: int = 0,
     config_path: str = _DEFAULT_CONFIG_PATH,
     device: str = "cuda",
+    gpu: str = "L4",
     profile: bool = False,
     resume: str | None = None,
     dry_run: bool = False,
@@ -155,9 +214,10 @@ def main(
         profile=profile,
         resume=resume,
     )
+    fn = train_remote_a10g if gpu.upper() == "A10G" else train_remote
     if wait:
-        final_ckpt = train_remote.remote(**kwargs)
+        final_ckpt = fn.remote(**kwargs)
         print(f"Completed. Final checkpoint: {final_ckpt}")
     else:
-        fn = train_remote.spawn(**kwargs)
-        print(f"Spawned function call id: {fn.object_id}")
+        call = fn.spawn(**kwargs)
+        print(f"Spawned function call id: {call.object_id}")

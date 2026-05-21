@@ -9,6 +9,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
+from ...constants import NUM_PLAYERS
 from ...data.buffer import RoleAwareReplayBuffer
 from ...model.q_network import DartQNet
 from .loss_buckets import _emit_phase_aggregations
@@ -67,7 +68,7 @@ class DartLearner:
     ) -> dict | None:
         """One balanced gradient step, or None if any head bucket is cold."""
         sizes = buffer.size_by_seat()
-        min_per_seat = batch_size // 4
+        min_per_seat = batch_size // NUM_PLAYERS
         if min(sizes.values()) < min_per_seat:
             return None
 
@@ -128,7 +129,7 @@ class DartLearner:
                 "grad_norm": float(grad_norm_total.item()),
                 "grad_norm_trunk": float(_grad_norm_of(self.q_net.trunk).item()),
             }
-            for k in range(4):
+            for k in range(NUM_PLAYERS):
                 mask = head_ids == k
                 metrics[f"sample_count_{suffix}_{k}"] = float(mask.sum().item())
                 if mask.any():

@@ -78,6 +78,7 @@ def test_dart_checkpoint_persists_resume_state(tmp_path):
         learner_state=learner.state_dict(),
         replay_state=buffer.state_dict(),
         rng_state={"cpu": torch.get_rng_state()},
+        actor_rng_states={3: {"actor_random": ("state",)}},
     )
 
     ckpt = load_checkpoint(path)
@@ -85,6 +86,7 @@ def test_dart_checkpoint_persists_resume_state(tmp_path):
     assert ckpt["total_updates"] == 17
     assert "optimizer" in ckpt["learner_state"]
     assert ckpt["replay_state"]["size"] == 16
+    assert ckpt["actor_rng_states"][3]["actor_random"] == ("state",)
 
     restored_buffer = RoleAwareReplayBuffer(capacity=32, seed=999)
     restored_buffer.load_state_dict(ckpt["replay_state"])
@@ -109,6 +111,7 @@ def test_dart_checkpoint_weight_only_omits_resume_state(tmp_path):
         learner_state={"optimizer": {"state": {"expensive": True}}},
         replay_state={"size": 16},
         rng_state={"cpu": torch.get_rng_state()},
+        actor_rng_states={0: {"actor_random": ("state",)}},
         save_type="weight",
     )
 
@@ -120,6 +123,7 @@ def test_dart_checkpoint_weight_only_omits_resume_state(tmp_path):
     assert "learner_state" not in ckpt
     assert "replay_state" not in ckpt
     assert "rng_state" not in ckpt
+    assert "actor_rng_states" not in ckpt
 
 
 def test_invalid_checkpoint_save_type_fails_fast(tmp_path):

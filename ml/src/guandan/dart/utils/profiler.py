@@ -17,8 +17,8 @@ Usage::
     with prof.time("forward", sync=True):
         output = net(batch)
     prof.add_count("decisions_k>20", 1)
-    print(prof.report(wall_s=elapsed, n_events=n_episodes, event_label="episodes"))
-    print(prof.report_k_buckets(n_decisions=n_dec))
+    logger.info(prof.report(wall_s=elapsed, n_events=n_episodes, event_label="episodes"))
+    logger.info(prof.report_k_buckets(n_decisions=n_dec))
 """
 
 from __future__ import annotations

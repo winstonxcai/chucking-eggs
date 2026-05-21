@@ -15,6 +15,7 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+from ..constants import NUM_PLAYERS
 from ..model.checkpoint import WeightSnapshot, unwrap_compiled
 from ..model.q_network import DartQNet
 
@@ -32,7 +33,7 @@ def publish_weights(q_nets: dict, weight_dir: Path, version: int, updates: int =
             "state_dicts": {
                 p: {k: v.detach().cpu()
                     for k, v in unwrap_compiled(q_nets[p]).state_dict().items()}
-                for p in range(4)
+                for p in range(NUM_PLAYERS)
             },
         },
         tmp,
@@ -101,7 +102,8 @@ def read_latest_metadata(weight_dir: Path) -> tuple[int, int] | None:
         version = int(parts[0])
         updates = int(parts[1]) if len(parts) > 1 else 0
         return version, updates
-    except (ValueError, IndexError):
+    except (ValueError, IndexError) as exc:
+        logger.warning("weights: corrupted latest.txt in %s: %s", weight_dir, exc)
         return None
 
 

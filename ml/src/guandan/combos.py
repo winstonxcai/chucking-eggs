@@ -83,6 +83,12 @@ class Combo:
 
 def _rs_tuple_to_combo(t: tuple) -> Combo:
     """Convert Rust (combo_type, key, cards, length, wild_count) tuple to Combo."""
+    if len(t) != 5:
+        raise ValueError(
+            "guandan_rs combo tuple must have 5 items "
+            "(combo_type, key, cards, length, wild_count); "
+            f"got {len(t)}: {t!r}"
+        )
     combo_type, key, cards_raw, length, wild_count = t
     cards = [Card(r, s, d) for r, s, d in cards_raw]
     return Combo(ComboType(combo_type), key, cards, length, wild_count)

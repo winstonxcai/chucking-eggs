@@ -29,6 +29,16 @@ def capture_torch_rng_state() -> dict[str, Any]:
     return state
 
 
+def capture_actor_rng_state(rng: random.Random) -> dict[str, Any]:
+    """Capture all actor-side RNG state used by rollout selection."""
+    return {
+        "actor_random": rng.getstate(),
+        "python_random": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": capture_torch_rng_state(),
+    }
+
+
 def restore_torch_rng_state(state: dict[str, Any] | None) -> None:
     """Restore a state produced by ``capture_torch_rng_state``."""
     if not state:
@@ -41,4 +51,26 @@ def restore_torch_rng_state(state: dict[str, Any] | None) -> None:
         torch.cuda.set_rng_state_all(cuda)
 
 
-__all__ = ["seed_everything", "capture_torch_rng_state", "restore_torch_rng_state"]
+def restore_actor_rng_state(rng: random.Random, state: dict[str, Any] | None) -> None:
+    """Restore a state produced by ``capture_actor_rng_state``."""
+    if not state:
+        return
+    actor_random = state.get("actor_random")
+    if actor_random is not None:
+        rng.setstate(actor_random)
+    python_random = state.get("python_random")
+    if python_random is not None:
+        random.setstate(python_random)
+    numpy_state = state.get("numpy")
+    if numpy_state is not None:
+        np.random.set_state(numpy_state)
+    restore_torch_rng_state(state.get("torch"))
+
+
+__all__ = [
+    "seed_everything",
+    "capture_actor_rng_state",
+    "capture_torch_rng_state",
+    "restore_actor_rng_state",
+    "restore_torch_rng_state",
+]

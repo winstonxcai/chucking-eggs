@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 import torch
 import torch.nn.functional as F
 
+from ...constants import NUM_PLAYERS
 from ...data.buffer import ReplayBuffer
 from ...model.q_network import GuanZeroQNet
 from ...utils.profiler import PhaseProfiler
@@ -39,10 +40,10 @@ class SeatLearner:
         max_grad_norm: float = 10.0,
     ) -> None:
         self.device = torch.device(device)
-        self.q_nets = {p: q_nets[p].to(self.device) for p in range(4)}
+        self.q_nets = {p: q_nets[p].to(self.device) for p in range(NUM_PLAYERS)}
         self.optims = {
             p: torch.optim.Adam(self.q_nets[p].parameters(), lr=lr, foreach=True)
-            for p in range(4)
+            for p in range(NUM_PLAYERS)
         }
         if use_bf16 and self.device.type != "cuda":
             logger.warning("use_bf16=True requested but device=%s; BF16 disabled", self.device)
@@ -53,7 +54,7 @@ class SeatLearner:
         # One stream per position so CUDA can schedule all 4 forward+backward
         # passes concurrently. Not used on MPS (no multi-stream support).
         self.streams: dict[int, torch.cuda.Stream] | None = (
-            {p: torch.cuda.Stream(device=self.device) for p in range(4)}
+            {p: torch.cuda.Stream(device=self.device) for p in range(NUM_PLAYERS)}
             if self.device.type == "cuda" else None
         )
         self.prof = PhaseProfiler(
@@ -91,7 +92,7 @@ class SeatLearner:
         """
         with self.prof.time("sample+h2d", sync=True):
             batches: dict[int, tuple] = {}
-            for p in range(4):
+            for p in range(NUM_PLAYERS):
                 res = buffer.sample_batch_for_player(p, batch_size, device=self.device)
                 if res is not None:
                     batches[p] = res
@@ -126,13 +127,32 @@ class SeatLearner:
                     else:
                         loss = F.mse_loss(q_pred, targets_d[p])
                     loss_tensors[p] = loss
-                    if torch.isfinite(loss):
-                        self.optims[p].zero_grad(set_to_none=True)
-                        loss.backward()
-                        torch.nn.utils.clip_grad_norm_(
-                            self.q_nets[p].parameters(), self.max_grad_norm
+                    if not torch.isfinite(targets_d[p]).all():
+                        bad = int((~torch.isfinite(targets_d[p])).sum().item())
+                        raise RuntimeError(
+                            f"SeatLearner received {bad} non-finite targets for player {p}"
                         )
-                        self.optims[p].step()
+                    if not torch.isfinite(q_pred).all():
+                        bad = int((~torch.isfinite(q_pred)).sum().item())
+                        raise RuntimeError(
+                            f"SeatLearner produced {bad} non-finite predictions for player {p}"
+                        )
+                    if not torch.isfinite(loss):
+                        raise RuntimeError(
+                            f"SeatLearner produced non-finite loss for player {p}: "
+                            f"{float(loss.item())}"
+                        )
+                    self.optims[p].zero_grad(set_to_none=True)
+                    loss.backward()
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.q_nets[p].parameters(), self.max_grad_norm
+                    )
+                    if not torch.isfinite(grad_norm):
+                        raise RuntimeError(
+                            f"SeatLearner produced non-finite gradient norm for player {p}: "
+                            f"{float(grad_norm.item())}"
+                        )
+                    self.optims[p].step()
 
         with self.prof.time("final_sync"):
             if self.streams:

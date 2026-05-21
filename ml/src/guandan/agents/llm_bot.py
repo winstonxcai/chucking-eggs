@@ -20,7 +20,7 @@ Example:
 
 from __future__ import annotations
 
-import os
+import logging
 import random
 import re
 from typing import TYPE_CHECKING
@@ -31,6 +31,8 @@ from .base import Agent
 
 if TYPE_CHECKING:
     from ..game import GuanDanEnv
+
+logger = logging.getLogger(__name__)
 
 
 _SUIT_GLYPH = {
@@ -298,7 +300,7 @@ class LLMBot(Agent):
         dedup: If True, collapse suit-permutation variants of strategically
             equivalent plays so the action list stays compact (opening leads
             can have 200+ raw legal moves). Default True.
-        log_failures: If True, prints a one-line warning each time we fall back.
+        log_failures: If True, logs a one-line warning each time we fall back.
     """
 
     label = "LLM"
@@ -374,13 +376,16 @@ class LLMBot(Agent):
             text = response["choices"][0]["message"]["content"]
         except Exception as e:
             if self.log_failures:
-                print(f"[LLMBot] API error ({type(e).__name__}: {e}); falling back.")
+                logger.warning(
+                    "LLMBot API error (%s: %s); falling back.",
+                    type(e).__name__, e,
+                )
             return self._fallback_choice(legal)
 
         idx = _parse_index(text, len(legal))
         if idx is None:
             if self.log_failures:
-                print(f"[LLMBot] could not parse index from {text!r}; falling back.")
+                logger.warning("LLMBot could not parse index from %r; falling back.", text)
             return self._fallback_choice(legal)
         return legal[idx]
 

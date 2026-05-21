@@ -50,6 +50,21 @@ markers = [
     "slow: spawns subprocesses or takes >5s; opt in with `-m slow`",
 ]
 
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["F"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["ml/src/guandan/dart"]
+ignore_missing_imports = true
+follow_imports = "silent"
+check_untyped_defs = false
+ignore_errors = true
+warn_unused_ignores = false
+
 [dependency-groups]
 dev = [
     "fastapi>=0.104",
@@ -57,10 +72,12 @@ dev = [
     "maturin>=1.8,<2",
     "mongomock-motor>=0.0.35",
     "motor>=3.3",
+    "mypy>=1.18",
     "py-spy>=0.4.2",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "redis>=5.0",
+    "ruff>=0.14",
     "slowapi>=0.1.9",
     "uvicorn[standard]>=0.29.0",
     "websockets>=12.0",

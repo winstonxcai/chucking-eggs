@@ -18,7 +18,11 @@ from .actor.runtime import build_actor_runtime, jitter_sync_threshold, sync_acto
 from .actor.samples import ActorSampleAccumulator, QueueBatchMeta
 from ..utils.logging_setup import setup_run_logging
 from ..utils.profiler import PhaseProfiler
-from ..utils.reproducibility import seed_everything
+from ..utils.reproducibility import (
+    capture_actor_rng_state,
+    restore_actor_rng_state,
+    seed_everything,
+)
 
 
 def _build_lanes(
@@ -59,6 +63,7 @@ def actor_loop(
     weight_dir:   Path,
     run_dir:      Path | None = None,
     pause_event:  "mp.Event | None" = None,
+    resume_actor_rng_state: dict | None = None,
 ) -> None:
     """Run self-play continuously and push stacked sample batches to the learner."""
     from ..config import TrainConfig
@@ -87,6 +92,9 @@ def actor_loop(
     weight_dir = Path(weight_dir)
     run_dir = Path(run_dir) if run_dir is not None else None
     rng = random.Random(actor_seed)
+    if resume_actor_rng_state is not None:
+        restore_actor_rng_state(rng, resume_actor_rng_state)
+        logger.info("actor-%d restored RNG state from checkpoint", actor_id)
     local_version = -1
     local_updates = 0
     global_updates = 0
@@ -94,7 +102,9 @@ def actor_loop(
     dropped_batches = 0
     sync_threshold = jitter_sync_threshold(cfg, rng)
 
-    profile_enabled = os.environ.get("DART_ACTOR_PROFILE") == "1"
+    profile_enabled = os.environ.get("DART_ACTOR_PROFILE", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     prof = PhaseProfiler(enabled=profile_enabled)
     prof_t_start = time.perf_counter()
     snapshot_every_episodes = max(1, cfg.log_every_updates * 10)
@@ -111,6 +121,7 @@ def actor_loop(
                         version=local_version,
                         local_updates=local_updates,
                         global_updates=global_updates,
+                        actor_rng_state=capture_actor_rng_state(rng),
                     ),
                 )
                 if msg is None:
@@ -121,12 +132,13 @@ def actor_loop(
                 except queue.Full as exc:
                     if stop_event.is_set():
                         return
-                    dropped_batches += 1
-                    if dropped_batches <= 3 or dropped_batches % 20 == 0:
-                        logger.warning(
-                            "actor-%d: sample queue drop #%d: %s",
-                            actor_id, dropped_batches, exc,
-                        )
+                    logger.error(
+                        "actor-%d: sample queue full after 5s; stopping to avoid "
+                        "silent sample loss: %s",
+                        actor_id, exc,
+                    )
+                    stop_event.set()
+                    raise
                 except (BrokenPipeError, EOFError, OSError, ValueError) as exc:
                     if stop_event.is_set():
                         return
@@ -184,6 +196,7 @@ def actor_loop(
             profiler=prof,
             rng=rng,
             stop_event=stop_event,
+            record_forced_k1_samples=cfg.max_forced_k1_replay_frac > 0.0,
         )
         if stop_event.is_set():
             break

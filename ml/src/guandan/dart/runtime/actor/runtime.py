@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 
+from ...constants import NUM_PLAYERS
 from ...config import MODEL_TYPE_DART, dart_qnet_config
 from ...model.encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from ...model.encoding.role_encoder import RoleAwareStateActionEncoder
@@ -104,7 +105,7 @@ def maybe_sync_weights(
         return local_version, local_updates, latest_updates
 
     if isinstance(q_nets, Mapping):
-        for p in range(4):
+        for p in range(NUM_PLAYERS):
             q_nets[p].load_state_dict(snapshot.state_dicts[p])
             q_nets[p].eval()
     else:
@@ -130,7 +131,7 @@ def _quantize_for_actor(nets, dart_path: bool):
         return qao.quantize_dynamic(nets, {torch.nn.Linear}, dtype=torch.qint8)
     return {
         player: qao.quantize_dynamic(nets[player], {torch.nn.Linear}, dtype=torch.qint8)
-        for player in range(4)
+        for player in range(NUM_PLAYERS)
     }
 
 

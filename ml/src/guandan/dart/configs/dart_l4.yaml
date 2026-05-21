@@ -6,71 +6,72 @@
 #     --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml \
 #     --updates 50000 --run-name dart_l4_50k --seed 0
 
-n_actors: 32
-actor_batch_lanes: 40
-sync_interval_updates: 5000
-sync_jitter_updates: 1000
-actor_push_batch_size: 512
-sample_queue_maxsize: 64
-max_drain_batches_per_loop: 16
-publish_interval_updates: 200
-checkpoint_every_updates: 25000
-checkpoint_save_type: weight
-log_every_updates: 10
-updates_per_learner_step: 1
+n_actors: 32                    # One actor per Modal vCPU; actor loop is CPU-bound.
+actor_batch_lanes: 64           # Batch 64 simultaneous games per actor for local Q-forward throughput.
+sync_interval_updates: 5000     # Keep actors stable for several thousand learner steps before reloading.
+sync_jitter_updates: 1000       # Spread actor reloads to avoid synchronized filesystem spikes.
+actor_push_batch_size: 512      # Queue batches are large enough to amortize IPC without bloating latency.
+sample_queue_maxsize: 64        # Bounded queue exposes learner backpressure instead of unbounded RAM growth.
+max_drain_batches_per_loop: 16  # Drain several actor batches per loop while keeping learner steps responsive.
+publish_interval_updates: 200   # Publish often enough for actors to track training without excess I/O.
+checkpoint_every_updates: 25000 # Roughly every few hours on L4; keeps resume/eval artifacts manageable.
+checkpoint_save_type: weight    # Periodic checkpoints are light; clean final checkpoint is full resume state.
+log_every_updates: 10           # High-frequency metrics for diagnosing actor/learner throughput on Modal.
+updates_per_learner_step: 1     # Kept for config compatibility; this learner performs one update per loop.
 
 eval:
-  enabled: true
-  opponents: [yaoji, ez, jidan, strategic]
-  n_eval_games_per_opponent: 10000
-  every_updates: 0  # 0 = checkpoint_every_updates
-  workers: 0        # 0 = n_actors
-  lanes: 0          # 0 = actor_batch_lanes
-  device: cpu
+  enabled: true                 # Run checkpoint evals during long Modal training.
+  opponents: [yaoji, ez, jidan, strategic] # Strong representative rule bots for pre-release checks.
+  n_eval_games_per_opponent: 10000 # Tight confidence intervals for headline win-rate claims.
+  every_updates: 0              # 0 = use checkpoint_every_updates.
+  workers: 0                    # 0 = match n_actors for Modal CPU allocation.
+  lanes: 0                      # 0 = match actor_batch_lanes to reuse throughput tuning.
+  device: cpu                   # Eval is CPU-friendly and avoids fighting the learner GPU.
+  max_wait_s: 300.0             # Fail fast if eval handoff/subprocess stalls.
 
-model_type: Dart
-dart_role_d_model: 128
-dart_history_hidden: 256
-dart_global_hidden: 128
-dart_action_hidden: 128
-dart_trunk_hidden: 1024
-dart_trunk_layers: 4
-dropout: 0.0
+model_type: Dart                # Production role-aware shared-network training path.
+dart_role_d_model: 128          # Compact trick-role embedding; enough for four routing heads.
+dart_history_hidden: 256        # LSTM history capacity without dominating CPU actor inference.
+dart_global_hidden: 128         # Current-state features are smaller than action/history streams.
+dart_action_hidden: 128         # Candidate-action encoder width aligned with global stream.
+dart_trunk_hidden: 1024         # Main MLP width tuned for BF16 learner throughput on L4.
+dart_trunk_layers: 4            # Depth/capacity tradeoff that keeps actor inference affordable.
+dropout: 0.0                    # No dropout for deterministic value targets in self-play DMC.
 
-target_replay_ratio: 1.0
-max_replay_ratio: 1.25
-max_throttle_sleep_s: 0.05
+target_replay_ratio: 1.0        # Aim for one learner use per fresh sample.
+max_replay_ratio: 1.25          # Allow small bursts before throttling learner updates.
+max_throttle_sleep_s: 0.05      # Short sleeps smooth backpressure without idling the GPU for long.
 
-lr: 3.0e-5
-gamma: 1.0
-batch_size: 4096
-buffer_capacity: 400000
-buffer_capacity_per_player: 100000
-buffer_min_size: 32768
+lr: 3.0e-5                      # Tuned for BF16 at batch_size=4096; higher rates were less stable.
+gamma: 1.0                      # Monte Carlo terminal return with no temporal discounting.
+batch_size: 4096                # 4 seats x 1024 examples; large enough for stable role-head gradients.
+buffer_capacity: 400000         # About 100k samples per seat in the role-aware shared buffer.
+buffer_capacity_per_player: 100000 # Legacy per-seat capacity used by GuanZero configs.
+buffer_min_size: 32768          # Warm replay before updates so early gradients are not tiny-batch-biased.
 
-epsilon_start: 0.01
-epsilon_final: 0.01
-epsilon_decay_updates: 20000
-is_partner_visible: true
+epsilon_start: 0.01             # Low exploration because rule dynamics already produce broad states.
+epsilon_final: 0.01             # Fixed low exploration for the production run.
+epsilon_decay_updates: 20000    # Kept for config parity; start == final makes decay a no-op here.
+is_partner_visible: true        # Matches the published partner-visible DART setting.
 
 opponents:
-  latest_team_odd_probability: 0.5
+  latest_team_odd_probability: 0.5 # When mixing opponents, randomize which partnership uses latest.
   episode_mix:
-    self_play: 1.0
-    frozen_pool: 0.0
-    hard_bot: 0.0
+    self_play: 1.0              # Production result is pure latest-vs-latest self-play.
+    frozen_pool: 0.0            # Disabled unless checkpoint population is explicitly supplied.
+    hard_bot: 0.0               # Disabled for headline self-play training.
   frozen_pool:
-    checkpoints: []
-    epsilon: 0.0
-    sampling: uniform
+    checkpoints: []             # No frozen opponents in this config.
+    epsilon: 0.0                # Frozen-opponent exploration is off.
+    sampling: uniform           # Only supported frozen-pool sampler today.
   hard_bot:
-    bots: []
+    bots: []                    # No rule-bot opponents in the training mix.
     sampling:
-      type: uniform
-      weights: {}
+      type: uniform             # Uniform sampler is the empty/default hard-bot mode.
+      weights: {}               # Required shape for weighted modes; empty for uniform.
 
-max_forced_k1_replay_frac: 0.0
+max_forced_k1_replay_frac: 0.0  # Exclude forced one-legal-action samples from replay.
 
-device: cuda
-use_bf16_learner: true
-compile_mode: reduce-overhead
+device: cuda                    # Modal L4 learner runs on CUDA.
+use_bf16_learner: true          # BF16 autocast improves L4 throughput with this batch size.
+compile_mode: reduce-overhead   # Use cudagraph-friendly compile mode for the shared Dart learner.

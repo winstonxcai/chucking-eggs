@@ -51,6 +51,22 @@ fn dedup_strategic(legal: Vec<PyCombo>) -> Vec<PyCombo> {
     combos_out.iter().map(combo_to_py).collect()
 }
 
+/// Generate and strategic-deduplicate legal moves in one native call.
+#[pyfunction]
+#[pyo3(signature = (hand, level_rank, trick=None))]
+fn select_legal(hand: Vec<PyCard>, level_rank: u8, trick: Option<PyCombo>) -> Vec<PyCombo> {
+    let hand_set: HashSet<Card> = hand.iter().map(card_from_py).collect();
+    let legal = match trick {
+        Some(t) => {
+            let trick_combo = combo_from_py(&t);
+            combos::generate_responses(&hand_set, level_rank, &trick_combo)
+        }
+        None => combos::generate_all_leads(&hand_set, level_rank),
+    };
+    let deduped = combos::dedup_strategic(legal);
+    deduped.iter().map(combo_to_py).collect()
+}
+
 /// Run MC rollouts for a specific move from a game state.
 ///
 /// Args:
@@ -151,6 +167,7 @@ fn _guandan_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_all_leads, m)?)?;
     m.add_function(wrap_pyfunction!(generate_responses, m)?)?;
     m.add_function(wrap_pyfunction!(dedup_strategic, m)?)?;
+    m.add_function(wrap_pyfunction!(select_legal, m)?)?;
     m.add_function(wrap_pyfunction!(mc_rollout, m)?)?;
     m.add_function(wrap_pyfunction!(mc_rollout_batch, m)?)?;
     Ok(())

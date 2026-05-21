@@ -1040,6 +1040,7 @@ web = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiohttp" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "idna" },
@@ -1082,6 +1083,7 @@ provides-extras = ["dev", "modal", "llm", "web"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiohttp", specifier = ">=3.9" },
     { name = "fastapi", specifier = ">=0.104" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "idna", specifier = ">=3.15" },

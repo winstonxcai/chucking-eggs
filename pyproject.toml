@@ -91,4 +91,5 @@ dev = [
     "slowapi>=0.1.9",
     "uvicorn[standard]>=0.29.0",
     "websockets>=12.0",
+    "aiohttp>=3.9",
 ]

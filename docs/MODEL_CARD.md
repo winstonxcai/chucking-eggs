@@ -1,6 +1,6 @@
 # DART Model Card
 
-This model card describes the 200k-update DART checkpoint referenced by the
+This model card describes the 1.25M-update DART checkpoint referenced by the
 README. The checkpoint artifact is not stored in git because model weights are
 ignored; upload it to a GitHub Release or Hugging Face before tagging `v0.1.0`.
 
@@ -10,7 +10,7 @@ ignored; upload it to a GitHub Release or Hugging Face before tagging `v0.1.0`.
 - Architecture: role-aware shared Q-network with four trick-position heads
 - Training algorithm: Deep Monte Carlo control with distributed actors
 - Training config: `ml/src/guandan/dart/configs/dart_l4.yaml`
-- Intended checkpoint artifact: `final.pt` from the 200k-update L4 run
+- Intended checkpoint artifact: `update_01250000.pt` from the L4 run
 
 ## Intended Use
 
@@ -36,11 +36,13 @@ periodic checkpoints are faster to write but are not exact-resume artifacts.
 ## Evaluation
 
 The README reports 5000-game paired fixed-deck evaluations against rule-based
-bots and a full Glicko-2 round-robin. Reproduce a single matchup with:
+bots. The reported Glicko-2 table reuses the existing 5000-game rule-bot
+round-robin and injects the 1.25M DART matchup results instead of rerunning the
+entire matrix. Reproduce a single matchup with:
 
 ```bash
 uv run guandan-eval-dart \
-  --checkpoint path/to/final.pt \
+  --checkpoint path/to/update_01250000.pt \
   --opponent strategic \
   --games 1000 \
   --out results.json
@@ -57,6 +59,7 @@ uv run guandan-eval-dart \
 
 ## Release Checklist
 
-Before publishing, attach `final.pt`, `config.yaml`, `metrics_learner.jsonl`,
-and the eval command/output to a GitHub Release or Hugging Face model repo, then
-replace the pending checkpoint links in the README with the final URL.
+Before publishing, attach `update_01250000.pt`, `config.yaml`,
+`metrics_learner.jsonl`, and the eval command/output to a GitHub Release or
+Hugging Face model repo, then replace the pending checkpoint links in the README
+with the final URL.

@@ -1,6 +1,6 @@
 # DART — Partner-Visible Guan Dan RL Agent
 
-[![CI](https://github.com/PoohTheWinnie/chucking-eggs/actions/workflows/ci.yml/badge.svg)](https://github.com/PoohTheWinnie/chucking-eggs/actions/workflows/ci.yml)
+[![CI](https://github.com/winstonxcai/chucking-eggs/actions/workflows/ci.yml/badge.svg)](https://github.com/winstonxcai/chucking-eggs/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -65,13 +65,13 @@ with the new 1.25M DART matchups injected; the rule-bot matrix was not rerun.
 | Lalala | 1406 | NJUPT 2020 1st place (SEU) |
 | Hulalala | 1403 | NJUPT 2020 3rd place (SEU) |
 | Liuzha | 1401 | NJUPT 2020 2nd place (SEU) |
-| Greedy | 1361 | |
+| Greedy | 1361 | Hand-written baseline (this project) |
 | WJSD | 1327 | NJUPT 2020 3rd place (SAU) |
 | Random | 1132 | |
 
 ## Method Summary
 
-DART follows the DouZero-style Deep Monte Carlo pattern: actors generate complete games, the learner trains Q-values from terminal returns, and the model scores legal actions directly rather than learning a separate policy head. The key architectural choice is action-relative routing: one shared network body feeds four Q-heads keyed by the player's role in the current trick (leading / 1st responder / across / last responder), which makes the model's output space align with how control actually changes during Guan Dan tricks. This is a lightweight MoE-inspired routing pattern at the output-head level: the router is deterministic, and the specialized modules are small Q-heads rather than full learned experts.
+DART follows the DouZero-style Deep Monte Carlo pattern: actors generate complete games, the learner trains Q-values from terminal returns, and the model scores legal actions directly rather than learning a separate policy head. The learning objective is mean squared error, `MSE(Q(s_t, a_t), G_t)`, where `G_t` is the Monte Carlo return assigned after the game ends. The key architectural choice is action-relative routing: one shared network body feeds four Q-heads keyed by the player's role in the current trick (leading / 1st responder / across / last responder), which makes the model's output space align with how control actually changes during Guan Dan tricks. This is a lightweight MoE-inspired routing pattern at the output-head level: the router is deterministic, and the specialized modules are small Q-heads rather than full learned experts.
 
 The state encoder is role-normalized and partner-visible. It includes the acting player's hand, the partner hand, public trick and round state, and move history through a shallow LSTM. This intentionally studies cooperative team play with direct partner-card access instead of forcing the model to spend most of its capacity inferring its teammate's private hand.
 
@@ -244,24 +244,32 @@ cd web/frontend && npm install && npm run dev
 
 ![DART system topology](docs/figures/system_topology.png)
 
+This figure shows the runtime ownership boundaries. The main process handles
+lifecycle and evaluation; actors own local policy copies and batched
+environment lanes; the learner owns replay and the authoritative network; the
+weight store provides asynchronous policy refresh.
+
 **DART** (**D**ynamic **A**ction-**R**elative routing for **T**ricks) uses 4 shared Q-heads, one per trick position: leading / 1st responder / across / last responder. It combines an LSTM over move history, role-normalized state encoding, partner hand visibility during training, and distributed actor-learner execution. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map.
 
 ![DART distributed learning process](docs/figures/distributed_training.png)
 
-Each actor owns one local Q-network copy and controls multiple independent
-environment lanes. Actor samples flow into learner-owned replay; learner weight
-updates flow back through asynchronous policy refresh.
+This figure isolates the distributed learning loop. Each actor owns one local
+Q-network copy and controls multiple independent environment lanes. Actor
+samples flow into learner-owned replay; learner updates train one global DART
+Q-network, whose weights are periodically copied back to the actors.
 
 ![DART actor-side inference batching](docs/figures/inference_batching.png)
 
-Within an actor, nontrivial decisions are encoded as legal candidate-action
-rows, scored by the local Q-network in a batched forward pass, segmented back
-by lane, and resolved by per-lane argmax.
+This figure explains why actors run several lanes at once. Forced or
+epsilon-random decisions bypass the network; nontrivial decisions are encoded
+as legal candidate-action rows, scored by the local Q-network in a batched
+forward pass, segmented back by lane, and resolved by per-lane argmax.
 
 ![DART trick-relative Q-head routing](docs/figures/model_architecture.png)
 
-The shared trunk computes a state-action representation, then a deterministic
-router selects the output head for the actor's trick position: leading a new
+This figure shows the model's action-relative output layer. State and candidate
+action features enter the shared Q-network trunk; the trick-position id is used
+only by the deterministic router, which selects the Q-head for leading a new
 trick, first responder, across from leader, or last responder.
 
 ## Documentation Index

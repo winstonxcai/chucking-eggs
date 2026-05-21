@@ -5,7 +5,7 @@ description = "Guan Dan (掼蛋) game engine + Deep Monte Carlo RL agent"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
-    "torch>=2.0",
+    "torch>=2.12.0",
     "tqdm>=4.0",
     "pyyaml>=6.0",
     "matplotlib>=3.7",

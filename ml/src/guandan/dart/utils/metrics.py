@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping, Protocol
-
+from typing import Any, Protocol
 
 METRICS_SCHEMA_VERSION = 1
 

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from ..cards import ComboType, Rank
 from ._vendor.adapter import (
-    card_to_string,
     cards_to_strings,
     combo_to_action_dict,
     combo_to_action_list,
@@ -88,7 +87,7 @@ class NoAIBot(Agent):
 
     def _sync_state(self, env, player: int):
         """Replay new moves from env.move_history into strategy state."""
-        cur_rank_str = rank_to_string(self.level_rank)
+        rank_to_string(self.level_rank)
         history = env.move_history
 
         # Track who currently has the greatest play (trick winner)

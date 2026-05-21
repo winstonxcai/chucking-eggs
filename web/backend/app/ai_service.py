@@ -12,7 +12,6 @@ from guandan.cards import Rank
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
 
-
 _ELOS: dict[str, int] = json.loads(
     resources.files("guandan").joinpath("elos.json").read_text()
 )

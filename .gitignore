@@ -12,7 +12,7 @@ venv/
 env/
 
 # uv
-uv.lock
+# uv.lock is tracked for reproducible installs.
 
 # Model checkpoints
 *.pt
@@ -45,6 +45,8 @@ ml/LOGBOOK.md
 
 # Generated images
 *.png
+!docs/figures/
+!docs/figures/*.png
 
 # Data (generated training data, game logs)
 /data/
@@ -57,6 +59,9 @@ test-results/
 
 # Claude Code
 .claude/
+CLAUDE.md
+**/CLAUDE.md
+implementation-notes.html
 
 # Environment variables
 .env

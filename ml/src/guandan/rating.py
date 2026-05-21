@@ -9,7 +9,7 @@ No external dependencies — pure math with Python stdlib.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Glicko-2 constants
 TAU = 0.5  # system volatility constraint
@@ -106,7 +106,7 @@ def glicko2_update(
     # Step 3: Compute v (estimated variance)
     v_inv = 0.0
     delta_sum = 0.0
-    for opp, s in zip(opponents, outcomes):
+    for opp, s in zip(opponents, outcomes, strict=False):
         mu_j, phi_j = _to_glicko2(opp.rating, opp.rd)
         g_j = _g(phi_j)
         e_j = _E(mu, mu_j, phi_j)

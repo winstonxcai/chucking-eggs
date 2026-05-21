@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Optional
 
 from fastapi import Header, HTTPException
 
@@ -13,12 +12,12 @@ from . import db as _db
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_\-]{2,20}$")
 
 
-def get_player_id(x_player_id: Optional[str] = Header(default=None)) -> Optional[str]:
+def get_player_id(x_player_id: str | None = Header(default=None)) -> str | None:
     """FastAPI dependency: reads X-Player-ID header. Returns None if absent."""
     return x_player_id
 
 
-async def claim_username(username: str, email: Optional[str] = None, is_test: bool = False) -> dict:
+async def claim_username(username: str, email: str | None = None, is_test: bool = False) -> dict:
     """Claim a username and create an account. Raises 409 if taken.
 
     Returns: {"player_id": str, "username": str, "elo": int}

@@ -26,10 +26,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from ...constants import NUM_PLAYERS, OTHER_PLAYER_OFFSETS
 from ....cards import CARD_ID_DIM, ComboType
 from ....combos import Combo
 from ....game import GuanDanEnv
+from ...constants import NUM_PLAYERS, OTHER_PLAYER_OFFSETS
 from ..encoder import (
     BEHAVIOR_DIM,
     HISTORY_LEN,
@@ -38,7 +38,6 @@ from ..encoder import (
     _multi_hot,
     compute_state_behavior_flags,
 )
-
 
 ENCODE_CHANNEL_SHAPES: dict[str, tuple[int, ...]] = {
     "own_hand":                  (108,),

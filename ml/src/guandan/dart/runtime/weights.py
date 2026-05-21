@@ -13,11 +13,11 @@ from pathlib import Path
 
 import torch
 
-logger = logging.getLogger(__name__)
-
 from ..constants import NUM_PLAYERS
 from ..model.checkpoint import WeightSnapshot, unwrap_compiled
 from ..model.q_network import DartQNet
+
+logger = logging.getLogger(__name__)
 
 
 def publish_weights(q_nets: dict, weight_dir: Path, version: int, updates: int = 0) -> None:

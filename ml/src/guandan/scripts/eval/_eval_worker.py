@@ -155,7 +155,7 @@ def play_n_games_dart_lanes(
                     device,
                     role_encoded=isinstance(net, DartQNet),
                 )
-                for pending_idx, (choice_idx, _q_gap) in zip(indices, choices):
+                for pending_idx, (choice_idx, _q_gap) in zip(indices, choices, strict=False):
                     choices_by_idx[pending_idx] = choice_idx
 
             for pending_idx, item in enumerate(pending):

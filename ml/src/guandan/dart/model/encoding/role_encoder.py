@@ -20,10 +20,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from ...constants import NUM_PLAYERS, PARTNER_OFFSET
 from ....cards import ComboType
 from ....combos import Combo
 from ....game import GuanDanEnv
+from ...constants import NUM_PLAYERS, PARTNER_OFFSET
 from ..encoder import (
     BEHAVIOR_DIM,
     CARD_ID_DIM,

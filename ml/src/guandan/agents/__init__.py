@@ -29,7 +29,6 @@ from .wjsd_bot import WjsdBot
 from .xingdream_bot import XingDreamBot
 from .yaoji_bot import YaojiBot
 
-
 __all__ = [
     "Agent",
     "AGENT_META",
@@ -87,7 +86,9 @@ def make_agent(
     if name == "dart":
         if checkpoint is None:
             raise ValueError("make_agent('dart') requires a checkpoint= path")
-        from guandan.dart.agent import DartBot  # lazy: avoids torch import for rule-based runs
+        from guandan.dart.agent import (
+            DartBot,  # lazy: avoids torch import for rule-based runs
+        )
         return DartBot.load(checkpoint)
     if name == "llm":
         from .llm_bot import LLMBot  # lazy: avoids litellm import for rule-based runs

@@ -7,7 +7,7 @@ from typing import Any
 
 REDIS_URL = os.getenv("REDIS_URL", "")
 
-_client: "RedisLike | None" = None
+_client: RedisLike | None = None
 
 
 class InMemoryRedis:
@@ -36,7 +36,8 @@ class InMemoryRedis:
         return 1 if key in self._data else 0
 
     async def keys(self, pattern: str = "*") -> list[str]:
-        import fnmatch, time
+        import fnmatch
+        import time
         now = time.time()
         # Clean expired first
         expired = [k for k, exp in self._expiry.items() if now > exp]

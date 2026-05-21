@@ -45,11 +45,11 @@ from ..model.encoding.role_encoder import (
     ROLE_ENCODE_CHANNEL_SHAPES,
     ROLE_ENCODE_STATE_KEYS,
 )
+from .returns import TrainSample
 
 # Integer-scalar fields stored as int8. All other fields are uint8 multi-hot /
 # one-hot encodings.
 _INT_FIELDS: frozenset[str] = frozenset({"trick_head_id"})
-from .returns import TrainSample
 
 BUCKET_NAMES = ["general_self_play", "hard_bot_general", "coordination_endgame"]
 BUCKET_IDS: dict[str, int] = {name: i for i, name in enumerate(BUCKET_NAMES)}

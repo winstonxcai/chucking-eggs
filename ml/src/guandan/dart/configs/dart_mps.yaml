@@ -17,7 +17,6 @@ publish_interval_updates: 200
 checkpoint_every_updates: 2500
 checkpoint_save_type: weight
 log_every_updates: 10
-updates_per_learner_step: 1
 
 eval:
   enabled: false
@@ -54,7 +53,7 @@ epsilon_decay_updates: 20000
 is_partner_visible: true
 
 opponents:
-  latest_team_odd_probability: 0.5
+  latest_learner_team_odd_probability: 0.5
   episode_mix:
     self_play: 1.0
     frozen_pool: 0.0
@@ -69,7 +68,9 @@ opponents:
       type: uniform
       weights: {}
 
-max_forced_k1_replay_frac: 0.05
+max_forced_pass_replay_frac: 0.05
+coordination_bucket_card_threshold: 5
+coordination_bucket_final_fraction: 0.6666666667
 
 device: mps
 use_bf16_learner: false

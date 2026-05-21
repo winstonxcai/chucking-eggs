@@ -16,6 +16,7 @@ import math
 
 import numpy as np
 
+from ...agents import AGENT_REGISTRY  # no circular import: agents never imports dart
 from ...cards import ComboType
 from ...game import GuanDanEnv
 
@@ -67,8 +68,6 @@ EPISODE_MODE_NAMES = {
 # Bot IDs 1..13 are owned by agent classes (Agent.sample_tag); adding a new
 # bot to AGENT_REGISTRY with a non-zero sample_tag automatically registers it.
 # Checkpoint pool entries start at OPPONENT_CHECKPOINT_BASE (must exceed max bot ID).
-
-from ...agents import AGENT_REGISTRY  # no circular import: agents never imports dart
 
 OPPONENT_NONE            = 0   # pure self-play (no named bot opponent)
 OPPONENT_CHECKPOINT_BASE = 20  # checkpoint pool: BASE + pool_idx (0..63)
@@ -160,10 +159,13 @@ for ct in ComboType:
 
 def k_bucket(k: int) -> int:
     """Bucket number of legal actions into 4 tiers."""
-    if k == 1:    return 0   # K=1 (forced)
-    if k <= 5:    return 1   # narrow choice
-    if k <= 20:   return 2   # moderate
-    return 3                 # wide branching
+    if k == 1:
+        return 0   # K=1 (forced)
+    if k <= 5:
+        return 1   # narrow choice
+    if k <= 20:
+        return 2   # moderate
+    return 3       # wide branching
 
 K_BUCKET_NAMES = {0: "k=1", 1: "k=2-5", 2: "k=6-20", 3: "k>20"}
 
@@ -173,10 +175,13 @@ def q_gap_bucket(q_gap: float) -> int:
 
     NaN bucket includes K=1 and epsilon-random paths where q_gap is undefined.
     """
-    if math.isnan(q_gap):    return 0  # undefined
-    if q_gap < 0.05:         return 1  # pivotal (model uncertain)
-    if q_gap < 0.20:         return 2  # moderate
-    return 3                            # confident
+    if math.isnan(q_gap):
+        return 0  # undefined
+    if q_gap < 0.05:
+        return 1  # pivotal (model uncertain)
+    if q_gap < 0.20:
+        return 2  # moderate
+    return 3      # confident
 
 Q_GAP_BUCKET_NAMES = {0: "nan", 1: "pivotal", 2: "moderate", 3: "confident"}
 
@@ -186,10 +191,13 @@ def reward_bucket(raw_reward: float) -> int:
 
     Engine reward is in {-3,-2,-1,+1,+2,+3} (team-signed finish quality).
     """
-    if raw_reward <= -2:  return 0   # big loss (double-down)
-    if raw_reward <  0:   return 1   # small loss
-    if raw_reward <= 1:   return 2   # small win
-    return 3                          # big win (sweep)
+    if raw_reward <= -2:
+        return 0   # big loss (double-down)
+    if raw_reward < 0:
+        return 1   # small loss
+    if raw_reward <= 1:
+        return 2   # small win
+    return 3       # big win (sweep)
 
 REWARD_BUCKET_NAMES = {
     0: "big_loss", 1: "small_loss", 2: "small_win", 3: "big_win",

@@ -11,9 +11,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-from typing import Mapping
-
-logger = logging.getLogger(__name__)
+from collections.abc import Mapping
 
 import torch
 import torch.nn.functional as F
@@ -22,6 +20,8 @@ from ...constants import NUM_PLAYERS
 from ...data.buffer import ReplayBuffer
 from ...model.q_network import GuanZeroQNet
 from ...utils.profiler import PhaseProfiler
+
+logger = logging.getLogger(__name__)
 
 
 class SeatLearner:

@@ -25,3 +25,12 @@ def test_epsilon_linear_zero_decay_is_constant_for_fixed_epsilon():
     cfg = EpsilonConfig(start=0.02, final=0.02, decay_updates=0)
     for u in (0, 1, 100, 5_000, 100_000, 10_000_000):
         assert epsilon_linear(u, cfg) == 0.02
+
+
+def test_epsilon_config_rejects_invalid_ranges():
+    with pytest.raises(ValueError, match="epsilon.start"):
+        EpsilonConfig(start=1.1, final=0.1)
+    with pytest.raises(ValueError, match="epsilon.start must be >= epsilon.final"):
+        EpsilonConfig(start=0.1, final=0.2)
+    with pytest.raises(ValueError, match="epsilon.decay_updates"):
+        EpsilonConfig(decay_updates=-1)

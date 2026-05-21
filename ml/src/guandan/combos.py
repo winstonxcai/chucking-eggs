@@ -7,15 +7,18 @@ provided by ``guandan_rs``. That package uses the optional native
 
 from __future__ import annotations
 
+from guandan_rs import (
+    generate_all_leads as _rs_leads,
+)
+from guandan_rs import (
+    generate_responses as _rs_responses,
+)
+
 from .cards import (
     BOMB_TYPES,
     Card,
     ComboType,
     level_order_key,
-)
-from guandan_rs import (
-    generate_all_leads as _rs_leads,
-    generate_responses as _rs_responses,
 )
 
 

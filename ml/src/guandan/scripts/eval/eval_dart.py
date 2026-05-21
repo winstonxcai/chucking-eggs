@@ -24,8 +24,8 @@ import math
 import multiprocessing as mp
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from tqdm import tqdm
@@ -172,7 +172,7 @@ def run_eval(
     tasks = [
         (opp, e, o, lanes)
         for opp in opponents
-        for e, o in zip(even_chunks, odd_chunks)
+        for e, o in zip(even_chunks, odd_chunks, strict=False)
     ]
 
     chunks_per_opp = len(even_chunks)
@@ -204,8 +204,10 @@ def run_eval(
             disable=_tqdm_disabled(),
         ):
             opp, we, ne, wo, no = f.result()
-            agg[opp]["we"] += we; agg[opp]["ne"] += ne
-            agg[opp]["wo"] += wo; agg[opp]["no"] += no
+            agg[opp]["we"] += we
+            agg[opp]["ne"] += ne
+            agg[opp]["wo"] += wo
+            agg[opp]["no"] += no
             agg[opp]["done"] += 1
             if agg[opp]["done"] == chunks_per_opp and on_opponent_done is not None:
                 on_opponent_done(opp, _result_from_agg(agg[opp]))
@@ -219,10 +221,12 @@ def run_eval(
 def _result_from_agg(a: dict) -> dict:
     out: dict = {}
     if a["ne"]:
-        wr = a["we"] / a["ne"]; se = math.sqrt(wr * (1 - wr) / a["ne"])
+        wr = a["we"] / a["ne"]
+        se = math.sqrt(wr * (1 - wr) / a["ne"])
         out["even"] = {"games": a["ne"], "wins": a["we"], "win_rate": wr, "se": se}
     if a["no"]:
-        wr = a["wo"] / a["no"]; se = math.sqrt(wr * (1 - wr) / a["no"])
+        wr = a["wo"] / a["no"]
+        se = math.sqrt(wr * (1 - wr) / a["no"])
         out["odd"] = {"games": a["no"], "wins": a["wo"], "win_rate": wr, "se": se}
     return out
 

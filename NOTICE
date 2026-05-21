@@ -1,0 +1,22 @@
+DART / chucking-eggs includes adapted rule-based Guan Dan bots for research
+benchmarking.
+
+Vendored competition submissions live under:
+
+- `ml/src/guandan/agents/_vendor/ez/`
+- `ml/src/guandan/agents/_vendor/hulalala/`
+- `ml/src/guandan/agents/_vendor/jidan/`
+- `ml/src/guandan/agents/_vendor/lalala/`
+- `ml/src/guandan/agents/_vendor/liuzha/`
+- `ml/src/guandan/agents/_vendor/noai/`
+- `ml/src/guandan/agents/_vendor/wjsd/`
+- `ml/src/guandan/agents/_vendor/yaoji/`
+
+These bots originate from the NJUPT 2020 Guan Dan AI Competition submissions
+and preserve original author/team attribution in their package files where it
+was available. The original submissions did not include explicit open-source
+license files in this repository snapshot. They are included in good faith as
+attributed research artifacts for evaluation reproducibility.
+
+If you are an original author or rights holder and want a different attribution,
+license note, or removal, please open an issue or contact the maintainer.

@@ -6,7 +6,6 @@ import dataclasses
 import random
 from pathlib import Path
 
-from .rollout import SeatPolicies, SeatPolicy, all_latest_seats
 from ...config import MODEL_TYPE_DART, EpisodeMixConfig
 from ...data.returns import EpisodeTags
 from ...data.sample_tags import (
@@ -17,6 +16,7 @@ from ...data.sample_tags import (
     OPPONENT_CHECKPOINT_BASE,
     OPPONENT_NONE,
 )
+from .rollout import SeatPolicies, SeatPolicy, all_latest_seats
 
 
 @dataclasses.dataclass
@@ -32,7 +32,7 @@ class OpponentPools:
     pair_names: tuple[str, ...]
     pair_weights: tuple[float, ...]
     episode_mix: EpisodeMixConfig
-    latest_team_odd_probability: float
+    latest_learner_team_odd_probability: float
     mode_counts: dict[str, int]
     team_counts: dict[str, int]
     frozen_pick_counts: list[int]
@@ -40,7 +40,7 @@ class OpponentPools:
     pair_pick_counts: dict[str, int]
 
     @classmethod
-    def from_config(cls, cfg, logger) -> "OpponentPools":
+    def from_config(cls, cfg, logger) -> OpponentPools:
         opponents = cfg.opponents
         dart_path = cfg.model_type == MODEL_TYPE_DART
 
@@ -93,7 +93,9 @@ class OpponentPools:
             pair_names=pair_names,
             pair_weights=pair_weights,
             episode_mix=opponents.episode_mix,
-            latest_team_odd_probability=opponents.latest_team_odd_probability,
+            latest_learner_team_odd_probability=(
+                opponents.latest_learner_team_odd_probability
+            ),
             mode_counts={"self_play": 0, "vs_frozen": 0, "vs_hard_bot": 0},
             team_counts={"latest_even": 0, "latest_odd": 0},
             frozen_pick_counts=[0] * len(frozen_nets),
@@ -129,7 +131,7 @@ class OpponentPools:
         pick = rng.randrange(len(self.frozen_nets))
         frozen_net = self.frozen_nets[pick]
         self.frozen_pick_counts[pick] += 1
-        if rng.random() < self.latest_team_odd_probability:
+        if rng.random() < self.latest_learner_team_odd_probability:
             frozen_seats = (0, 2)
             latest_team = 1
             self.team_counts["latest_odd"] += 1
@@ -159,7 +161,7 @@ class OpponentPools:
         if not self.hard_bots_pool:
             return self._self_play(eps)
 
-        if rng.random() < self.latest_team_odd_probability:
+        if rng.random() < self.latest_learner_team_odd_probability:
             seat_a, seat_b = 0, 2
             latest_team = 1
             self.team_counts["latest_odd"] += 1
@@ -210,7 +212,7 @@ class OpponentPools:
         if self.frozen_nets:
             pool_str = ", ".join(
                 f"{Path(p).stem}={c}"
-                for p, c in zip(self.frozen_checkpoint_paths, self.frozen_pick_counts)
+                for p, c in zip(self.frozen_checkpoint_paths, self.frozen_pick_counts, strict=False)
             )
             logger.info("frozen picks: %s", pool_str)
             logger.info("team assignment: %s", self.team_counts)
@@ -221,7 +223,7 @@ class OpponentPools:
             else:
                 pool_str = ", ".join(
                     f"{n}={c}"
-                    for (n, _), c in zip(self.hard_bots_pool, self.hard_bot_pick_counts)
+                    for (n, _), c in zip(self.hard_bots_pool, self.hard_bot_pick_counts, strict=False)
                 )
                 logger.info("hard-bot picks: %s", pool_str)
             logger.info("team assignment: %s", self.team_counts)

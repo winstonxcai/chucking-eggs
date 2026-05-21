@@ -8,7 +8,6 @@ from typing import Any
 import numpy as np
 import torch
 
-
 _NP_SEED_MOD = 2**32
 
 

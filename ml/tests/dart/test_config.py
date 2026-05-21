@@ -72,6 +72,25 @@ def test_unknown_flat_config_key_fails_fast():
         TrainConfig.from_flat_dict({"batch_szie": 128})
 
 
+def test_legacy_config_aliases_and_removed_keys_are_migrated():
+    cfg = TrainConfig.from_flat_dict({
+        "max_forced_k1_replay_frac": 0.25,
+        "updates_per_learner_step": 99,
+    })
+    assert cfg.max_forced_pass_replay_frac == 0.25
+
+    with pytest.raises(ValueError, match="Both 'max_forced_k1_replay_frac'"):
+        TrainConfig.from_flat_dict({
+            "max_forced_k1_replay_frac": 0.25,
+            "max_forced_pass_replay_frac": 0.5,
+        })
+
+
+def test_config_schema_version_rejects_unknown_future_schema():
+    with pytest.raises(ValueError, match="Unsupported config_schema_version"):
+        TrainConfig(config_schema_version=999)
+
+
 def test_unknown_nested_config_key_fails_fast():
     with pytest.raises(ValueError, match="qnet has unknown key"):
         TrainConfig.from_flat_dict({"qnet": {"hidden_lstm": 16, "hidden_lstn": 32}})
@@ -143,7 +162,7 @@ def test_buffer_capacity_default_for_dart_mode():
 def test_nested_opponent_config_parses_and_normalizes_weights():
     cfg = TrainConfig.from_flat_dict({
         "opponents": {
-            "latest_team_odd_probability": 0.25,
+            "latest_learner_team_odd_probability": 0.25,
             "episode_mix": {"self_play": 0.4, "frozen_pool": 0.2, "hard_bot": 0.3},
             "frozen_pool": {"checkpoints": ["a.pt"], "epsilon": 0.05},
             "hard_bot": {
@@ -156,13 +175,30 @@ def test_nested_opponent_config_parses_and_normalizes_weights():
         },
     })
 
-    assert cfg.opponents.latest_team_odd_probability == 0.25
+    assert cfg.opponents.latest_learner_team_odd_probability == 0.25
     assert cfg.opponents.episode_mix.self_play == 0.4
     assert cfg.opponents.frozen_pool.checkpoints == ("a.pt",)
     weights = cfg.opponents.hard_bot.sampling.weights
     assert sum(weights.values()) == 1.0
     assert weights["yaoji_yaoji"] == 0.5
     assert weights["jidan_yaoji"] == 0.5
+
+
+def test_legacy_opponent_probability_alias_is_migrated():
+    cfg = TrainConfig.from_flat_dict({
+        "opponents": {
+            "latest_team_odd_probability": 0.75,
+        },
+    })
+    assert cfg.opponents.latest_learner_team_odd_probability == 0.75
+
+    with pytest.raises(ValueError, match="Both opponents.'latest_team_odd_probability'"):
+        TrainConfig.from_flat_dict({
+            "opponents": {
+                "latest_team_odd_probability": 0.25,
+                "latest_learner_team_odd_probability": 0.75,
+            },
+        })
 
 
 def test_removed_flat_opponent_keys_fail_fast():
@@ -180,6 +216,13 @@ def test_episode_mix_rejects_total_over_one():
         TrainConfig(opponents=OpponentConfig(
             episode_mix=EpisodeMixConfig(self_play=0.7, frozen_pool=0.3, hard_bot=0.1)
         ))
+
+
+def test_coordination_bucket_config_validates_ranges():
+    with pytest.raises(ValueError, match="coordination_bucket_card_threshold"):
+        TrainConfig(coordination_bucket_card_threshold=-1)
+    with pytest.raises(ValueError, match="coordination_bucket_final_fraction"):
+        TrainConfig(coordination_bucket_final_fraction=1.5)
 
 
 def test_hard_bot_weighted_sampling_rejects_unknown_bot():

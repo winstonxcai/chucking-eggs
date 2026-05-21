@@ -14,21 +14,21 @@ from pathlib import Path
 
 import torch
 
-from .constants import NUM_PLAYERS
 from ..agents.base import Agent
 from ..combos import Combo
 from ..game import GuanDanEnv
-from .data.buffer import collate_base_encoded, collate_role_encoded
 from .config import (
+    _REMOVED_OPPONENT_KEYS,
     MODEL_TYPE_DART,
     TrainConfig,
-    _REMOVED_OPPONENT_KEYS,
     dart_qnet_config,
 )
+from .constants import NUM_PLAYERS
+from .data.buffer import collate_base_encoded, collate_role_encoded
 from .model.encoding.base_encoder import StateActionEncoder
 from .model.encoding.role_encoder import RoleAwareStateActionEncoder
-from .utils.legal_utils import select_legal
 from .model.q_network import DartQNet, init_guanzero_nets
+from .utils.legal_utils import select_legal
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class DartBot(Agent):
         self.encoder = encoder
 
     @classmethod
-    def load(cls, path: str | Path, device: str | torch.device = "cpu") -> "DartBot":
+    def load(cls, path: str | Path, device: str | torch.device = "cpu") -> DartBot:
         ckpt = torch.load(path, map_location=device, weights_only=False)
         cfg_dict = dict(ckpt["config"])
         # Backward compatibility for historical research checkpoints. Runtime

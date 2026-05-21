@@ -17,7 +17,6 @@ publish_interval_updates: 200   # Publish often enough for actors to track train
 checkpoint_every_updates: 25000 # Roughly every few hours on L4; keeps resume/eval artifacts manageable.
 checkpoint_save_type: weight    # Periodic checkpoints are light; clean final checkpoint is full resume state.
 log_every_updates: 10           # High-frequency metrics for diagnosing actor/learner throughput on Modal.
-updates_per_learner_step: 1     # Kept for config compatibility; this learner performs one update per loop.
 
 eval:
   enabled: true                 # Run checkpoint evals during long Modal training.
@@ -55,7 +54,7 @@ epsilon_decay_updates: 20000    # Kept for config parity; start == final makes d
 is_partner_visible: true        # Matches the published partner-visible DART setting.
 
 opponents:
-  latest_team_odd_probability: 0.5 # When mixing opponents, randomize which partnership uses latest.
+  latest_learner_team_odd_probability: 0.5 # When mixing opponents, randomize which partnership uses latest.
   episode_mix:
     self_play: 1.0              # Production result is pure latest-vs-latest self-play.
     frozen_pool: 0.0            # Disabled unless checkpoint population is explicitly supplied.
@@ -70,7 +69,9 @@ opponents:
       type: uniform             # Uniform sampler is the empty/default hard-bot mode.
       weights: {}               # Required shape for weighted modes; empty for uniform.
 
-max_forced_k1_replay_frac: 0.0  # Exclude forced one-legal-action samples from replay.
+max_forced_pass_replay_frac: 0.0  # Exclude forced one-legal-action samples from replay.
+coordination_bucket_card_threshold: 5
+coordination_bucket_final_fraction: 0.6666666667
 
 device: cuda                    # Modal L4 learner runs on CUDA.
 use_bf16_learner: true          # BF16 autocast improves L4 throughput with this batch size.

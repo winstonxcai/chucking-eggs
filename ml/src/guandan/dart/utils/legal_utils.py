@@ -13,7 +13,8 @@ native extension when available and falls back to Python otherwise.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import guandan_rs
 
@@ -48,7 +49,7 @@ def dedup_strategic(legal: Iterable[Combo]) -> list[Combo]:
     return [_rs_tuple_to_combo(t) for t in guandan_rs.dedup_strategic(tuples)]
 
 
-def select_legal(env: "GuanDanEnv", player: int) -> list[Combo]:
+def select_legal(env: GuanDanEnv, player: int) -> list[Combo]:
     """Return the deduplicated legal moves for ``player``.
 
     Appends an explicit PASS move if the player must respond but PASS is

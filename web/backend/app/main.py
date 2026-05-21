@@ -7,23 +7,29 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
-
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from . import db
 from .ai_service import AGENT_INFO, AIService
-from .game_manager import GameManager, LOBBY_TIMEOUT
+from .elo import BOT_LEADERBOARD_ENTRIES
+from .game_manager import LOBBY_TIMEOUT, GameManager
 from .game_room import HUMAN_TURN_TIMEOUT_S
 from .redis_client import close_redis
-from . import db
-from .elo import BOT_LEADERBOARD_ENTRIES
 
 ai_service: AIService | None = None
 game_manager: GameManager | None = None
@@ -114,7 +120,7 @@ class RoomStatusResponse(BaseModel):
 
 class ClaimUsernameRequest(BaseModel):
     username: str
-    email: Optional[str] = None
+    email: str | None = None
     is_test: bool = False
 
 
@@ -267,7 +273,7 @@ async def create_room(req: CreateRoomRequest, x_player_id: str | None = Header(N
     try:
         room = await game_manager.create_room(req.mode, req.difficulty, seed=req.seed, creator_player_id=x_player_id)
     except ValueError:
-        raise HTTPException(status_code=409, detail="already_in_game")
+        raise HTTPException(status_code=409, detail="already_in_game") from None
     seat = 0  # creator always gets seat 0
     return CreateRoomResponse(
         game_id=room.game_id,
@@ -297,7 +303,7 @@ async def join_room(room_code: str, x_player_id: str | None = Header(None)):
     try:
         result = await game_manager.join_room(room_code, joiner_player_id=x_player_id)
     except ValueError:
-        raise HTTPException(status_code=409, detail="already_in_game")
+        raise HTTPException(status_code=409, detail="already_in_game") from None
     if result is None:
         raise HTTPException(status_code=404, detail="Room not found or already full")
     room, seat = result

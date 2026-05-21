@@ -8,8 +8,8 @@ runtime modules.
 from .legal_utils import dedup_strategic, select_legal
 from .logging_setup import TqdmLoggingHandler, setup_run_logging
 from .metrics import (
-    JsonlBackend,
     METRICS_SCHEMA_VERSION,
+    JsonlBackend,
     MetricsBackend,
     MetricsWriter,
     jsonl_writer,

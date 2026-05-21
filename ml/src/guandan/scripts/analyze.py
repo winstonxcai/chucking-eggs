@@ -32,7 +32,6 @@ from ..dart.runtime.learners.loss_bucket_schema import (
     LOSS_BUCKET_MARGINALS,
 )
 
-
 COLORS = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3"]
 HEAD_LABELS = ("leader", "first responder", "across", "last responder")
 SMOOTH_WINDOW = 5
@@ -720,7 +719,7 @@ def _barh_records(
     ax.set_xlabel(xlabel)
     ax.grid(True, alpha=0.3, axis="x")
     x_max = max(values) if values else 0.0
-    for yi, record, value in zip(y, records, values):
+    for yi, record, value in zip(y, records, values, strict=False):
         ax.text(
             value + x_max * 0.01 if x_max else value,
             yi,
@@ -841,7 +840,7 @@ def _barh_shift(
     ax.set_xlabel(xlabel)
     ax.grid(True, alpha=0.3, axis="x")
     span = max(abs(float(np.nanmin(values))), abs(float(np.nanmax(values))), 1e-9)
-    for yi, record, value in zip(y, records, values):
+    for yi, record, value in zip(y, records, values, strict=False):
         ax.text(
             value + np.sign(value or 1.0) * span * 0.02,
             yi,
@@ -1039,7 +1038,7 @@ def write_health_summary(run_dir: Path, out_path: Path) -> None:
         "## Recent Head Sample Counts",
         "",
     ]
-    for label, value in zip(HEAD_LABELS, mean_counts):
+    for label, value in zip(HEAD_LABELS, mean_counts, strict=False):
         lines.append(f"- {label}: {value:.1f} samples/batch")
     lines.extend(["", "## Warnings", ""])
     if warnings:

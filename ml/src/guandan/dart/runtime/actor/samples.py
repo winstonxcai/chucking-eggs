@@ -13,7 +13,6 @@ from ...data.sample_tags import EPISODE_MODE_VS_HARD_BOT
 from ...model.encoding.role_encoder import RoleAwareStateActionEncoder
 from .rollout import LaneConfig
 
-
 _COORD_TARGET_IDS: frozenset[int] = frozenset(
     cls.sample_tag for cls in AGENT_REGISTRY.values() if cls.coord_target
 )
@@ -45,12 +44,25 @@ class QueueBatchMeta:
     actor_rng_state: dict[str, Any] | None = None
 
 
+@dataclasses.dataclass(frozen=True)
+class SampleBucketPolicy:
+    coordination_card_threshold: int = 5
+    coordination_final_fraction: float = 2.0 / 3.0
+
+
 class ActorSampleAccumulator:
     """Accumulate TrainSamples and emit pre-stacked queue messages."""
 
-    def __init__(self, *, channel_keys: tuple[str, ...], include_players: bool) -> None:
+    def __init__(
+        self,
+        *,
+        channel_keys: tuple[str, ...],
+        include_players: bool,
+        bucket_policy: SampleBucketPolicy | None = None,
+    ) -> None:
         self._channel_keys = channel_keys
         self._include_players = include_players
+        self._bucket_policy = bucket_policy or SampleBucketPolicy()
         self._encoded: list[dict] = []
         self._players: list[int] = []
         self._returns: list[float] = []
@@ -88,7 +100,16 @@ class ActorSampleAccumulator:
             self._tags["opponent_id"].append(sample.opponent_id)
             self._tags["latest_team"].append(sample.latest_team)
             self._tags["terminal_reward"].append(sample.terminal_reward)
-            self._buckets.append(_sample_bucket(sample, i, total, is_hard_bot_ep, is_coord_episode))
+            self._buckets.append(
+                _sample_bucket(
+                    sample,
+                    i,
+                    total,
+                    is_hard_bot_ep,
+                    is_coord_episode,
+                    self._bucket_policy,
+                )
+            )
 
     def pop_message(self, batch_size: int, meta: QueueBatchMeta) -> dict | None:
         if len(self) < batch_size:
@@ -133,6 +154,7 @@ def _sample_bucket(
     total_samples: int,
     is_hard_bot_ep: bool,
     is_coord_episode: bool,
+    policy: SampleBucketPolicy,
 ) -> int:
     if not is_hard_bot_ep:
         return 0
@@ -143,14 +165,14 @@ def _sample_bucket(
         RoleAwareStateActionEncoder.decode_card_counts(sample.encoded)
     )
     min_opp_cards = min(next_opp_cards, prev_opp_cards)
-    is_final_third = sample_idx >= total_samples * 2 // 3
+    is_final_window = sample_idx >= total_samples * policy.coordination_final_fraction
     is_coord = (
-        self_cards <= 5
-        or partner_cards <= 5
-        or min_opp_cards <= 5
-        or is_final_third
+        self_cards <= policy.coordination_card_threshold
+        or partner_cards <= policy.coordination_card_threshold
+        or min_opp_cards <= policy.coordination_card_threshold
+        or is_final_window
     )
     return 2 if is_coord else 1
 
 
-__all__ = ["ActorSampleAccumulator", "QueueBatchMeta"]
+__all__ = ["ActorSampleAccumulator", "QueueBatchMeta", "SampleBucketPolicy"]

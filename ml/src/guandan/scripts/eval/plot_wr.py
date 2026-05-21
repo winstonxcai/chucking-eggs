@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 
 from guandan.agents import AGENT_REGISTRY
 
-
 DEFAULT_OPPONENTS = list(AGENT_REGISTRY)
 
 
@@ -93,12 +92,12 @@ def plot_wr(
     for opponent in opponents:
         valid = [
             (xk, data[x].get(opponent))
-            for x, xk in zip(xs, xs_k)
+            for x, xk in zip(xs, xs_k, strict=False)
             if data[x].get(opponent) is not None
         ]
         if not valid:
             continue
-        vx, vy = zip(*valid)
+        vx, vy = zip(*valid, strict=False)
         ax.plot(
             vx,
             vy,

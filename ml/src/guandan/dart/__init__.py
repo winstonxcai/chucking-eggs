@@ -5,12 +5,13 @@ Behavior Regulating* (arXiv:2402.13582). See ``config.TrainConfig`` for
 the hyperparameter surface and ``train.train`` for the entry point.
 """
 
-from .runtime.actor import (
-    LaneConfig,
-    SeatPolicy,
-    all_latest_seats,
-    play_episode,
-    play_episodes_batched,
+from .config import (
+    MODEL_TYPE_DART,
+    MODEL_TYPE_GUANZERO,
+    EpsilonConfig,
+    QNetConfig,
+    TrainConfig,
+    dart_qnet_config,
 )
 from .constants import NUM_PLAYERS, OTHER_PLAYER_OFFSETS, PARTNER_OFFSET
 from .data.buffer import (
@@ -20,14 +21,7 @@ from .data.buffer import (
     collate_grouped_encoded,
     collate_role_encoded,
 )
-from .config import (
-    MODEL_TYPE_DART,
-    MODEL_TYPE_GUANZERO,
-    dart_qnet_config,
-    EpsilonConfig,
-    QNetConfig,
-    TrainConfig,
-)
+from .data.returns import compute_mc_returns
 from .model.encoder import (
     CARD_ID_DIM,
     HISTORY_LEN,
@@ -52,7 +46,13 @@ from .model.encoding.role_encoder import (
     relative_role,
 )
 from .model.q_network import DartQNet, DartQNetConfig, GuanZeroQNet, init_guanzero_nets
-from .data.returns import compute_mc_returns
+from .runtime.actor import (
+    LaneConfig,
+    SeatPolicy,
+    all_latest_seats,
+    play_episode,
+    play_episodes_batched,
+)
 
 __all__ = [
     # config / production DART

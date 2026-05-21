@@ -20,11 +20,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-
 MODEL_TYPE_GUANZERO = "GuanZero"
 MODEL_TYPE_DART = "Dart"
 ModelType = Literal["GuanZero", "Dart"]
 CheckpointSaveType = Literal["weight", "full"]
+CONFIG_SCHEMA_VERSION = 1
 
 
 # ─── Sub-configs ─────────────────────────────────────────────
@@ -52,6 +52,21 @@ class EpsilonConfig:
     start: float = 0.1
     final: float = 0.01
     decay_updates: int = 5_000
+
+    def __post_init__(self) -> None:
+        for name in ("start", "final"):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"epsilon.{name} must be in [0, 1]; got {value}")
+        if self.start < self.final:
+            raise ValueError(
+                "epsilon.start must be >= epsilon.final for linear decay; "
+                f"got {self.start} < {self.final}"
+            )
+        if self.decay_updates < 0:
+            raise ValueError(
+                f"epsilon.decay_updates must be >= 0; got {self.decay_updates}"
+            )
 
 
 @dataclasses.dataclass
@@ -161,7 +176,7 @@ class HardBotConfig:
 
 @dataclasses.dataclass
 class OpponentConfig:
-    latest_team_odd_probability: float = 0.5
+    latest_learner_team_odd_probability: float = 0.5
     episode_mix: EpisodeMixConfig = dataclasses.field(default_factory=EpisodeMixConfig)
     frozen_pool: FrozenPoolConfig = dataclasses.field(default_factory=FrozenPoolConfig)
     hard_bot: HardBotConfig = dataclasses.field(default_factory=HardBotConfig)
@@ -173,10 +188,10 @@ class OpponentConfig:
             self.frozen_pool = FrozenPoolConfig(**self.frozen_pool)
         if isinstance(self.hard_bot, dict):
             self.hard_bot = HardBotConfig(**self.hard_bot)
-        if not 0.0 <= self.latest_team_odd_probability <= 1.0:
+        if not 0.0 <= self.latest_learner_team_odd_probability <= 1.0:
             raise ValueError(
-                "opponents.latest_team_odd_probability must be in [0, 1]; "
-                f"got {self.latest_team_odd_probability}"
+                "opponents.latest_learner_team_odd_probability must be in [0, 1]; "
+                f"got {self.latest_learner_team_odd_probability}"
             )
 
 
@@ -242,6 +257,18 @@ _REMOVED_OPPONENT_KEYS: frozenset[str] = frozenset({
     "epsilon_frozen",
 })
 
+_REMOVED_TOP_LEVEL_KEYS: frozenset[str] = frozenset({
+    "updates_per_learner_step",
+})
+
+_TOP_LEVEL_ALIASES: dict[str, str] = {
+    "max_forced_k1_replay_frac": "max_forced_pass_replay_frac",
+}
+
+_OPPONENT_ALIASES: dict[str, str] = {
+    "latest_team_odd_probability": "latest_learner_team_odd_probability",
+}
+
 
 def _reject_unknown_keys(section: str, raw: dict[str, Any], valid: set[str]) -> None:
     unknown = set(raw) - valid
@@ -262,13 +289,24 @@ def _opponent_config_from_raw(raw: Any) -> OpponentConfig:
         raw = dataclasses.asdict(raw)
     if not isinstance(raw, dict):
         raise TypeError(f"opponents must be a dict or OpponentConfig; got {type(raw).__name__}")
+    raw = dict(raw)
+    for old_key, new_key in _OPPONENT_ALIASES.items():
+        if old_key in raw:
+            if new_key in raw and raw[new_key] != raw[old_key]:
+                raise ValueError(
+                    f"Both opponents.{old_key!r} and opponents.{new_key!r} "
+                    "were provided with different values"
+                )
+            raw[new_key] = raw.pop(old_key)
     _reject_unknown_keys(
         "opponents",
         raw,
-        {"latest_team_odd_probability", "episode_mix", "frozen_pool", "hard_bot"},
+        {"latest_learner_team_odd_probability", "episode_mix", "frozen_pool", "hard_bot"},
     )
     return OpponentConfig(
-        latest_team_odd_probability=raw.get("latest_team_odd_probability", 0.5),
+        latest_learner_team_odd_probability=raw.get(
+            "latest_learner_team_odd_probability", 0.5
+        ),
         episode_mix=raw.get("episode_mix", {}),
         frozen_pool=raw.get("frozen_pool", {}),
         hard_bot=raw.get("hard_bot", {}),
@@ -321,6 +359,7 @@ class TrainConfig:
     epsilon:   EpsilonConfig   = dataclasses.field(default_factory=EpsilonConfig)
     opponents: OpponentConfig = dataclasses.field(default_factory=OpponentConfig)
     eval:      EvalConfig      = dataclasses.field(default_factory=EvalConfig)
+    config_schema_version: int = CONFIG_SCHEMA_VERSION
 
     # ── Core hypers ─────────────────────────────────────────
     model_type: ModelType = MODEL_TYPE_DART
@@ -361,7 +400,6 @@ class TrainConfig:
     checkpoint_save_type: CheckpointSaveType = "full"
     total_updates_target: int = 0   # 0 = run until stopped; >0 = stop after this many
     log_every_updates: int = 200
-    updates_per_learner_step: int = 1
 
     # ── CUDA throughput knobs ────────────────────────────────
     use_bf16_learner: bool = False   # BF16 autocast in Learner.update (cuda only)
@@ -380,12 +418,22 @@ class TrainConfig:
     # Empty dict → uniform balanced sampling. Non-empty values are consumed by
     # DartLearner via RoleAwareReplayBuffer.sample_batch_stratified().
     replay_mix: dict[str, float] = dataclasses.field(default_factory=dict)
-    # Cap K=1 (forced-move) samples at this fraction of each batch. 1.0 = no
+    # Cap forced-pass samples at this fraction of each batch. 1.0 = no
     # cap (sample uniformly across all samples in the buffer). E.g. 0.05 means
-    # 5% of every batch is K=1, 95% is K>1 (real decisions).
-    max_forced_k1_replay_frac: float = 1.0
+    # 5% of every batch is forced pass, 95% is K>1 (real decisions).
+    max_forced_pass_replay_frac: float = 1.0
+    # Actor-side coordination bucket boundaries for hard-bot episodes. Samples
+    # are marked coordination-endgame when either team is near finish or the
+    # episode has reached this trailing fraction.
+    coordination_bucket_card_threshold: int = 5
+    coordination_bucket_final_fraction: float = 2.0 / 3.0
 
     def __post_init__(self) -> None:
+        if self.config_schema_version != CONFIG_SCHEMA_VERSION:
+            raise ValueError(
+                "Unsupported config_schema_version "
+                f"{self.config_schema_version}; expected {CONFIG_SCHEMA_VERSION}"
+            )
         if self.model_type not in (MODEL_TYPE_GUANZERO, MODEL_TYPE_DART):
             raise ValueError(
                 f"Unknown model_type {self.model_type!r}; expected "
@@ -414,10 +462,20 @@ class TrainConfig:
                 raise ValueError(f"replay_mix weights must be positive; got {self.replay_mix}")
             total = sum(self.replay_mix.values())
             self.replay_mix = {k: v / total for k, v in self.replay_mix.items()}
-        if not 0.0 <= self.max_forced_k1_replay_frac <= 1.0:
+        if not 0.0 <= self.max_forced_pass_replay_frac <= 1.0:
             raise ValueError(
-                f"max_forced_k1_replay_frac must be in [0, 1]; "
-                f"got {self.max_forced_k1_replay_frac}"
+                f"max_forced_pass_replay_frac must be in [0, 1]; "
+                f"got {self.max_forced_pass_replay_frac}"
+            )
+        if self.coordination_bucket_card_threshold < 0:
+            raise ValueError(
+                "coordination_bucket_card_threshold must be >= 0; "
+                f"got {self.coordination_bucket_card_threshold}"
+            )
+        if not 0.0 <= self.coordination_bucket_final_fraction <= 1.0:
+            raise ValueError(
+                "coordination_bucket_final_fraction must be in [0, 1]; "
+                f"got {self.coordination_bucket_final_fraction}"
             )
 
     @property
@@ -428,7 +486,7 @@ class TrainConfig:
         return f"ml/runs/dart_{ts}"
 
     @classmethod
-    def from_flat_dict(cls, d: dict[str, Any]) -> "TrainConfig":
+    def from_flat_dict(cls, d: dict[str, Any]) -> TrainConfig:
         """Construct a ``TrainConfig`` from a flat or nested dict.
 
         Accepts:
@@ -441,6 +499,16 @@ class TrainConfig:
         checkpoint or YAML ``config`` dict is deserialised.
         """
         d = dict(d)
+        for old_key, new_key in _TOP_LEVEL_ALIASES.items():
+            if old_key in d:
+                if new_key in d and d[new_key] != d[old_key]:
+                    raise ValueError(
+                        f"Both {old_key!r} and {new_key!r} were provided with "
+                        "different values"
+                    )
+                d[new_key] = d.pop(old_key)
+        for removed_key in sorted(set(d) & _REMOVED_TOP_LEVEL_KEYS):
+            d.pop(removed_key)
         if "inference" in d and isinstance(d.get("qnet"), dict):
             # Older checkpoints carried inference-server settings that are not
             # part of the local batched actor config.
@@ -592,6 +660,7 @@ __all__ = [
     "EvalConfig",
     "MODEL_TYPE_GUANZERO",
     "MODEL_TYPE_DART",
+    "CONFIG_SCHEMA_VERSION",
     "ModelType",
     "dart_qnet_config",
     "load_config_from_yaml",

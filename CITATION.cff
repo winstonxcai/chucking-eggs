@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use DART or this Guan Dan engine, please cite this repository."
+title: "DART: A Deep Monte Carlo RL Agent for Guan Dan"
+authors:
+  - family-names: "Cai"
+    given-names: "Winston"
+year: 2026
+license: "MIT"
+repository-code: "https://github.com/PoohTheWinnie/chucking-eggs"

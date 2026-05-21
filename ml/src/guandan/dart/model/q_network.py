@@ -12,8 +12,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..constants import NUM_PLAYERS
 from ..config import QNetConfig
+from ..constants import NUM_PLAYERS
 from .encoder import CARD_ID_DIM, HISTORY_LEN
 from .encoding.base_encoder import static_dim
 

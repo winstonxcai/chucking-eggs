@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-
-from guandan.cards import BOMB_TYPES, Card, ComboType, Rank, Suit, is_wild, level_order_key
+from guandan.cards import (
+    BOMB_TYPES,
+    Card,
+    ComboType,
+    Rank,
+    Suit,
+    is_wild,
+    level_order_key,
+)
 from guandan.combos import Combo, generate_all_leads, generate_responses
 from guandan.game import GuanDanEnv
 
@@ -182,7 +189,7 @@ def serialize_game_state(
     hand_dtos = [card_to_dto(c) for c in sorted_hand]
 
     # Mark wild cards
-    for dto, card in zip(hand_dtos, sorted_hand):
+    for dto, card in zip(hand_dtos, sorted_hand, strict=False):
         dto["is_wild"] = is_wild(card, env.level_rank)
 
     # Player infos with card counts — seats rotated so viewer is always seat 0

@@ -19,12 +19,12 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
-
-import tqdm
 import multiprocessing
 import time
 from pathlib import Path
 from typing import Any
+
+import tqdm
 
 from guandan.agents import AGENT_REGISTRY, make_agent
 from guandan.cards import Rank
@@ -143,9 +143,12 @@ def parse_inject(inject_strs: list[str]) -> dict[str, dict[str, MatchupResult]]:
         wins, n = int(wins_s), int(n_s)
         losses = n - wins
 
-        for a, b, w, l in [(name, opp, wins, losses), (opp, name, losses, wins)]:
+        for a, b, w, loss_count in [
+            (name, opp, wins, losses),
+            (opp, name, losses, wins),
+        ]:
             injected.setdefault(a, {})[b] = {
-                "wins": w, "losses": l, "n_games": n,
+                "wins": w, "losses": loss_count, "n_games": n,
                 "winrate": w / n, "avg_reward": 0.0, "injected": True,
             }
     return injected

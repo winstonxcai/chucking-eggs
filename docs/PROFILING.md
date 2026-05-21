@@ -15,3 +15,17 @@ DART_ACTOR_PROFILE=1 DART_LEARNER_PROFILE=1 \
 
 Actor profile snapshots are written under the run directory as
 `actor_<id>_profile.txt`. Learner profile rows are logged in `learner.log`.
+
+For raw actor-throughput profiling without a learner or replay buffer:
+
+```bash
+uv run python ml/scripts/util/profile_actor_throughput.py \
+  --workers 8 --episodes 32 --lanes 64
+```
+
+To run the same benchmark on Modal-sized CPU/GPU containers:
+
+```bash
+modal run ml/scripts/modal/profile_actor_throughput_modal.py \
+  --workers 32 --episodes 64 --lanes 64
+```

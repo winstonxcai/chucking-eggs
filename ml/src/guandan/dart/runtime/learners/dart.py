@@ -15,6 +15,13 @@ from ...model.q_network import DartQNet
 from .loss_buckets import _emit_phase_aggregations
 
 
+def _sample_tag_counts(tags: dict, key: str) -> dict[int, int]:
+    if key not in tags:
+        return {}
+    values, counts = torch.unique(tags[key].detach().cpu(), return_counts=True)
+    return {int(v.item()): int(c.item()) for v, c in zip(values, counts, strict=False)}
+
+
 def _grad_norm_of(module: torch.nn.Module) -> torch.Tensor:
     total = torch.zeros((), device=next(module.parameters()).device)
     for p in module.parameters():
@@ -64,7 +71,7 @@ class DartLearner:
         buffer: RoleAwareReplayBuffer,
         batch_size: int,
         replay_mix: dict | None = None,
-        max_forced_k1_replay_frac: float = 1.0,
+        max_forced_pass_replay_frac: float = 1.0,
     ) -> dict | None:
         """One balanced gradient step, or None if any head bucket is cold."""
         sizes = buffer.size_by_seat()
@@ -72,9 +79,9 @@ class DartLearner:
         if min(sizes.values()) < min_per_seat:
             return None
 
-        if max_forced_k1_replay_frac < 1.0:
+        if max_forced_pass_replay_frac < 1.0:
             batch, targets, tags = buffer.sample_batch_balanced_k1_capped(
-                batch_size, max_forced_k1_replay_frac, self.device, return_tags=True,
+                batch_size, max_forced_pass_replay_frac, self.device, return_tags=True,
             )
         elif replay_mix:
             batch, targets, tags = buffer.sample_batch_stratified(
@@ -97,10 +104,35 @@ class DartLearner:
 
         if not torch.isfinite(targets).all():
             bad = int((~torch.isfinite(targets)).sum().item())
-            raise RuntimeError(f"DartLearner received {bad} non-finite targets")
+            finite = targets[torch.isfinite(targets)]
+            if finite.numel():
+                finite_range = (
+                    float(finite.min().item()),
+                    float(finite.max().item()),
+                )
+            else:
+                finite_range = None
+            raise RuntimeError(
+                f"DartLearner received {bad} non-finite targets; "
+                f"finite_target_range={finite_range}; "
+                f"episode_mode_counts={_sample_tag_counts(tags, 'episode_mode')}; "
+                f"phase_counts={_sample_tag_counts(tags, 'phase')}; "
+                f"num_legal_counts={_sample_tag_counts(tags, 'num_legal_actions')}"
+            )
         if not torch.isfinite(preds).all():
             bad = int((~torch.isfinite(preds)).sum().item())
-            raise RuntimeError(f"DartLearner produced {bad} non-finite predictions")
+            finite_targets = targets[torch.isfinite(targets)]
+            target_range = (
+                (float(finite_targets.min().item()), float(finite_targets.max().item()))
+                if finite_targets.numel()
+                else None
+            )
+            raise RuntimeError(
+                f"DartLearner produced {bad} non-finite predictions; "
+                f"target_range={target_range}; "
+                f"episode_mode_counts={_sample_tag_counts(tags, 'episode_mode')}; "
+                f"phase_counts={_sample_tag_counts(tags, 'phase')}"
+            )
         if not torch.isfinite(loss):
             raise RuntimeError(f"DartLearner produced non-finite loss: {float(loss.item())}")
 

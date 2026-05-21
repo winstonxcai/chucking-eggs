@@ -28,7 +28,7 @@ def _pools(
     self_play=0.0,
     frozen_pool=0.0,
     hard_bot=1.0,
-    latest_team_odd_probability=0.0,
+    latest_learner_team_odd_probability=0.0,
 ) -> OpponentPools:
     return OpponentPools(
         frozen_nets=tuple(frozen_nets),
@@ -44,7 +44,7 @@ def _pools(
             frozen_pool=frozen_pool,
             hard_bot=hard_bot,
         ),
-        latest_team_odd_probability=latest_team_odd_probability,
+        latest_learner_team_odd_probability=latest_learner_team_odd_probability,
         mode_counts={"self_play": 0, "vs_frozen": 0, "vs_hard_bot": 0},
         team_counts={"latest_even": 0, "latest_odd": 0},
         frozen_pick_counts=[0] * len(frozen_nets),
@@ -70,7 +70,7 @@ def test_frozen_pool_assigns_checkpoint_to_opposing_team():
         frozen_nets=(frozen,),
         frozen_pool=1.0,
         hard_bot=0.0,
-        latest_team_odd_probability=1.0,
+        latest_learner_team_odd_probability=1.0,
     )
 
     seats, tags = pools.sample_lane(random.Random(2), eps=0.1)
@@ -91,7 +91,7 @@ def test_frozen_pool_counts_multiple_checkpoints():
         frozen_nets=(object(), object()),
         frozen_pool=1.0,
         hard_bot=0.0,
-        latest_team_odd_probability=0.0,
+        latest_learner_team_odd_probability=0.0,
     )
     rng = random.Random(3)
 
@@ -109,7 +109,7 @@ def test_hard_bot_uniform_sampling_uses_empty_weights_as_uniform():
     pools = _pools(
         hard_bots_pool=(("strategic", bot_a), ("yaoji", bot_b)),
         hard_bot_weights=(),
-        latest_team_odd_probability=0.0,
+        latest_learner_team_odd_probability=0.0,
     )
 
     seats, tags = pools.sample_lane(random.Random(4), eps=0.1)
@@ -146,7 +146,7 @@ def test_hard_bot_pair_sampling_sets_pair_counter_and_yaoji_target():
         hard_bots_pool=(("strategic", bot_a), ("yaoji", bot_b)),
         pair_names=("strategic_yaoji",),
         pair_weights=(1.0,),
-        latest_team_odd_probability=1.0,
+        latest_learner_team_odd_probability=1.0,
     )
 
     seats, tags = pools.sample_lane(random.Random(6), eps=0.1)

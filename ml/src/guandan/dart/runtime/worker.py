@@ -12,10 +12,6 @@ from pathlib import Path
 
 import torch
 
-from .actor import LaneConfig, play_episodes_batched
-from .actor.opponents import OpponentPools
-from .actor.runtime import build_actor_runtime, jitter_sync_threshold, sync_actor_weights
-from .actor.samples import ActorSampleAccumulator, QueueBatchMeta
 from ..utils.logging_setup import setup_run_logging
 from ..utils.profiler import PhaseProfiler
 from ..utils.reproducibility import (
@@ -23,6 +19,14 @@ from ..utils.reproducibility import (
     restore_actor_rng_state,
     seed_everything,
 )
+from .actor import LaneConfig, play_episodes_batched
+from .actor.opponents import OpponentPools
+from .actor.runtime import (
+    build_actor_runtime,
+    jitter_sync_threshold,
+    sync_actor_weights,
+)
+from .actor.samples import ActorSampleAccumulator, QueueBatchMeta, SampleBucketPolicy
 
 
 def _build_lanes(
@@ -58,12 +62,13 @@ def _is_closed_queue_error(exc: BaseException) -> bool:
 def actor_loop(
     actor_id:     int,
     cfg_dict:     dict,
-    sample_queue: "mp.Queue[bytes]",
-    stop_event:   "mp.Event",
+    sample_queue: mp.Queue[bytes],
+    stop_event:   mp.Event,
     weight_dir:   Path,
     run_dir:      Path | None = None,
-    pause_event:  "mp.Event | None" = None,
+    pause_event:  mp.Event | None = None,
     resume_actor_rng_state: dict | None = None,
+    queue_full_counter: mp.Value | None = None,
 ) -> None:
     """Run self-play continuously and push stacked sample batches to the learner."""
     from ..config import TrainConfig
@@ -87,6 +92,10 @@ def actor_loop(
     accumulator = ActorSampleAccumulator(
         channel_keys=runtime.channel_keys,
         include_players=runtime.include_players,
+        bucket_policy=SampleBucketPolicy(
+            coordination_card_threshold=cfg.coordination_bucket_card_threshold,
+            coordination_final_fraction=cfg.coordination_bucket_final_fraction,
+        ),
     )
 
     weight_dir = Path(weight_dir)
@@ -132,6 +141,9 @@ def actor_loop(
                 except queue.Full as exc:
                     if stop_event.is_set():
                         return
+                    if queue_full_counter is not None:
+                        with queue_full_counter.get_lock():
+                            queue_full_counter.value += 1
                     logger.error(
                         "actor-%d: sample queue full after 5s; stopping to avoid "
                         "silent sample loss: %s",
@@ -196,12 +208,12 @@ def actor_loop(
             profiler=prof,
             rng=rng,
             stop_event=stop_event,
-            record_forced_k1_samples=cfg.max_forced_k1_replay_frac > 0.0,
+            record_forced_k1_samples=cfg.max_forced_pass_replay_frac > 0.0,
         )
         if stop_event.is_set():
             break
 
-        for lane, samples in zip(lanes, samples_per_lane):
+        for lane, samples in zip(lanes, samples_per_lane, strict=False):
             accumulator.append_lane(lane, samples)
         episode_count += len(lanes)
         _push_buffered()

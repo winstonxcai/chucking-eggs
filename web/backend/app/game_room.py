@@ -13,9 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import WebSocket
-
-DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
-
 from guandan.cards import ComboType, Rank
 from guandan.combos import Combo
 from guandan.game import GuanDanEnv
@@ -25,6 +22,8 @@ from .card_matcher import find_matching_combo
 from .serializer import card_to_dto, combo_to_dto, serialize_game_state, sort_hand
 
 logger = logging.getLogger(__name__)
+
+DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 
 ACTION_PAUSE = 0.3    # seconds each AI play is visible before next turn
 AI_THINK_PAUSE = 0.2  # seconds for "thinking" animation before AI move
@@ -375,7 +374,7 @@ class GameRoom:
         """
         try:
             from . import db as _db
-            from .elo import compute_elo_delta, BOT_ELOS
+            from .elo import BOT_ELOS, compute_elo_delta
 
             human_docs: dict[int, dict] = {}
             for seat in self.human_seats:
@@ -510,7 +509,7 @@ class GameRoom:
         elo_changes: dict[int, dict] = {}
         try:
             from . import db as _db
-            from .elo import compute_forfeit_elo, BOT_ELOS
+            from .elo import BOT_ELOS, compute_forfeit_elo
 
             pid = self.player_ids.get(forfeiter_seat)
             if pid:

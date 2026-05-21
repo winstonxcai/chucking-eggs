@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -59,14 +60,13 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from .worker import actor_loop
-from .learner import learner_loop
-from .weights import load_latest_weights
 from ..config import TrainConfig, load_config_from_cli
 from ..utils.logging_setup import setup_run_logging
 from ..utils.reproducibility import seed_everything
 from ..utils.run_layout import RunLayout
-
+from .learner import learner_loop
+from .weights import load_latest_weights
+from .worker import actor_loop
 
 # ─── Process-lifecycle constants ─────────────────────────────
 
@@ -146,6 +146,21 @@ def _resolve_eval_opponents(cfg: TrainConfig) -> list[str]:
             f"Valid: {DEFAULT_OPPONENTS}"
         )
     return requested
+
+
+def _run_identity(cfg: TrainConfig) -> tuple[str, str]:
+    cfg_json = json.dumps(dataclasses.asdict(cfg), sort_keys=True, separators=(",", ":"))
+    try:
+        git_sha = subprocess.check_output(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=Path(__file__).resolve().parents[5],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        git_sha = "unknown"
+    digest = hashlib.sha256(f"{git_sha}:{cfg.seed}:{cfg_json}".encode()).hexdigest()[:12]
+    return digest, git_sha
 
 
 def _run_checkpoint_eval(
@@ -232,6 +247,7 @@ def _spawn_learner(
     pause_event=None,
     eval_request_queue=None,
     eval_done_event=None,
+    queue_full_counter=None,
 ):
     proc = ctx.Process(
         target=learner_loop,
@@ -242,6 +258,7 @@ def _spawn_learner(
             "pause_event": pause_event,
             "eval_request_queue": eval_request_queue,
             "eval_done_event": eval_done_event,
+            "queue_full_counter": queue_full_counter,
         },
         daemon=True,
         name="learner",
@@ -260,6 +277,7 @@ def _spawn_actors(
     layout: RunLayout,
     pause_event=None,
     actor_rng_states: dict[int, dict] | None = None,
+    queue_full_counter=None,
 ) -> list:
     procs = []
     for actor_id in range(cfg.n_actors):
@@ -272,6 +290,7 @@ def _spawn_actors(
                 "resume_actor_rng_state": (
                     actor_rng_states.get(actor_id) if actor_rng_states else None
                 ),
+                "queue_full_counter": queue_full_counter,
             },
             daemon=True,
             name=f"actor-{actor_id}",
@@ -281,7 +300,10 @@ def _spawn_actors(
     return procs
 
 
-def _load_actor_rng_states(resume_checkpoint: Path | None) -> dict[int, dict] | None:
+def _load_actor_rng_states(
+    resume_checkpoint: Path | None,
+    logger: logging.Logger,
+) -> dict[int, dict] | None:
     if resume_checkpoint is None:
         return None
     import torch
@@ -289,6 +311,10 @@ def _load_actor_rng_states(resume_checkpoint: Path | None) -> dict[int, dict] | 
     ckpt = torch.load(resume_checkpoint, map_location="cpu", weights_only=False)
     raw = ckpt.get("actor_rng_states")
     if not raw:
+        logger.warning(
+            "resume checkpoint has no actor_rng_states; actor RNG streams will "
+            "restart from seed-derived states"
+        )
         return None
     return {int(actor_id): state for actor_id, state in raw.items()}
 
@@ -383,6 +409,8 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     layout.config_json.write_text(json.dumps(dataclasses.asdict(cfg), indent=2))
 
     logger, log_path = setup_run_logging(layout.run_dir, layout.train_log.name, stream_to_stdout=True)
+    run_id, git_sha = _run_identity(cfg)
+    logger.info("run_id=%s git_sha=%s seed=%d", run_id, git_sha, cfg.seed)
     logger.info("train: %d actors, target %d updates", cfg.n_actors, cfg.total_updates_target)
     if resume_checkpoint:
         logger.info("resuming from checkpoint: %s", resume_checkpoint)
@@ -393,10 +421,11 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     pause_event    = ctx.Event()
     weights_ready  = ctx.Event()
     update_counter = ctx.Value("q", 0)   # int64; learner advances per gradient step
+    queue_full_counter = ctx.Value("q", 0)
     eval_request_queue = ctx.Queue() if cfg.eval.enabled else None
     eval_done_event = ctx.Event() if cfg.eval.enabled else None
     cfg_dict       = dataclasses.asdict(cfg)
-    actor_rng_states = _load_actor_rng_states(resume_checkpoint)
+    actor_rng_states = _load_actor_rng_states(resume_checkpoint, logger)
 
     _install_signal_handlers(stop_event)
 
@@ -406,6 +435,7 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
         pause_event=pause_event,
         eval_request_queue=eval_request_queue,
         eval_done_event=eval_done_event,
+        queue_full_counter=queue_full_counter,
     )
     logger.info("Learner started (pid=%d)", learner_proc.pid)
     logger.info("Waiting for initial weights → %s", weight_dir)
@@ -421,6 +451,7 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
         ctx, cfg, cfg_dict, sample_queue, stop_event,
         weight_dir, layout, pause_event=pause_event,
         actor_rng_states=actor_rng_states,
+        queue_full_counter=queue_full_counter,
     )
 
     logger.info("Dart | %d actors + 1 learner", cfg.n_actors)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
@@ -56,7 +55,7 @@ async def is_username_taken(username: str) -> bool:
     return await get_db().players.find_one({"username": username}, {"_id": 1}) is not None
 
 
-async def get_or_create_player(player_id: str, username: str, email: Optional[str] = None, is_test: bool = False) -> dict:
+async def get_or_create_player(player_id: str, username: str, email: str | None = None, is_test: bool = False) -> dict:
     """Insert player if not exists. Returns the (possibly pre-existing) doc."""
     db = get_db()
     doc = {

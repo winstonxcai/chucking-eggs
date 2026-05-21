@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
+import random
 from collections.abc import Mapping
 from dataclasses import dataclass
-import random
 from typing import Literal
 
 import torch
 
-from ...constants import NUM_PLAYERS, PARTNER_OFFSET
+from ....agents.base import Agent
 from ....cards import ComboType
 from ....game import GuanDanEnv
+from ...config import MODEL_TYPE_DART, MODEL_TYPE_GUANZERO
+from ...constants import NUM_PLAYERS, PARTNER_OFFSET
 from ...data.buffer import collate_base_encoded, collate_role_encoded
 from ...data.returns import EpisodeTags, TrainSample, compute_mc_returns
 from ...data.sample_tags import phase_bucket, phase_with_out, trick_role
-from ...config import MODEL_TYPE_DART, MODEL_TYPE_GUANZERO
 from ...model.encoding.base_encoder import StateActionEncoder
 from ...model.encoding.role_encoder import RoleAwareStateActionEncoder
 from ...model.q_network import DartQNet, GuanZeroQNet
 from ...utils.legal_utils import select_legal
 from ...utils.profiler import PhaseProfiler, k_bucket_label
-
 
 QNetLike = GuanZeroQNet | DartQNet
 QNetBundle = Mapping[int, GuanZeroQNet] | DartQNet
@@ -35,7 +35,7 @@ class SeatPolicy:
     kind: SeatKind
     epsilon: float = 0.0
     frozen_net: DartQNet | None = None
-    hard_bot_agent: object | None = None
+    hard_bot_agent: Agent | None = None
 
     def __post_init__(self) -> None:
         if self.kind == "latest":
@@ -51,7 +51,7 @@ class SeatPolicy:
             raise ValueError(f"unknown SeatPolicy kind: {self.kind!r}")
 
     @classmethod
-    def latest(cls, epsilon: float) -> "SeatPolicy":
+    def latest(cls, epsilon: float) -> SeatPolicy:
         return cls("latest", epsilon=epsilon)
 
     @classmethod
@@ -59,11 +59,11 @@ class SeatPolicy:
         cls,
         net: DartQNet,
         epsilon: float,
-    ) -> "SeatPolicy":
+    ) -> SeatPolicy:
         return cls("frozen", epsilon=epsilon, frozen_net=net)
 
     @classmethod
-    def hard_bot(cls, agent: object) -> "SeatPolicy":
+    def hard_bot(cls, agent: Agent) -> SeatPolicy:
         return cls("hard_bot", hard_bot_agent=agent)
 
 
@@ -246,7 +246,7 @@ def play_episode(
     *,
     seats: SeatPolicies,
     seed: int,
-    tags: EpisodeTags = EpisodeTags(),
+    tags: EpisodeTags | None = None,
     device: torch.device | str = "cpu",
     gamma: float = 1.0,
     profiler: PhaseProfiler | None = None,
@@ -254,6 +254,7 @@ def play_episode(
     record_forced_k1_samples: bool = True,
 ) -> list[TrainSample]:
     """Roll one episode. Thin wrapper over ``play_episodes_batched``."""
+    tags = tags or EpisodeTags()
     return play_episodes_batched(
         q_nets=q_nets,
         encoder=encoder,
@@ -413,7 +414,7 @@ def play_episodes_batched(
                 profiler=prof,
                 bucket="batched",
             )
-            for pending_idx, choice in zip(indices, choices):
+            for pending_idx, choice in zip(indices, choices, strict=False):
                 choices_by_idx[pending_idx] = choice
 
         for i, item in enumerate(pending):
@@ -438,7 +439,7 @@ def play_episodes_batched(
                 active[lane_idx] = False
 
     out: list[list[TrainSample]] = []
-    for env, trajectory, lane in zip(envs, trajectories, lanes):
+    for env, trajectory, lane in zip(envs, trajectories, lanes, strict=False):
         rewards = env.get_rewards()
         with prof.time("mc_returns"):
             out.append(compute_mc_returns(

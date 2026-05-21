@@ -26,7 +26,6 @@ from ._vendor.adapter import (
 from ._vendor.lalala.action import Action
 from .base import Agent
 
-
 # Rank index for building remaincards structure (2-deck card count dict)
 _RANK_IDX = {
     "A": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "7": 6,

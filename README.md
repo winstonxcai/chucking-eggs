@@ -1,14 +1,37 @@
 # DART — Partner-Visible Guan Dan RL Agent
 
+[![CI](https://github.com/PoohTheWinnie/chucking-eggs/actions/workflows/ci.yml/badge.svg)](https://github.com/PoohTheWinnie/chucking-eggs/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **DART** (Dynamic Action-Relative Routing for Tricks) is a distributed partner-visible Deep Monte Carlo RL agent for **Guan Dan (掼蛋)**, a 4-player, 2v2 team trick-taking card game played with a 108-card double deck.
 
 Guan Dan is harder than it looks: **108 cards** (vs 52 for most card games), **wild cards that change every round** (the "level card" shifts which rank is wild each hand, making suit relationships non-stationary), and **2v2 team play** where the optimal move often means sacrificing your own position to set up your partner. Standard single-agent RL doesn't handle this cleanly. DART trains a shared Q-network across 32 parallel actors with trick-position-relative heads — routing each decision by the actor's role in the current trick (leading, 1st responder, across, last) rather than absolute seat.
 
 **Author**: Winston Cai · **License**: MIT
 
-**TL;DR:** Trained from scratch on a single L4 GPU in ~30 hours for ~$75 of cloud compute, DART is, to our knowledge, the first open partner-visible Guan Dan RL agent with published training and evaluation code. In this repo's 13-agent rule-bot benchmark, it achieves the top Glicko-2 rating — outperforming all 12 published rule-based bots, including the top three from the [NJUPT 2020 Guan Dan AI Competition](http://gameai.njupt.edu.cn/gameaicompetition/) (Jidan, Yaoji, Lalala).
+**TL;DR:** DART is, to our knowledge, the first open partner-visible Guan Dan RL agent with published training and evaluation code. In the current L4 run, the hard-4 benchmark against Yaoji, EZ, Jidan, and Strategic peaks at **69.32%** average win rate over 10,000 paired fixed-deck games per opponent, and finishes at **69.26%** at 1.35M updates. In the original 13-agent rule-bot benchmark, DART also achieves the top Glicko-2 rating — outperforming all 12 published rule-based bots, including the top three from the [NJUPT 2020 Guan Dan AI Competition](http://gameai.njupt.edu.cn/gameaicompetition/) (Jidan, Yaoji, Lalala).
 
 ## Results
+
+### Current hard-4 training run
+
+![DART hard-4 win rate trajectory](docs/figures/training_wr.png)
+
+The hard-4 slice is the strongest public rule-bot evaluation set used during
+long runs: Yaoji, EZ, Jidan, and Strategic. Integrated checkpoint evals use
+10,000 paired fixed-deck games per opponent.
+
+| Checkpoint | Yaoji | EZ | Jidan | Strategic | Hard-4 Avg |
+|------------|------:|---:|------:|----------:|-----------:|
+| 1.25M updates | 62.65% | 66.25% | 71.43% | 76.95% | **69.32%** |
+| 1.35M updates | 62.74% | 66.16% | 71.45% | 76.69% | 69.26% |
+
+### Original public benchmark
+
+The original public benchmark was a 200k-update L4 run. See the
+[model card](docs/MODEL_CARD.md) for the checkpoint release checklist and
+reproduction command.
 
 DART (DMC, 200k updates on L4 GPU) vs rule-based bots — 5000-game eval:
 
@@ -42,10 +65,16 @@ Glicko-2 ratings from a full 5000-game round-robin across all 13 agents (DART in
 
 Web app live at [chucking-eggs.vercel.app](https://chucking-eggs.vercel.app) — solo, duo, and quad multiplayer with Elo ratings and leaderboard. (Frontend: Vercel · Backend: Fly.io)
 
+Checkpoint release: pending `v0.1.0` artifact upload. The public model card is
+at [docs/MODEL_CARD.md](docs/MODEL_CARD.md); replace this note with the GitHub
+Release or Hugging Face URL before tagging the release.
+
+Blog post: coming with the `v0.1.0` release.
+
 ## Quick Start
 
 ```bash
-# Install (Python 3.10+, requires uv)
+# Install (Python 3.10+, requires uv: https://docs.astral.sh/uv/getting-started/installation/)
 git clone https://github.com/PoohTheWinnie/chucking-eggs && cd chucking-eggs
 uv sync --group dev
 
@@ -69,6 +98,9 @@ step to restore native acceleration.
 
 - [Development setup](docs/DEVELOPMENT.md)
 - [Configuration guide](docs/CONFIG.md)
+- [Model card](docs/MODEL_CARD.md)
+- [Research overview](docs/RESEARCH.md)
+- [Terminology](docs/TERMINOLOGY.md)
 - [Evaluation guide](docs/EVALUATION.md)
 - [Architecture map](docs/ARCHITECTURE.md)
 - [Debugging](docs/DEBUGGING.md)
@@ -125,6 +157,8 @@ phase (0→20k) is slower at ~1.4 upd/s.
 Recent Modal throughput smokes show why DART uses intra-actor lane batching.
 Numbers below are post-warmup means from 1000-update runs and report accepted
 fresh actor samples/sec in `metrics_learner.jsonl`:
+
+![DART environment-lane batching](docs/figures/environment_lanes.png)
 
 | GPU | GuanZero-style `32 x 1` | DART `32 x 128` | DART speedup |
 |---|---:|---:|---:|
@@ -210,35 +244,7 @@ Or add it to the training config under `opponents.hard_bot.bots` and give
 
 ## DART Architecture
 
-```mermaid
-flowchart LR
-    subgraph Actors["Actor Processes (×32 on L4)"]
-        A0["Actor 0\nself-play / vs hard bot"] 
-        A1["Actor 1"]
-        AN["Actor N"]
-    end
-
-    subgraph Encoding["Per-Move Encoding"]
-        ENC["RoleAwareEncoder\nown hand · partner hand\nopponent counts · history\n+ candidate action"]
-    end
-
-    subgraph Queue["Shared Sample Queue"]
-        Q["mp.Queue[bytes]\nserialized TrainSamples\n~512 samples/batch"]
-    end
-
-    subgraph Learner["Learner Process (GPU)"]
-        BUF["Replay Buffer\n400K samples"]
-        QNET["SharedHeadQNet\nLSTM + 4 trick-position heads\nBF16 on CUDA"]
-        OPT["Adam optimizer\nbatch 4096"]
-    end
-
-    subgraph WeightSync["Weight Sync"]
-        WD["weight_dir/\natomic os.replace\npublish every 200 updates"]
-    end
-
-    A0 & A1 & AN --> ENC --> Q --> BUF --> OPT --> QNET
-    QNET --> WD --> A0 & A1 & AN
-```
+![DART distributed training architecture](docs/figures/distributed_training.png)
 
 **DART** (**D**ynamic **A**ction-**R**elative routing for **T**ricks) — 4 shared Q-heads (one per trick position: leading / 1st-resp / across / last-resp). LSTM over move history, role-normalized state encoding, partner hand visible during training.
 
@@ -270,7 +276,19 @@ The broader lineage comes from **DQN** [4] (deep value-based RL) and **A3C** [5]
 
 ## Limitations
 
-DART's hardest matchup remains Yaoji: the win rate sits in the 49–53% band even at 200k updates and has never decisively crossed 55%, which we attribute to Yaoji's `Score = Gain*(1+Possibility)/Value` scoring function with explicit partner-position weighting being structurally different from the patterns self-play converges on. The reported model is **partner-visible** and should not be read as a strict hidden-information policy: the partner hand is exposed, and the current role-aware checkpoint also carries an `others_hand` opponent-hand channel. Treat the numbers as partner-visible/oracle-style benchmarking, not as human-deployable partial-observation performance. Training is **single-seed**: there are no error bars across runs, only across eval games (CI widths in the results table). Only the **L4 + M1 Pro** training paths are validated end-to-end. Evaluation is exclusively head-to-head against rule-based bots — no human evaluation, and no comparison against other learned agents because we are not aware of an openly released partner-visible Guan Dan agent to benchmark against. Finally, the LSTM history module is shallow (one layer) and the run is short by DMC standards (200k updates vs DouZero's >1M) — there is likely room left at the ceiling.
+DART's hardest matchup remains Yaoji: the latest 1.35M checkpoint reaches
+62.74% in the 10,000-game hard-4 eval, below the other hard opponents. The
+reported model is **partner-visible** and should not be read as a strict
+hidden-information policy: the partner hand is exposed, and the current
+role-aware checkpoint also carries an `others_hand` opponent-hand channel.
+Treat the numbers as partner-visible/oracle-style benchmarking, not as
+human-deployable partial-observation performance. Training is **single-seed**:
+there are no error bars across runs, only across eval games. Only the **L4 + M1
+Pro** training paths are validated end-to-end. Evaluation is exclusively
+head-to-head against rule-based bots — no human evaluation, and no comparison
+against other learned agents because we are not aware of an openly released
+partner-visible Guan Dan agent to benchmark against. Finally, the LSTM history
+module is shallow (one layer), so there is likely room left at the ceiling.
 
 ## Citations
 
@@ -302,3 +320,4 @@ The rule-based bot pool is the backbone of evaluation. All eight competition bot
 - **Vendored bots** (Jidan, Yaoji, Lalala, Liuzha, Hulalala, WJSD, EZ) live under `ml/src/guandan/agents/_vendor/<bot>/` with the original team attribution preserved in each `__init__.py`. Changes were limited to import-path fixes and a thin adapter (`_vendor/adapter.py`) so each entry conforms to the `Agent.act(env, player) -> Combo` interface.
 - **XingDream** (`xingdream_bot.py`) is a hand-written re-implementation of the strategy from the [xingdream/guandan](https://github.com/xingdream/guandan) repo, not a verbatim port.
 - **License note for vendored code:** the original competition submissions did not ship with an explicit open-source license. We include them in good faith as research artifacts under the academic norm of attributed use. If you are an original author and would prefer your code be removed or relicensed, please open an issue.
+- See [NOTICE](NOTICE) for the vendored-bot attribution and license-audit note.

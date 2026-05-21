@@ -24,8 +24,8 @@ Usage::
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 import torch
 

@@ -50,7 +50,6 @@ from .weights import (
     publish_weights_dart,
 )
 
-
 # ─── Shared result type ───────────────────────────────────────────────────────
 
 
@@ -253,6 +252,7 @@ class _SeatAdapter:
             "samples_per_sec":         round(upd_per_sec * cfg.batch_size, 1),
             "cum_upd_per_sec":         round(session_upd / elapsed if elapsed > 0 else 0.0, 3),
             "queue_depth":             timing["queue_depth"],
+            "queue_put_timeouts_total": timing["queue_put_timeouts_total"],
             "gpu_mem_gb":              timing["gpu_mem_gb"],
             "drained_since_last_log":  timing["drained_since_log"],
             "throttle_drained_since_last_log": timing["throttle_drained_since_log"],
@@ -365,7 +365,7 @@ class _DartAdapter:
             buffer=self._buffer,
             batch_size=cfg.batch_size,
             replay_mix=cfg.replay_mix or None,
-            max_forced_k1_replay_frac=cfg.max_forced_k1_replay_frac,
+            max_forced_pass_replay_frac=cfg.max_forced_pass_replay_frac,
         )
         if metrics is None:
             return None
@@ -431,6 +431,7 @@ class _DartAdapter:
             "upd_per_sec":             round(upd_per_sec, 3),
             "samples_per_sec":         round(upd_per_sec * self._cfg.batch_size, 1),
             "queue_depth":             timing["queue_depth"],
+            "queue_put_timeouts_total": timing["queue_put_timeouts_total"],
             "drained_since_last_log":  timing["drained_since_log"],
             "throttle_drained_since_last_log": timing["throttle_drained_since_log"],
             "cumulative_drained":      timing["cumulative_drained"],
@@ -481,7 +482,7 @@ def _make_adapter(cfg) -> LearnerProtocol:
 
 
 def _drain_sample_queue(
-    sample_queue: "mp.Queue[Any]",
+    sample_queue: mp.Queue[Any],
     adapter: LearnerProtocol,
     max_batches: int,
     actor_rng_states: dict[int, dict] | None = None,
@@ -515,16 +516,17 @@ def _drain_sample_queue(
 
 def learner_loop(
     cfg_dict:          dict,
-    sample_queue:      "mp.Queue[bytes]",
-    stop_event:        "mp.Event",
+    sample_queue:      mp.Queue[bytes],
+    stop_event:        mp.Event,
     weight_dir:        Path,
     run_dir:           Path,
-    update_counter:    "mp.Value | None" = None,
-    weights_ready:     "mp.Event | None" = None,
+    update_counter:    mp.Value | None = None,
+    weights_ready:     mp.Event | None = None,
     resume_checkpoint: Path | None = None,
-    pause_event:       "mp.Event | None" = None,
-    eval_request_queue: "mp.Queue | None" = None,
-    eval_done_event:   "mp.Event | None" = None,
+    pause_event:       mp.Event | None = None,
+    eval_request_queue: mp.Queue | None = None,
+    eval_done_event:   mp.Event | None = None,
+    queue_full_counter: mp.Value | None = None,
 ) -> None:
     """Central learner process for faithful persistent actor-learner DMC.
 
@@ -742,6 +744,11 @@ def learner_loop(
             }
             actor_lag_values = list(actor_update_lag.values())
             actor_version_lag_values = list(actor_version_lag.values())
+            queue_full_total = (
+                int(queue_full_counter.value)
+                if queue_full_counter is not None
+                else 0
+            )
 
             timing = {
                 "updates":               total_updates,
@@ -760,6 +767,7 @@ def learner_loop(
                 "n_throttle_sleeps":     n_throttle_sleeps,
                 "throttle_sleep_total_s": throttle_sleep_total_s,
                 "throttle_drained_since_log": throttle_drained_since_log,
+                "queue_put_timeouts_total": queue_full_total,
                 "session_start_updates": session_start_updates,
                 "actor_update_lag": actor_update_lag,
                 "actor_update_lag_max": max(actor_lag_values) if actor_lag_values else None,

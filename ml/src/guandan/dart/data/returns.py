@@ -10,8 +10,9 @@ discounted returns (e.g. shaped intermediate rewards).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping, TypedDict
+from typing import TypedDict
 
 import numpy as np
 
@@ -84,7 +85,7 @@ def compute_mc_returns(
     terminal_rewards: Mapping[int, float],
     gamma: float = 1.0,
     *,
-    tags: EpisodeTags = EpisodeTags(),
+    tags: EpisodeTags | None = None,
 ) -> list[TrainSample]:
     """Compute G_t per (player, timestep).
 
@@ -95,6 +96,7 @@ def compute_mc_returns(
 
     ``tags`` are episode-level — broadcast verbatim to every emitted sample.
     """
+    tags = tags or EpisodeTags()
     norm = normalize_terminal_rewards(terminal_rewards)
 
     by_player: dict[int, list[int]] = {p: [] for p in range(NUM_PLAYERS)}

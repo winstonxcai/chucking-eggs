@@ -15,16 +15,15 @@ classes live in the per-encoder modules under ``encoding/``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import numpy as np
 
-from ..constants import NUM_PLAYERS, PARTNER_OFFSET
 from ...cards import CARD_ID_DIM, Card, ComboType, card_to_id, id_to_card
 from ...combos import Combo
 from ...game import GuanDanEnv
-
+from ..constants import NUM_PLAYERS, PARTNER_OFFSET
 
 # ─── Channel constants ─────────────────────────────────────
 

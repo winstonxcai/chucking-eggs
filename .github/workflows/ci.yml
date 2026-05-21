@@ -16,14 +16,52 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
+      - name: Build Rust extension
+        run: uv run maturin develop --release --manifest-path ml/src/guandan_rs/Cargo.toml
+
       - name: Lint Python
-        run: uv run ruff check ml/src/guandan/dart web/backend/app examples
+        run: uv run ruff check ml/src/guandan web/backend/app examples
 
       - name: Type check DART
         run: uv run mypy
+
+      - name: Audit Python dependencies
+        run: >
+          uv run pip-audit
+          --ignore-vuln PYSEC-2025-210
+          --ignore-vuln PYSEC-2025-194
+          --ignore-vuln PYSEC-2025-196
+          --ignore-vuln PYSEC-2025-195
+          --ignore-vuln PYSEC-2025-193
+          --ignore-vuln PYSEC-2025-192
+          --ignore-vuln PYSEC-2026-139
+          --ignore-vuln PYSEC-2025-191
+          --ignore-vuln PYSEC-2025-197
+          --ignore-vuln PYSEC-2025-189
+          --ignore-vuln PYSEC-2025-190
 
       - name: Run ML tests
         run: uv run pytest -q ml/tests
 
       - name: Run web backend tests
         run: uv run pytest -q web/backend/tests
+
+  frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web/frontend
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: web/frontend
+        run: npm run lint

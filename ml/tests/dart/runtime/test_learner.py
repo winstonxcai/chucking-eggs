@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
 import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 from guandan.dart.data.buffer import RoleAwareReplayBuffer
@@ -132,6 +134,52 @@ def test_dart_learner_update_step_changes_params_and_returns_metrics():
         assert f"grad_norm_head_{head}" in metrics
         assert metrics[f"sample_count_trick_head_{head}"] == 4.0
     assert any(not torch.equal(before[k], v) for k, v in net.state_dict().items())
+
+
+def test_dart_learner_resume_state_is_equivalent_for_next_update():
+    torch.manual_seed(11)
+    net = DartQNet(_small_dart_cfg())
+    learner = DartLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
+    buf = _role_buffer(128, tags=_full_tags(128))
+
+    assert learner.update(buf, batch_size=64) is not None
+    checkpoint_q = {k: v.detach().clone() for k, v in net.state_dict().items()}
+    checkpoint_learner = copy.deepcopy(learner.state_dict())
+    checkpoint_buffer = buf.state_dict()
+
+    metrics_continued = learner.update(buf, batch_size=64)
+    continued = {k: v.detach().clone() for k, v in net.state_dict().items()}
+
+    resumed_net = DartQNet(_small_dart_cfg())
+    resumed_net.load_state_dict(checkpoint_q)
+    resumed_learner = DartLearner(
+        resumed_net,
+        lr=1e-3,
+        device="cpu",
+        max_grad_norm=10.0,
+    )
+    resumed_learner.load_state_dict(checkpoint_learner)
+    resumed_buf = _role_buffer(128, tags=_full_tags(128))
+    resumed_buf.load_state_dict(checkpoint_buffer)
+
+    metrics_resumed = resumed_learner.update(resumed_buf, batch_size=64)
+
+    assert metrics_continued is not None
+    assert metrics_resumed is not None
+    assert metrics_resumed["loss"] == pytest.approx(metrics_continued["loss"])
+    for key, value in continued.items():
+        assert torch.allclose(value, resumed_net.state_dict()[key], atol=1e-6, rtol=1e-6)
+
+
+def test_dart_learner_nonfinite_target_error_includes_batch_context():
+    net = DartQNet(_small_dart_cfg())
+    learner = DartLearner(net, lr=1e-3, device="cpu", max_grad_norm=10.0)
+    tags = _full_tags(32)
+    buf = _role_buffer(32, tags=tags)
+    buf.returns[:buf.size()] = np.nan
+
+    with pytest.raises(RuntimeError, match="episode_mode_counts"):
+        learner.update(buf, batch_size=16)
 
 
 def test_dart_learner_skips_when_head_short():

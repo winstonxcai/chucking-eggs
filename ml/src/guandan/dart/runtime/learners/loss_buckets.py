@@ -12,12 +12,12 @@ import torch.nn.functional as F
 
 from ...data.sample_tags import ACTION_CLASS_LOOKUP, OPP_GRID_TOP
 from .loss_bucket_schema import (
-    GridSpec,
     LOSS_BUCKET_GRIDS,
     LOSS_BUCKET_MARGINALS,
     LOSS_BUCKET_SCHEMA,
-    MarginalSpec,
     PHASE_KEY_PREFIXES,
+    GridSpec,
+    MarginalSpec,
 )
 
 

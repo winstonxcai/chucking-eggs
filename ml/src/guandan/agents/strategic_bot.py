@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from ..cards import BOMB_TYPES, ComboType, Rank, is_wild, level_order_key
 from ..combos import generate_all_leads
-from .heuristic_bot import HandPlan, _breaks_bomb, _find_combo, _pass_combo
 from .base import Agent
+from .heuristic_bot import HandPlan, _breaks_bomb, _find_combo, _pass_combo
 
 # Types where level_order_key applies for comparison.
 _LEVEL_ORDER_TYPES = frozenset({
@@ -38,7 +38,7 @@ def estimate_moves_to_empty(hand: set, level_rank: int) -> int:
 
     # Count each rank group as one play
     remaining_groups = 0
-    for rank, cards in by_rank.items():
+    for _rank, cards in by_rank.items():
         n = len(cards)
         if n >= 4:
             remaining_groups += 1  # bomb is one play

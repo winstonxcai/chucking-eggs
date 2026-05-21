@@ -3,24 +3,26 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
 import random
+from collections.abc import Mapping
 from pathlib import Path
 
 import torch
 
-from ...constants import NUM_PLAYERS
 from ...config import MODEL_TYPE_DART, dart_qnet_config
+from ...constants import NUM_PLAYERS
 from ...model.encoding.base_encoder import ENCODE_CHANNEL_KEYS, StateActionEncoder
 from ...model.encoding.role_encoder import RoleAwareStateActionEncoder
-from ...model.q_network import DartQNet, init_guanzero_nets
+from ...model.q_network import DartQNet, GuanZeroQNet, init_guanzero_nets
+
+ActorNetBundle = dict[int, GuanZeroQNet] | DartQNet
 
 
 @dataclasses.dataclass
 class ActorRuntime:
     encoder: StateActionEncoder | RoleAwareStateActionEncoder
-    q_nets: object
-    q_nets_actor: object
+    q_nets: ActorNetBundle
+    q_nets_actor: ActorNetBundle
     dart_path: bool
     use_int8: bool
     channel_keys: tuple[str, ...]

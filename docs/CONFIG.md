@@ -5,7 +5,9 @@ The production config is `ml/src/guandan/dart/configs/dart_l4.yaml`; local MPS a
 ## Core Training
 
 - `model_type`: `Dart` is the production role-aware shared Q-network. `GuanZero` keeps the older per-seat comparison path.
+- `config_schema_version`: current schema version is `1`. Older configs that omit it load as version 1.
 - `seed`: base seed. The learner uses `seed + 1`; actor `i` starts from `seed + i * 10000` and restores actor RNG state from full checkpoints when available.
+- `coordination_bucket_card_threshold` and `coordination_bucket_final_fraction`: actor-side boundaries for tagging hard-bot coordination-endgame samples.
 - `batch_size`: learner samples per update. The L4 config uses `4096` to keep BF16 updates stable.
 - `lr`: Adam learning rate. The L4 config uses `3e-5`, tuned with `batch_size=4096`.
 - `gamma`: Monte Carlo return discount. Production uses `1.0`.
@@ -28,7 +30,13 @@ The production config is `ml/src/guandan/dart/configs/dart_l4.yaml`; local MPS a
 - `buffer_min_size`: minimum warmup before learner updates.
 - `target_replay_ratio`, `max_replay_ratio`, `max_throttle_sleep_s`: keep gradient updates from outrunning fresh actor samples.
 - `replay_mix`: optional weighted bucket sampling for role-aware replay.
-- `max_forced_k1_replay_frac`: cap or remove forced-move samples where only one legal action exists.
+- `max_forced_pass_replay_frac`: cap or remove forced-move samples where only one legal action exists.
+
+Compatibility note: old configs using `max_forced_k1_replay_frac` are migrated
+to `max_forced_pass_replay_frac` on load. Old `opponents.latest_team_odd_probability`
+keys are migrated to `opponents.latest_learner_team_odd_probability`. The
+unused `updates_per_learner_step` key is accepted and ignored for older YAML
+files.
 
 ## Evaluation
 

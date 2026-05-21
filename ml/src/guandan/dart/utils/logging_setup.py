@@ -13,7 +13,6 @@ import logging
 import os
 from pathlib import Path
 
-
 _FILE_FORMATTER = logging.Formatter(
     "%(asctime)s [%(levelname)-5s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",

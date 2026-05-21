@@ -76,7 +76,7 @@ class AxisSpec:
     labels: tuple[str, ...]
 
     @classmethod
-    def from_enum(cls, name: str, enum_cls: type[IntEnum]) -> "AxisSpec":
+    def from_enum(cls, name: str, enum_cls: type[IntEnum]) -> AxisSpec:
         values = sorted(enum_cls, key=int)
         return cls(name=name, labels=tuple(v.name.lower() for v in values))
 

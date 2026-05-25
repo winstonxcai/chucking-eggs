@@ -76,6 +76,18 @@ files = [
     "ml/src/guandan/agents/greedy_bot.py",
     "ml/src/guandan/agents/heuristic_bot.py",
     "ml/src/guandan/agents/strategic_bot.py",
+    "ml/src/guandan/dart/config.py",
+    "ml/src/guandan/dart/constants.py",
+    "ml/src/guandan/dart/data/returns.py",
+    "ml/src/guandan/dart/utils/reproducibility.py",
+    "ml/src/guandan/dart/utils/run_layout.py",
+    "ml/src/guandan/dart/utils/schedules.py",
+    "web/backend/app/auth.py",
+    "web/backend/app/card_matcher.py",
+    "web/backend/app/elo.py",
+    "web/backend/app/serializer.py",
+    "web/backend/app/settings.py",
+    "web/backend/app/types.py",
 ]
 ignore_missing_imports = true
 follow_imports = "silent"

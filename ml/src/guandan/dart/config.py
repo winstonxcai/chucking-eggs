@@ -18,11 +18,11 @@ from __future__ import annotations
 import dataclasses
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-MODEL_TYPE_GUANZERO = "GuanZero"
-MODEL_TYPE_DART = "Dart"
 ModelType = Literal["GuanZero", "Dart"]
+MODEL_TYPE_GUANZERO: ModelType = "GuanZero"
+MODEL_TYPE_DART: ModelType = "Dart"
 CheckpointSaveType = Literal["weight", "full"]
 CONFIG_SCHEMA_VERSION = 1
 
@@ -286,7 +286,7 @@ def _opponent_config_from_raw(raw: Any) -> OpponentConfig:
     if isinstance(raw, OpponentConfig):
         return raw
     if dataclasses.is_dataclass(raw):
-        raw = dataclasses.asdict(raw)
+        raw = dataclasses.asdict(cast(Any, raw))
     if not isinstance(raw, dict):
         raise TypeError(f"opponents must be a dict or OpponentConfig; got {type(raw).__name__}")
     raw = dict(raw)
@@ -319,7 +319,7 @@ def _eval_config_from_raw(raw: Any) -> EvalConfig:
     if isinstance(raw, EvalConfig):
         return raw
     if dataclasses.is_dataclass(raw):
-        raw = dataclasses.asdict(raw)
+        raw = dataclasses.asdict(cast(Any, raw))
     if not isinstance(raw, dict):
         raise TypeError(f"eval must be a dict or EvalConfig; got {type(raw).__name__}")
     _reject_unknown_keys(
@@ -544,7 +544,7 @@ class TrainConfig:
             _reject_unknown_keys("qnet", d["qnet"], set(_QNET_FIELDS))
             qnet_d = dict(d["qnet"])
             qnet      = QNetConfig(**qnet_d)
-            epsilon_kw: dict[str, Any] = {}
+            nested_epsilon_kw: dict[str, Any] = {}
             valid_top = {f.name for f in dataclasses.fields(cls)} - {"qnet", "epsilon", "opponents", "eval"}
             valid_nested_top = (
                 valid_top
@@ -554,7 +554,7 @@ class TrainConfig:
             _reject_unknown_keys("TrainConfig", d, valid_nested_top)
             for k, v in d.items():
                 if k in _EPSILON_FLAT_MAP:
-                    epsilon_kw[_EPSILON_FLAT_MAP[k]] = v
+                    nested_epsilon_kw[_EPSILON_FLAT_MAP[k]] = v
             if isinstance(d.get("epsilon"), dict):
                 _reject_unknown_keys(
                     "epsilon",
@@ -562,8 +562,8 @@ class TrainConfig:
                     _dataclass_field_names(EpsilonConfig) | set(_EPSILON_FLAT_MAP),
                 )
                 for k, v in d["epsilon"].items():
-                    epsilon_kw[_EPSILON_FLAT_MAP.get(k, k)] = v
-            epsilon   = EpsilonConfig(**epsilon_kw)
+                    nested_epsilon_kw[_EPSILON_FLAT_MAP.get(k, k)] = v
+            epsilon   = EpsilonConfig(**nested_epsilon_kw)
             top = {k: v for k, v in d.items() if k in valid_top}
             return cls(
                 qnet=qnet,

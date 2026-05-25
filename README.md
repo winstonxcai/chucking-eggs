@@ -273,7 +273,7 @@ epsilon-random decisions bypass the network; nontrivial decisions are encoded
 as legal candidate-action rows, scored by the local Q-network in a batched
 forward pass, segmented back by lane, and resolved by per-lane argmax.
 
-Recent Modal throughput smokes show why DART uses intra-actor lane batching.
+Recent Modal throughput probes show why DART uses intra-actor lane batching.
 Numbers below are post-warmup means from 1000-update runs and report accepted
 fresh actor samples/sec in `metrics_learner.jsonl`:
 

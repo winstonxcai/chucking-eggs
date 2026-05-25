@@ -1,8 +1,7 @@
-# Dart L4 smoke config for lane-count benchmarking.
-# Identical to dart_l4.yaml except actor_batch_lanes is raised to 128.
+# Dart L4 throughput config matching dart_l4.yaml except for wider actor lanes.
 
 n_actors: 32
-actor_batch_lanes: 128
+actor_batch_lanes: 64
 sync_interval_updates: 5000
 sync_jitter_updates: 1000
 actor_push_batch_size: 512

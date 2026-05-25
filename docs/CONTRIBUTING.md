@@ -19,7 +19,7 @@ This project has two main surfaces: the Guan Dan game/agent library under `ml/sr
 ## Adding DART Training Changes
 
 - Update `docs/CONFIG.md` when adding or renaming config fields.
-- Add or update a smoke config if the change affects actor/learner throughput.
+- Add or update a CPU smoke config for correctness changes, or a CUDA throughput config for actor/learner performance changes.
 - Preserve checkpoint compatibility in `DartBot.load()` when practical, and log a warning for deprecated checkpoint keys.
 
 ## Reporting Results

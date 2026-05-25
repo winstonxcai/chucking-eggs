@@ -47,10 +47,10 @@ files.
 - `eval.workers` and `eval.lanes`: `0` means inherit training actor counts/lanes.
 - `eval.max_wait_s`: total timeout for eval handoff and subprocess execution.
 
-## Smoke Configs
+## Smoke and Throughput Configs
 
 - `dart_cpu_smoke.yaml`: tiny CPU-only actor/learner/checkpoint smoke for CI and local setup checks.
 - `dart_mps.yaml`: Apple Silicon local training/smoke config.
-- `dart_l4_lanes1_smoke.yaml`: CUDA actor-limited throughput baseline.
-- `dart_l4_lanes64_smoke.yaml`: CUDA production-like lane batching throughput probe.
-- `dart_l4_lanes128_smoke.yaml`: CUDA high-lane throughput probe.
+- `dart_l4_lanes1_throughput.yaml`: CUDA actor-limited throughput baseline.
+- `dart_l4_lanes64_throughput.yaml`: CUDA production-like lane batching throughput probe.
+- `dart_l4_lanes128_throughput.yaml`: CUDA high-lane throughput probe.

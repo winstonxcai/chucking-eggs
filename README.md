@@ -10,6 +10,10 @@ Guan Dan is harder than it looks: **108 cards** (vs 52 for most card games), **w
 
 **Author**: Winston Cai · **License**: MIT
 
+<p align="center">
+  <img src="docs/assets/demo.png" alt="Chucking Eggs gameplay demo" width="760">
+</p>
+
 ## TL;DR
 
 DART is, to our knowledge, the first open partner-visible Guan Dan RL agent with published training and evaluation code. The current checkpoint release is the **1.25M-update L4 run**. It reaches **69.32%** average win rate on the integrated 10,000-game hard-4 eval and **69.49%** on the 5000-game release eval against Yaoji, EZ, Jidan, and Strategic. In the 13-agent rule-bot benchmark, DART achieves the top Glicko-2 rating, outperforming all 12 bundled rule-based bots, including the top three from the [NJUPT 2020 Guan Dan AI Competition](http://gameai.njupt.edu.cn/gameaicompetition/) (Jidan, Yaoji, Lalala).
@@ -18,7 +22,7 @@ DART is, to our knowledge, the first open partner-visible Guan Dan RL agent with
 
 ### Hard-4 Training Run
 
-![DART hard-4 win rate trajectory](docs/figures/training_wr.png)
+![DART hard-4 win rate trajectory](docs/assets/training_wr.png)
 
 The hard-4 slice is the strongest public rule-bot evaluation set used during
 long runs: Yaoji, EZ, Jidan, and Strategic. Integrated checkpoint evals use
@@ -271,7 +275,7 @@ cd web/frontend && npm install && npm run dev
 
 ## Architecture
 
-![DART system topology](docs/figures/system_topology.png)
+![DART system topology](docs/assets/system_topology.png)
 
 This figure shows the runtime ownership boundaries. The main process handles
 lifecycle and evaluation; actors own local policy copies and batched
@@ -280,14 +284,14 @@ weight store provides asynchronous policy refresh.
 
 **DART** (**D**ynamic **A**ction-**R**elative routing for **T**ricks) uses 4 shared Q-heads, one per trick position: leading / 1st responder / across / last responder. It combines an LSTM over move history, role-normalized state encoding, partner hand visibility during training, and distributed actor-learner execution. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map.
 
-![DART distributed learning process](docs/figures/distributed_training.png)
+![DART distributed learning process](docs/assets/distributed_training.png)
 
 This figure isolates the distributed learning loop. Each actor owns one local
 Q-network copy and controls multiple independent environment lanes. Actor
 samples flow into learner-owned replay; learner updates train one global DART
 Q-network, whose weights are periodically copied back to the actors.
 
-![DART actor-side inference batching](docs/figures/inference_batching.png)
+![DART actor-side inference batching](docs/assets/inference_batching.png)
 
 This figure explains why actors run several lanes at once. Forced or
 epsilon-random decisions bypass the network; nontrivial decisions are encoded
@@ -308,7 +312,7 @@ The `32 x 1` shape is actor-limited: the learner queue stays near empty. The
 is mostly full and throughput is governed by learner speed and replay-ratio
 throttling.
 
-![DART trick-relative Q-head routing](docs/figures/model_architecture.png)
+![DART trick-relative Q-head routing](docs/assets/model_architecture.png)
 
 This figure shows the model's action-relative output layer. State and candidate
 action features enter the shared Q-network trunk; the trick-position id is used

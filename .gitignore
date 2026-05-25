@@ -46,8 +46,8 @@ ml/LOGBOOK.md
 
 # Generated images
 *.png
-!docs/figures/
-!docs/figures/*.png
+!docs/assets/
+!docs/assets/*.png
 
 # Data (generated training data, game logs)
 /data/

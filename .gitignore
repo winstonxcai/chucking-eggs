@@ -18,6 +18,7 @@ env/
 *.pt
 *.pth
 checkpoints/
+!ml/results/release_1_25m/update_01250000.pt
 
 # Testing
 .pytest_cache/

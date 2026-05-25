@@ -1,8 +1,8 @@
 # DART Model Card
 
 This model card describes the 1.25M-update DART checkpoint referenced by the
-README. The checkpoint artifact is not stored in git because model weights are
-ignored; upload it to a GitHub Release or Hugging Face before tagging `v0.1.0`.
+README. The checkpoint and release evaluation evidence are stored in
+`ml/results/release_1_25m/`.
 
 ## Model
 
@@ -10,7 +10,7 @@ ignored; upload it to a GitHub Release or Hugging Face before tagging `v0.1.0`.
 - Architecture: role-aware shared Q-network with four trick-position heads
 - Training algorithm: Deep Monte Carlo control with distributed actors
 - Training config: `ml/src/guandan/dart/configs/dart_l4.yaml`
-- Intended checkpoint artifact: `update_01250000.pt` from the L4 run
+- Intended checkpoint artifact: `ml/results/release_1_25m/update_01250000.pt`
 
 ## Intended Use
 
@@ -44,7 +44,7 @@ entire matrix. Reproduce a single matchup with:
 
 ```bash
 uv run guandan-eval-dart \
-  --checkpoint path/to/update_01250000.pt \
+  --checkpoint ml/results/release_1_25m/update_01250000.pt \
   --opponent strategic \
   --games 1000 \
   --out results.json
@@ -63,7 +63,8 @@ uv run guandan-eval-dart \
 
 ## Release Checklist
 
-Before publishing, attach `update_01250000.pt`, `config.yaml`,
-`metrics_learner.jsonl`, and the eval command/output to a GitHub Release or
-Hugging Face model repo, then replace the pending checkpoint links in the README
-with the final URL.
+Before publishing, verify `ml/results/release_1_25m/manifest.json` checksums and
+attach the same bundle to a GitHub Release or Hugging Face model repo if you want
+a release asset outside git. The raw learner metrics JSONL is intentionally not
+committed because it is hundreds of megabytes; summarize or host it separately if
+needed.

@@ -1,0 +1,1175 @@
+{
+  "agents": [
+    "random",
+    "greedy",
+    "heuristic",
+    "strategic",
+    "xingdream",
+    "lalala",
+    "liuzha",
+    "hulalala",
+    "yaoji",
+    "jidan",
+    "ez",
+    "wjsd"
+  ],
+  "games_per_matchup": 5000,
+  "total_games": 420000,
+  "total_time_s": 2861.0,
+  "matrix": {
+    "random": {
+      "greedy": {
+        "wins": 1176,
+        "losses": 3824,
+        "n_games": 5000,
+        "winrate": 0.2352,
+        "avg_reward": -3.092,
+        "injected": true
+      },
+      "heuristic": {
+        "wins": 552,
+        "losses": 4448,
+        "n_games": 5000,
+        "winrate": 0.1104,
+        "avg_reward": -4.4064,
+        "injected": true
+      },
+      "strategic": {
+        "wins": 161,
+        "losses": 4839,
+        "n_games": 5000,
+        "winrate": 0.0322,
+        "avg_reward": -5.3328,
+        "injected": true
+      },
+      "xingdream": {
+        "wins": 371,
+        "losses": 4629,
+        "n_games": 5000,
+        "winrate": 0.0742,
+        "avg_reward": -4.9548,
+        "injected": true
+      },
+      "lalala": {
+        "wins": 1083,
+        "losses": 3917,
+        "n_games": 5000,
+        "winrate": 0.2166,
+        "avg_reward": -3.26,
+        "injected": true
+      },
+      "liuzha": {
+        "wins": 1106,
+        "losses": 3894,
+        "n_games": 5000,
+        "winrate": 0.2212,
+        "avg_reward": -3.1556,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 1103,
+        "losses": 3897,
+        "n_games": 5000,
+        "winrate": 0.2206,
+        "avg_reward": -3.1884,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 73,
+        "losses": 4927,
+        "n_games": 5000,
+        "winrate": 0.0146,
+        "avg_reward": -5.6864,
+        "injected": true
+      },
+      "jidan": {
+        "wins": 60,
+        "losses": 4940,
+        "n_games": 5000,
+        "winrate": 0.012,
+        "avg_reward": -5.7564,
+        "injected": true
+      },
+      "ez": {
+        "wins": 117,
+        "losses": 4883,
+        "n_games": 5000,
+        "winrate": 0.0234,
+        "avg_reward": -5.3316,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 1439,
+        "losses": 3561,
+        "n_games": 5000,
+        "winrate": 0.2878,
+        "avg_reward": -1.9244,
+        "injected": false
+      }
+    },
+    "greedy": {
+      "random": {
+        "wins": 3823,
+        "losses": 1177,
+        "n_games": 5000,
+        "winrate": 0.7646,
+        "avg_reward": 3.0916,
+        "injected": true
+      },
+      "heuristic": {
+        "wins": 2208,
+        "losses": 2792,
+        "n_games": 5000,
+        "winrate": 0.4416,
+        "avg_reward": -0.1748,
+        "injected": true
+      },
+      "strategic": {
+        "wins": 651,
+        "losses": 4349,
+        "n_games": 5000,
+        "winrate": 0.1302,
+        "avg_reward": -3.7,
+        "injected": true
+      },
+      "xingdream": {
+        "wins": 1222,
+        "losses": 3778,
+        "n_games": 5000,
+        "winrate": 0.2444,
+        "avg_reward": -2.8252,
+        "injected": true
+      },
+      "lalala": {
+        "wins": 2491,
+        "losses": 2509,
+        "n_games": 5000,
+        "winrate": 0.4982,
+        "avg_reward": 0.502,
+        "injected": true
+      },
+      "liuzha": {
+        "wins": 2552,
+        "losses": 2448,
+        "n_games": 5000,
+        "winrate": 0.5104,
+        "avg_reward": 0.6096,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 2521,
+        "losses": 2479,
+        "n_games": 5000,
+        "winrate": 0.5042,
+        "avg_reward": 0.5908,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 235,
+        "losses": 4765,
+        "n_games": 5000,
+        "winrate": 0.047,
+        "avg_reward": -4.9924,
+        "injected": true
+      },
+      "jidan": {
+        "wins": 93,
+        "losses": 4907,
+        "n_games": 5000,
+        "winrate": 0.0186,
+        "avg_reward": -5.552,
+        "injected": true
+      },
+      "ez": {
+        "wins": 532,
+        "losses": 4468,
+        "n_games": 5000,
+        "winrate": 0.1064,
+        "avg_reward": -4.1076,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 3717,
+        "losses": 1283,
+        "n_games": 5000,
+        "winrate": 0.7434,
+        "avg_reward": 3.608,
+        "injected": false
+      }
+    },
+    "heuristic": {
+      "random": {
+        "wins": 4488,
+        "losses": 512,
+        "n_games": 5000,
+        "winrate": 0.8976,
+        "avg_reward": 4.502,
+        "injected": true
+      },
+      "greedy": {
+        "wins": 2910,
+        "losses": 2090,
+        "n_games": 5000,
+        "winrate": 0.582,
+        "avg_reward": 0.4052,
+        "injected": true
+      },
+      "strategic": {
+        "wins": 1054,
+        "losses": 3946,
+        "n_games": 5000,
+        "winrate": 0.2108,
+        "avg_reward": -3.0356,
+        "injected": true
+      },
+      "xingdream": {
+        "wins": 2048,
+        "losses": 2952,
+        "n_games": 5000,
+        "winrate": 0.4096,
+        "avg_reward": -0.9732,
+        "injected": true
+      },
+      "lalala": {
+        "wins": 3156,
+        "losses": 1844,
+        "n_games": 5000,
+        "winrate": 0.6312,
+        "avg_reward": 1.4676,
+        "injected": true
+      },
+      "liuzha": {
+        "wins": 3226,
+        "losses": 1774,
+        "n_games": 5000,
+        "winrate": 0.6452,
+        "avg_reward": 1.6152,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 3117,
+        "losses": 1883,
+        "n_games": 5000,
+        "winrate": 0.6234,
+        "avg_reward": 1.4012,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 595,
+        "losses": 4405,
+        "n_games": 5000,
+        "winrate": 0.119,
+        "avg_reward": -4.1152,
+        "injected": true
+      },
+      "jidan": {
+        "wins": 579,
+        "losses": 4421,
+        "n_games": 5000,
+        "winrate": 0.1158,
+        "avg_reward": -4.2332,
+        "injected": true
+      },
+      "ez": {
+        "wins": 917,
+        "losses": 4083,
+        "n_games": 5000,
+        "winrate": 0.1834,
+        "avg_reward": -3.388,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 2496,
+        "losses": 2504,
+        "n_games": 5000,
+        "winrate": 0.4992,
+        "avg_reward": 0.2644,
+        "injected": false
+      }
+    },
+    "strategic": {
+      "random": {
+        "wins": 4862,
+        "losses": 138,
+        "n_games": 5000,
+        "winrate": 0.9724,
+        "avg_reward": 5.3948,
+        "injected": true
+      },
+      "greedy": {
+        "wins": 4299,
+        "losses": 701,
+        "n_games": 5000,
+        "winrate": 0.8598,
+        "avg_reward": 3.6708,
+        "injected": true
+      },
+      "heuristic": {
+        "wins": 3901,
+        "losses": 1099,
+        "n_games": 5000,
+        "winrate": 0.7802,
+        "avg_reward": 2.9468,
+        "injected": true
+      },
+      "xingdream": {
+        "wins": 3404,
+        "losses": 1596,
+        "n_games": 5000,
+        "winrate": 0.6808,
+        "avg_reward": 1.9548,
+        "injected": true
+      },
+      "lalala": {
+        "wins": 4011,
+        "losses": 989,
+        "n_games": 5000,
+        "winrate": 0.8022,
+        "avg_reward": 3.3288,
+        "injected": true
+      },
+      "liuzha": {
+        "wins": 4035,
+        "losses": 965,
+        "n_games": 5000,
+        "winrate": 0.807,
+        "avg_reward": 3.3772,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 3977,
+        "losses": 1023,
+        "n_games": 5000,
+        "winrate": 0.7954,
+        "avg_reward": 3.2496,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 1266,
+        "losses": 3734,
+        "n_games": 5000,
+        "winrate": 0.2532,
+        "avg_reward": -2.4836,
+        "injected": true
+      },
+      "jidan": {
+        "wins": 1253,
+        "losses": 3747,
+        "n_games": 5000,
+        "winrate": 0.2506,
+        "avg_reward": -2.684,
+        "injected": true
+      },
+      "ez": {
+        "wins": 1434,
+        "losses": 3566,
+        "n_games": 5000,
+        "winrate": 0.2868,
+        "avg_reward": -2.1424,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 3358,
+        "losses": 1642,
+        "n_games": 5000,
+        "winrate": 0.6716,
+        "avg_reward": 1.998,
+        "injected": false
+      }
+    },
+    "xingdream": {
+      "random": {
+        "wins": 4609,
+        "losses": 391,
+        "n_games": 5000,
+        "winrate": 0.9218,
+        "avg_reward": 4.9076,
+        "injected": true
+      },
+      "greedy": {
+        "wins": 3819,
+        "losses": 1181,
+        "n_games": 5000,
+        "winrate": 0.7638,
+        "avg_reward": 2.9032,
+        "injected": true
+      },
+      "heuristic": {
+        "wins": 2973,
+        "losses": 2027,
+        "n_games": 5000,
+        "winrate": 0.5946,
+        "avg_reward": 1.0136,
+        "injected": true
+      },
+      "strategic": {
+        "wins": 1663,
+        "losses": 3337,
+        "n_games": 5000,
+        "winrate": 0.3326,
+        "avg_reward": -1.8372,
+        "injected": true
+      },
+      "lalala": {
+        "wins": 3431,
+        "losses": 1569,
+        "n_games": 5000,
+        "winrate": 0.6862,
+        "avg_reward": 2.4124,
+        "injected": true
+      },
+      "liuzha": {
+        "wins": 3505,
+        "losses": 1495,
+        "n_games": 5000,
+        "winrate": 0.701,
+        "avg_reward": 2.5716,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 3469,
+        "losses": 1531,
+        "n_games": 5000,
+        "winrate": 0.6938,
+        "avg_reward": 2.498,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 710,
+        "losses": 4290,
+        "n_games": 5000,
+        "winrate": 0.142,
+        "avg_reward": -3.6844,
+        "injected": true
+      },
+      "jidan": {
+        "wins": 635,
+        "losses": 4365,
+        "n_games": 5000,
+        "winrate": 0.127,
+        "avg_reward": -4.1264,
+        "injected": true
+      },
+      "ez": {
+        "wins": 979,
+        "losses": 4021,
+        "n_games": 5000,
+        "winrate": 0.1958,
+        "avg_reward": -3.4096,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 2907,
+        "losses": 2093,
+        "n_games": 5000,
+        "winrate": 0.5814,
+        "avg_reward": 1.4868,
+        "injected": false
+      }
+    },
+    "lalala": {
+      "random": {
+        "wins": 3927,
+        "losses": 1073,
+        "n_games": 5000,
+        "winrate": 0.7854,
+        "avg_reward": 3.2172,
+        "injected": true
+      },
+      "greedy": {
+        "wins": 2482,
+        "losses": 2518,
+        "n_games": 5000,
+        "winrate": 0.4964,
+        "avg_reward": -0.5608,
+        "injected": true
+      },
+      "heuristic": {
+        "wins": 1888,
+        "losses": 3112,
+        "n_games": 5000,
+        "winrate": 0.3776,
+        "avg_reward": -1.3604,
+        "injected": true
+      },
+      "strategic": {
+        "wins": 979,
+        "losses": 4021,
+        "n_games": 5000,
+        "winrate": 0.1958,
+        "avg_reward": -3.3564,
+        "injected": true
+      },
+      "xingdream": {
+        "wins": 1558,
+        "losses": 3442,
+        "n_games": 5000,
+        "winrate": 0.3116,
+        "avg_reward": -2.438,
+        "injected": true
+      },
+      "liuzha": {
+        "wins": 2546,
+        "losses": 2454,
+        "n_games": 5000,
+        "winrate": 0.5092,
+        "avg_reward": 0.1076,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 2541,
+        "losses": 2459,
+        "n_games": 5000,
+        "winrate": 0.5082,
+        "avg_reward": 0.0728,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 750,
+        "losses": 4250,
+        "n_games": 5000,
+        "winrate": 0.15,
+        "avg_reward": -4.112,
+        "injected": true
+      },
+      "jidan": {
+        "wins": 637,
+        "losses": 4363,
+        "n_games": 5000,
+        "winrate": 0.1274,
+        "avg_reward": -4.4456,
+        "injected": true
+      },
+      "ez": {
+        "wins": 1562,
+        "losses": 3438,
+        "n_games": 5000,
+        "winrate": 0.3124,
+        "avg_reward": -1.896,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 3980,
+        "losses": 1020,
+        "n_games": 5000,
+        "winrate": 0.796,
+        "avg_reward": 3.2924,
+        "injected": false
+      }
+    },
+    "liuzha": {
+      "random": {
+        "wins": 3895,
+        "losses": 1105,
+        "n_games": 5000,
+        "winrate": 0.779,
+        "avg_reward": 3.2052,
+        "injected": false
+      },
+      "greedy": {
+        "wins": 2450,
+        "losses": 2550,
+        "n_games": 5000,
+        "winrate": 0.49,
+        "avg_reward": -0.5444,
+        "injected": false
+      },
+      "heuristic": {
+        "wins": 1831,
+        "losses": 3169,
+        "n_games": 5000,
+        "winrate": 0.3662,
+        "avg_reward": -1.5144,
+        "injected": false
+      },
+      "strategic": {
+        "wins": 1028,
+        "losses": 3972,
+        "n_games": 5000,
+        "winrate": 0.2056,
+        "avg_reward": -3.2616,
+        "injected": false
+      },
+      "xingdream": {
+        "wins": 1515,
+        "losses": 3485,
+        "n_games": 5000,
+        "winrate": 0.303,
+        "avg_reward": -2.54,
+        "injected": false
+      },
+      "lalala": {
+        "wins": 2501,
+        "losses": 2499,
+        "n_games": 5000,
+        "winrate": 0.5002,
+        "avg_reward": -0.0048,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 2399,
+        "losses": 2601,
+        "n_games": 5000,
+        "winrate": 0.4798,
+        "avg_reward": -0.146,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 768,
+        "losses": 4232,
+        "n_games": 5000,
+        "winrate": 0.1536,
+        "avg_reward": -4.0656,
+        "injected": false
+      },
+      "jidan": {
+        "wins": 663,
+        "losses": 4337,
+        "n_games": 5000,
+        "winrate": 0.1326,
+        "avg_reward": -4.41,
+        "injected": false
+      },
+      "ez": {
+        "wins": 1574,
+        "losses": 3426,
+        "n_games": 5000,
+        "winrate": 0.3148,
+        "avg_reward": -1.8816,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 3899,
+        "losses": 1101,
+        "n_games": 5000,
+        "winrate": 0.7798,
+        "avg_reward": 3.0944,
+        "injected": false
+      }
+    },
+    "hulalala": {
+      "random": {
+        "wins": 3903,
+        "losses": 1097,
+        "n_games": 5000,
+        "winrate": 0.7806,
+        "avg_reward": 3.1172,
+        "injected": false
+      },
+      "greedy": {
+        "wins": 2498,
+        "losses": 2502,
+        "n_games": 5000,
+        "winrate": 0.4996,
+        "avg_reward": -0.5168,
+        "injected": false
+      },
+      "heuristic": {
+        "wins": 1858,
+        "losses": 3142,
+        "n_games": 5000,
+        "winrate": 0.3716,
+        "avg_reward": -1.442,
+        "injected": false
+      },
+      "strategic": {
+        "wins": 1002,
+        "losses": 3998,
+        "n_games": 5000,
+        "winrate": 0.2004,
+        "avg_reward": -3.3168,
+        "injected": false
+      },
+      "xingdream": {
+        "wins": 1531,
+        "losses": 3469,
+        "n_games": 5000,
+        "winrate": 0.3062,
+        "avg_reward": -2.4492,
+        "injected": false
+      },
+      "lalala": {
+        "wins": 2513,
+        "losses": 2487,
+        "n_games": 5000,
+        "winrate": 0.5026,
+        "avg_reward": 0.0724,
+        "injected": false
+      },
+      "liuzha": {
+        "wins": 2504,
+        "losses": 2496,
+        "n_games": 5000,
+        "winrate": 0.5008,
+        "avg_reward": 0.0256,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 688,
+        "losses": 4312,
+        "n_games": 5000,
+        "winrate": 0.1376,
+        "avg_reward": -4.2208,
+        "injected": false
+      },
+      "jidan": {
+        "wins": 634,
+        "losses": 4366,
+        "n_games": 5000,
+        "winrate": 0.1268,
+        "avg_reward": -4.4504,
+        "injected": false
+      },
+      "ez": {
+        "wins": 1540,
+        "losses": 3460,
+        "n_games": 5000,
+        "winrate": 0.308,
+        "avg_reward": -1.8968,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 3986,
+        "losses": 1014,
+        "n_games": 5000,
+        "winrate": 0.7972,
+        "avg_reward": 3.3168,
+        "injected": false
+      }
+    },
+    "yaoji": {
+      "random": {
+        "wins": 4938,
+        "losses": 62,
+        "n_games": 5000,
+        "winrate": 0.9876,
+        "avg_reward": 5.7176,
+        "injected": true
+      },
+      "greedy": {
+        "wins": 4810,
+        "losses": 190,
+        "n_games": 5000,
+        "winrate": 0.962,
+        "avg_reward": 5.0884,
+        "injected": true
+      },
+      "heuristic": {
+        "wins": 4377,
+        "losses": 623,
+        "n_games": 5000,
+        "winrate": 0.8754,
+        "avg_reward": 4.0308,
+        "injected": true
+      },
+      "strategic": {
+        "wins": 3702,
+        "losses": 1298,
+        "n_games": 5000,
+        "winrate": 0.7404,
+        "avg_reward": 2.4124,
+        "injected": true
+      },
+      "xingdream": {
+        "wins": 4267,
+        "losses": 733,
+        "n_games": 5000,
+        "winrate": 0.8534,
+        "avg_reward": 3.582,
+        "injected": true
+      },
+      "lalala": {
+        "wins": 4333,
+        "losses": 667,
+        "n_games": 5000,
+        "winrate": 0.8666,
+        "avg_reward": 4.2628,
+        "injected": true
+      },
+      "liuzha": {
+        "wins": 4312,
+        "losses": 688,
+        "n_games": 5000,
+        "winrate": 0.8624,
+        "avg_reward": 4.164,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 4261,
+        "losses": 739,
+        "n_games": 5000,
+        "winrate": 0.8522,
+        "avg_reward": 4.1168,
+        "injected": false
+      },
+      "jidan": {
+        "wins": 2483,
+        "losses": 2517,
+        "n_games": 5000,
+        "winrate": 0.4966,
+        "avg_reward": -0.3248,
+        "injected": true
+      },
+      "ez": {
+        "wins": 2667,
+        "losses": 2333,
+        "n_games": 5000,
+        "winrate": 0.5334,
+        "avg_reward": 0.0532,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 4138,
+        "losses": 862,
+        "n_games": 5000,
+        "winrate": 0.8276,
+        "avg_reward": 3.586,
+        "injected": false
+      }
+    },
+    "jidan": {
+      "random": {
+        "wins": 4934,
+        "losses": 66,
+        "n_games": 5000,
+        "winrate": 0.9868,
+        "avg_reward": 5.7448,
+        "injected": true
+      },
+      "greedy": {
+        "wins": 4889,
+        "losses": 111,
+        "n_games": 5000,
+        "winrate": 0.9778,
+        "avg_reward": 5.5288,
+        "injected": true
+      },
+      "heuristic": {
+        "wins": 4417,
+        "losses": 583,
+        "n_games": 5000,
+        "winrate": 0.8834,
+        "avg_reward": 4.2396,
+        "injected": true
+      },
+      "strategic": {
+        "wins": 3749,
+        "losses": 1251,
+        "n_games": 5000,
+        "winrate": 0.7498,
+        "avg_reward": 2.7156,
+        "injected": true
+      },
+      "xingdream": {
+        "wins": 4331,
+        "losses": 669,
+        "n_games": 5000,
+        "winrate": 0.8662,
+        "avg_reward": 4.0812,
+        "injected": true
+      },
+      "lalala": {
+        "wins": 4377,
+        "losses": 623,
+        "n_games": 5000,
+        "winrate": 0.8754,
+        "avg_reward": 4.4544,
+        "injected": true
+      },
+      "liuzha": {
+        "wins": 4412,
+        "losses": 588,
+        "n_games": 5000,
+        "winrate": 0.8824,
+        "avg_reward": 4.5404,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 4377,
+        "losses": 623,
+        "n_games": 5000,
+        "winrate": 0.8754,
+        "avg_reward": 4.4736,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 2536,
+        "losses": 2464,
+        "n_games": 5000,
+        "winrate": 0.5072,
+        "avg_reward": 0.3556,
+        "injected": true
+      },
+      "ez": {
+        "wins": 2725,
+        "losses": 2275,
+        "n_games": 5000,
+        "winrate": 0.545,
+        "avg_reward": 0.4212,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 4043,
+        "losses": 957,
+        "n_games": 5000,
+        "winrate": 0.8086,
+        "avg_reward": 3.6932,
+        "injected": false
+      }
+    },
+    "ez": {
+      "random": {
+        "wins": 4848,
+        "losses": 152,
+        "n_games": 5000,
+        "winrate": 0.9696,
+        "avg_reward": 5.2644,
+        "injected": false
+      },
+      "greedy": {
+        "wins": 4502,
+        "losses": 498,
+        "n_games": 5000,
+        "winrate": 0.9004,
+        "avg_reward": 4.126,
+        "injected": false
+      },
+      "heuristic": {
+        "wins": 4109,
+        "losses": 891,
+        "n_games": 5000,
+        "winrate": 0.8218,
+        "avg_reward": 3.394,
+        "injected": false
+      },
+      "strategic": {
+        "wins": 3565,
+        "losses": 1435,
+        "n_games": 5000,
+        "winrate": 0.713,
+        "avg_reward": 2.08,
+        "injected": false
+      },
+      "xingdream": {
+        "wins": 3990,
+        "losses": 1010,
+        "n_games": 5000,
+        "winrate": 0.798,
+        "avg_reward": 3.3316,
+        "injected": false
+      },
+      "lalala": {
+        "wins": 3427,
+        "losses": 1573,
+        "n_games": 5000,
+        "winrate": 0.6854,
+        "avg_reward": 1.8992,
+        "injected": false
+      },
+      "liuzha": {
+        "wins": 3482,
+        "losses": 1518,
+        "n_games": 5000,
+        "winrate": 0.6964,
+        "avg_reward": 1.9508,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 3451,
+        "losses": 1549,
+        "n_games": 5000,
+        "winrate": 0.6902,
+        "avg_reward": 1.8936,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 2245,
+        "losses": 2755,
+        "n_games": 5000,
+        "winrate": 0.449,
+        "avg_reward": -0.206,
+        "injected": false
+      },
+      "jidan": {
+        "wins": 2334,
+        "losses": 2666,
+        "n_games": 5000,
+        "winrate": 0.4668,
+        "avg_reward": -0.3964,
+        "injected": false
+      },
+      "wjsd": {
+        "wins": 3928,
+        "losses": 1072,
+        "n_games": 5000,
+        "winrate": 0.7856,
+        "avg_reward": 3.032,
+        "injected": false
+      }
+    },
+    "wjsd": {
+      "random": {
+        "wins": 3618,
+        "losses": 1382,
+        "n_games": 5000,
+        "winrate": 0.7236,
+        "avg_reward": 1.9684,
+        "injected": false
+      },
+      "greedy": {
+        "wins": 1314,
+        "losses": 3686,
+        "n_games": 5000,
+        "winrate": 0.2628,
+        "avg_reward": -3.522,
+        "injected": false
+      },
+      "heuristic": {
+        "wins": 2459,
+        "losses": 2541,
+        "n_games": 5000,
+        "winrate": 0.4918,
+        "avg_reward": -0.2948,
+        "injected": false
+      },
+      "strategic": {
+        "wins": 1574,
+        "losses": 3426,
+        "n_games": 5000,
+        "winrate": 0.3148,
+        "avg_reward": -2.1296,
+        "injected": false
+      },
+      "xingdream": {
+        "wins": 2061,
+        "losses": 2939,
+        "n_games": 5000,
+        "winrate": 0.4122,
+        "avg_reward": -1.5124,
+        "injected": false
+      },
+      "lalala": {
+        "wins": 1081,
+        "losses": 3919,
+        "n_games": 5000,
+        "winrate": 0.2162,
+        "avg_reward": -3.1624,
+        "injected": false
+      },
+      "liuzha": {
+        "wins": 1039,
+        "losses": 3961,
+        "n_games": 5000,
+        "winrate": 0.2078,
+        "avg_reward": -3.2388,
+        "injected": false
+      },
+      "hulalala": {
+        "wins": 1079,
+        "losses": 3921,
+        "n_games": 5000,
+        "winrate": 0.2158,
+        "avg_reward": -3.1908,
+        "injected": false
+      },
+      "yaoji": {
+        "wins": 821,
+        "losses": 4179,
+        "n_games": 5000,
+        "winrate": 0.1642,
+        "avg_reward": -3.652,
+        "injected": false
+      },
+      "jidan": {
+        "wins": 1032,
+        "losses": 3968,
+        "n_games": 5000,
+        "winrate": 0.2064,
+        "avg_reward": -3.5636,
+        "injected": false
+      },
+      "ez": {
+        "wins": 1144,
+        "losses": 3856,
+        "n_games": 5000,
+        "winrate": 0.2288,
+        "avg_reward": -2.936,
+        "injected": false
+      }
+    }
+  },
+  "ratings": {
+    "random": {
+      "rating": 1135.0,
+      "rd": 40.9,
+      "volatility": 0.059596,
+      "name": "random"
+    },
+    "greedy": {
+      "rating": 1363.7,
+      "rd": 34.5,
+      "volatility": 0.059301,
+      "name": "greedy"
+    },
+    "heuristic": {
+      "rating": 1434.2,
+      "rd": 33.9,
+      "volatility": 0.059258,
+      "name": "heuristic"
+    },
+    "strategic": {
+      "rating": 1601.3,
+      "rd": 34.3,
+      "volatility": 0.059287,
+      "name": "strategic"
+    },
+    "xingdream": {
+      "rating": 1487.8,
+      "rd": 33.8,
+      "volatility": 0.059248,
+      "name": "xingdream"
+    },
+    "lalala": {
+      "rating": 1408.9,
+      "rd": 34.1,
+      "volatility": 0.059269,
+      "name": "lalala"
+    },
+    "liuzha": {
+      "rating": 1404.5,
+      "rd": 34.1,
+      "volatility": 0.059272,
+      "name": "liuzha"
+    },
+    "hulalala": {
+      "rating": 1406.2,
+      "rd": 34.1,
+      "volatility": 0.059271,
+      "name": "hulalala"
+    },
+    "yaoji": {
+      "rating": 1748.7,
+      "rd": 36.7,
+      "volatility": 0.05943,
+      "name": "yaoji"
+    },
+    "jidan": {
+      "rating": 1750.3,
+      "rd": 36.8,
+      "volatility": 0.059432,
+      "name": "jidan"
+    },
+    "ez": {
+      "rating": 1674.9,
+      "rd": 35.3,
+      "volatility": 0.059348,
+      "name": "ez"
+    },
+    "wjsd": {
+      "rating": 1332.9,
+      "rd": 35.0,
+      "volatility": 0.05933,
+      "name": "wjsd"
+    }
+  }
+}

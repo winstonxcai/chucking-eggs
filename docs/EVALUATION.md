@@ -2,11 +2,15 @@
 
 DART evaluation uses paired fixed decks so each matchup plays both partnerships on the same shuffled deals.
 
+The release leaderboard evidence lives in `ml/results/release_1_25m/`. That
+directory includes the released checkpoint, raw 5000-game DART eval JSON, the
+base rule-bot matrix, the explicit Glicko injections, and the derived ratings.
+
 ## Single Opponent
 
 ```bash
 uv run guandan-eval-dart \
-  --checkpoint ml/runs/my_run/checkpoints/update_00050000.pt \
+  --checkpoint ml/results/release_1_25m/update_01250000.pt \
   --opponent strategic \
   --games 1000 \
   --out results.json
@@ -21,6 +25,8 @@ uv run guandan-wr-matrix --games 200
 ```
 
 The output `elos.json` can be converted into the Glicko-2 table shown in the README.
+For the released table, see `ml/results/release_1_25m/glicko_results.json` and
+`ml/results/release_1_25m/glicko_injections.json`.
 
 ## Custom Opponents
 

@@ -104,7 +104,7 @@ does not reveal which opponent holds which card. See
 - [Model card](docs/MODEL_CARD.md): checkpoint status, intended use, evaluation protocol, and release checklist.
 - [Evaluation guide](docs/EVALUATION.md): commands for win-rate, matrix, and leaderboard runs.
 - [Research overview](docs/RESEARCH.md): longer discussion of the DART formulation and benchmark setup.
-- Checkpoint release: `update_01250000.pt` from the L4 run is the intended `v0.1.0` release artifact. Replace this note with the GitHub Release or Hugging Face URL before tagging the release.
+- Release evidence: [`ml/results/release_1_25m`](ml/results/release_1_25m) contains the checkpoint, raw eval JSON, Glicko injection inputs, derived leaderboard, checksums, and manifest.
 - Blog post: coming with the `v0.1.0` release.
 
 Evaluation commands:
@@ -112,15 +112,15 @@ Evaluation commands:
 ```bash
 # Win rate vs a specific opponent (paired fixed-deck)
 uv run guandan-eval-dart \
-    --checkpoint path/to/update_01250000.pt \
+    --checkpoint ml/results/release_1_25m/update_01250000.pt \
     --opponent strategic --games 5000 --out results.json
 
 # Release-style all-bot eval
 uv run guandan-eval-dart \
-    --checkpoint path/to/update_01250000.pt \
+    --checkpoint ml/results/release_1_25m/update_01250000.pt \
     --opponent random greedy heuristic strategic xingdream lalala \
                liuzha hulalala yaoji jidan ez wjsd \
-    --games 5000 --out eval_5k_all_bots.json
+    --games 5000 --out ml/results/release_1_25m/eval_5k_all_bots.json
 ```
 
 Exact bitwise training reproducibility is not guaranteed across CUDA/cuDNN kernels. Checkpoints restore learner RNG and actor RNG state for process-level resume consistency, but deterministic CUDA algorithms are not forced by default because they can reduce throughput or reject supported kernels.

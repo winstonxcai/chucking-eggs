@@ -10,7 +10,7 @@ from ..game import GuanDanEnv
 from .base import Agent
 
 DEFAULT_DART_CHECKPOINT = Path(
-    "ml/runs/dart_l4/release_1_25m/update_01250000.pt"
+    "ml/results/release_1_25m/update_01250000.pt"
 )
 DART_CHECKPOINT_ENV = "DART_CHECKPOINT"
 DART_DEVICE_ENV = "DART_DEVICE"

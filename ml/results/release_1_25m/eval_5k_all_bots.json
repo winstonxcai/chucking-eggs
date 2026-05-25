@@ -1,0 +1,163 @@
+{
+  "checkpoint": "ml/runs/dart_l4/release_1_25m/update_01250000.pt",
+  "opponents": [
+    "random",
+    "greedy",
+    "heuristic",
+    "strategic",
+    "xingdream",
+    "lalala",
+    "liuzha",
+    "hulalala",
+    "yaoji",
+    "jidan",
+    "ez",
+    "wjsd"
+  ],
+  "results": {
+    "random": {
+      "n_games": 5000,
+      "wins": 4993,
+      "wr": 0.9986,
+      "se": 0.0005,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 2496,
+      "wins_odd": 2497,
+      "wr_even": 0.9984,
+      "wr_odd": 0.9988
+    },
+    "greedy": {
+      "n_games": 5000,
+      "wins": 4953,
+      "wr": 0.9906,
+      "se": 0.0014,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 2476,
+      "wins_odd": 2477,
+      "wr_even": 0.9904,
+      "wr_odd": 0.9908
+    },
+    "heuristic": {
+      "n_games": 5000,
+      "wins": 4649,
+      "wr": 0.9298,
+      "se": 0.0036,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 2340,
+      "wins_odd": 2309,
+      "wr_even": 0.936,
+      "wr_odd": 0.9236
+    },
+    "strategic": {
+      "n_games": 5000,
+      "wins": 3878,
+      "wr": 0.7756,
+      "se": 0.0059,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 1972,
+      "wins_odd": 1906,
+      "wr_even": 0.7888,
+      "wr_odd": 0.7624
+    },
+    "xingdream": {
+      "n_games": 5000,
+      "wins": 4779,
+      "wr": 0.9558,
+      "se": 0.0029,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 2400,
+      "wins_odd": 2379,
+      "wr_even": 0.96,
+      "wr_odd": 0.9516
+    },
+    "lalala": {
+      "n_games": 5000,
+      "wins": 4650,
+      "wr": 0.93,
+      "se": 0.0036,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 2338,
+      "wins_odd": 2312,
+      "wr_even": 0.9352,
+      "wr_odd": 0.9248
+    },
+    "liuzha": {
+      "n_games": 5000,
+      "wins": 4659,
+      "wr": 0.9318,
+      "se": 0.0036,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 2343,
+      "wins_odd": 2316,
+      "wr_even": 0.9372,
+      "wr_odd": 0.9264
+    },
+    "hulalala": {
+      "n_games": 5000,
+      "wins": 4650,
+      "wr": 0.93,
+      "se": 0.0036,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 2341,
+      "wins_odd": 2309,
+      "wr_even": 0.9364,
+      "wr_odd": 0.9236
+    },
+    "yaoji": {
+      "n_games": 5000,
+      "wins": 3157,
+      "wr": 0.6314,
+      "se": 0.0068,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 1600,
+      "wins_odd": 1557,
+      "wr_even": 0.64,
+      "wr_odd": 0.6228
+    },
+    "jidan": {
+      "n_games": 5000,
+      "wins": 3570,
+      "wr": 0.714,
+      "se": 0.0064,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 1808,
+      "wins_odd": 1762,
+      "wr_even": 0.7232,
+      "wr_odd": 0.7048
+    },
+    "ez": {
+      "n_games": 5000,
+      "wins": 3293,
+      "wr": 0.6586,
+      "se": 0.0067,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 1670,
+      "wins_odd": 1623,
+      "wr_even": 0.668,
+      "wr_odd": 0.6492
+    },
+    "wjsd": {
+      "n_games": 5000,
+      "wins": 4439,
+      "wr": 0.8878,
+      "se": 0.0045,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 2228,
+      "wins_odd": 2211,
+      "wr_even": 0.8912,
+      "wr_odd": 0.8844
+    }
+  }
+}

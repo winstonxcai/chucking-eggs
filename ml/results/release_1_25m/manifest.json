@@ -1,0 +1,64 @@
+{
+  "release": "release_1_25m",
+  "description": "Evidence bundle for the 1.25M-update DART Guan Dan checkpoint and README leaderboard.",
+  "source_git_sha": "353a8eaab5f70d9f5685b07354fd566798893935",
+  "checkpoint": {
+    "path": "update_01250000.pt",
+    "source_path": "ml/runs/dart_l4/release_1_25m/update_01250000.pt",
+    "size_bytes": 18908585,
+    "sha256": "3d21991197e363023f99b7d21edd68f0c7c4b8779312688f171e46e7730a9bc0",
+    "training_config": "train_config.yaml"
+  },
+  "dart_eval": {
+    "path": "eval_5k_all_bots.json",
+    "sha256": "fedcdc7a462b27c060b7d6ffdc50ec13b49cfd5259fa8a0fb634523e4d24c67d",
+    "games_per_opponent": 5000,
+    "seed": 0,
+    "paired_fixed_deck": true,
+    "deck_seed_range": [
+      0,
+      2499
+    ],
+    "command": "uv run guandan-eval-dart --checkpoint ml/runs/dart_l4/release_1_25m/update_01250000.pt --opponent random greedy heuristic strategic xingdream lalala liuzha hulalala yaoji jidan ez wjsd --games 5000 --seed 0 --out ml/runs/dart_l4/release_1_25m/eval_5k_all_bots.json"
+  },
+  "glicko": {
+    "base_rulebot_matrix": "wr_matrix_rulebots_5k.json",
+    "injections": "glicko_injections.json",
+    "results": "glicko_results.json",
+    "rounded_package_elos": "elos.json",
+    "games_per_rulebot_matchup": 5000,
+    "rating_passes": 30,
+    "command_template": "uv run guandan-wr-matrix --games 5000 --load-matrix ml/results/release_1_25m/wr_matrix_rulebots_5k.json --inject dart,<opponent>,<wins>,5000 ... --rating-passes 30 --output ml/results/release_1_25m",
+    "note": "glicko_results.json has total_games=0 because it was derived from a loaded rule-bot matrix plus injected DART rows, not by running new games in that command."
+  },
+  "files": {
+    "elos.json": {
+      "size_bytes": 238,
+      "sha256": "ca912d8b1372418a7e93b2e349a6bddf32fc0da3d51b3e12ffeb2b3a613d8392"
+    },
+    "eval_5k_all_bots.json": {
+      "size_bytes": 3321,
+      "sha256": "fedcdc7a462b27c060b7d6ffdc50ec13b49cfd5259fa8a0fb634523e4d24c67d"
+    },
+    "glicko_injections.json": {
+      "size_bytes": 2818,
+      "sha256": "96d913e52b12016499694fdc32892a2ab1c800328afaf69c322edda02caaf861"
+    },
+    "glicko_results.json": {
+      "size_bytes": 30077,
+      "sha256": "bea19966d039e9499cc88893c10e05cb50fc9e1bcd3fdc61bd5fc9d7a0cdb749"
+    },
+    "train_config.yaml": {
+      "size_bytes": 5516,
+      "sha256": "b79c12316469574de21de484de580430571a15dc09d7730d733376e78cb7d601"
+    },
+    "update_01250000.pt": {
+      "size_bytes": 18908585,
+      "sha256": "3d21991197e363023f99b7d21edd68f0c7c4b8779312688f171e46e7730a9bc0"
+    },
+    "wr_matrix_rulebots_5k.json": {
+      "size_bytes": 25819,
+      "sha256": "09b44bf447c7bf7d4d7c281150744ef924cfa9b6a0546189811049a9cbc26210"
+    }
+  }
+}

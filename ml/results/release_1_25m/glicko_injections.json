@@ -1,0 +1,121 @@
+{
+  "description": "DART matchup rows injected into the 5000-game rule-bot round-robin to derive the release Glicko table.",
+  "source_eval": "eval_5k_all_bots.json",
+  "source_checkpoint": "ml/runs/dart_l4/release_1_25m/update_01250000.pt",
+  "eval_seed": 0,
+  "paired_fixed_deck": true,
+  "deck_seed_range": [
+    0,
+    2499
+  ],
+  "injections": [
+    {
+      "agent": "dart",
+      "opponent": "random",
+      "wins": 4993,
+      "losses": 7,
+      "n_games": 5000,
+      "winrate": 0.9986,
+      "wr_matrix_argument": "dart,random,4993,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "greedy",
+      "wins": 4953,
+      "losses": 47,
+      "n_games": 5000,
+      "winrate": 0.9906,
+      "wr_matrix_argument": "dart,greedy,4953,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "heuristic",
+      "wins": 4649,
+      "losses": 351,
+      "n_games": 5000,
+      "winrate": 0.9298,
+      "wr_matrix_argument": "dart,heuristic,4649,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "strategic",
+      "wins": 3878,
+      "losses": 1122,
+      "n_games": 5000,
+      "winrate": 0.7756,
+      "wr_matrix_argument": "dart,strategic,3878,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "xingdream",
+      "wins": 4779,
+      "losses": 221,
+      "n_games": 5000,
+      "winrate": 0.9558,
+      "wr_matrix_argument": "dart,xingdream,4779,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "lalala",
+      "wins": 4650,
+      "losses": 350,
+      "n_games": 5000,
+      "winrate": 0.93,
+      "wr_matrix_argument": "dart,lalala,4650,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "liuzha",
+      "wins": 4659,
+      "losses": 341,
+      "n_games": 5000,
+      "winrate": 0.9318,
+      "wr_matrix_argument": "dart,liuzha,4659,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "hulalala",
+      "wins": 4650,
+      "losses": 350,
+      "n_games": 5000,
+      "winrate": 0.93,
+      "wr_matrix_argument": "dart,hulalala,4650,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "yaoji",
+      "wins": 3157,
+      "losses": 1843,
+      "n_games": 5000,
+      "winrate": 0.6314,
+      "wr_matrix_argument": "dart,yaoji,3157,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "jidan",
+      "wins": 3570,
+      "losses": 1430,
+      "n_games": 5000,
+      "winrate": 0.714,
+      "wr_matrix_argument": "dart,jidan,3570,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "ez",
+      "wins": 3293,
+      "losses": 1707,
+      "n_games": 5000,
+      "winrate": 0.6586,
+      "wr_matrix_argument": "dart,ez,3293,5000"
+    },
+    {
+      "agent": "dart",
+      "opponent": "wjsd",
+      "wins": 4439,
+      "losses": 561,
+      "n_games": 5000,
+      "winrate": 0.8878,
+      "wr_matrix_argument": "dart,wjsd,4439,5000"
+    }
+  ]
+}

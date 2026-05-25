@@ -4,6 +4,9 @@ primary_region = 'lax'
 [build]
   dockerfile = "web/backend/Dockerfile"
 
+[deploy]
+  strategy = "immediate"
+
 [env]
   APP_ENV = "production"
   PORT = "8000"

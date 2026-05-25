@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH="/app/src:/app/web/backend"
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --extra web --no-install-project
+RUN uv sync --locked --only-group web-server --no-install-project
 
 # Build context is repo root: keep runtime paths aligned with docker-compose.
 COPY ml/src/ /app/src/

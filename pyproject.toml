@@ -95,6 +95,18 @@ check_untyped_defs = true
 warn_unused_ignores = true
 
 [dependency-groups]
+web-server = [
+    "fastapi>=0.104",
+    "starlette>=1.0.1",
+    "uvicorn[standard]>=0.29.0",
+    "websockets>=12.0",
+    "redis>=5.0",
+    "motor>=3.3",
+    "mongomock-motor>=0.0.35",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "slowapi>=0.1.9",
+]
 dev = [
     "fastapi>=0.104",
     "httpx>=0.28.1",

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.1.0 - 2026-05-25
+
+- Published the DART 1.25M checkpoint and release evidence bundle.
+- Added raw DART-vs-bot eval JSON, Glicko injection inputs, derived leaderboard output, checksum manifest, and compact training metrics summaries.
+- Added a GitHub Release artifact for the checkpoint/evaluation bundle.
+- Added README demo imagery, architecture figures, local DART web quick start, model card, evaluation guide, and release documentation.
+- Hardened WebSocket reconnect-token enforcement and expanded backend/frontend E2E coverage.
+- Aligned Docker/Fly deploy paths, locked runtimes, tightened production CORS, and disabled hosted DART serving for cost control.
+- Added portable DART CPU smoke coverage and early device validation for CUDA/MPS configs.
+
 - Added actor RNG state capture/restore for full DART checkpoint resume.
 - Made actor queue backpressure fail fast instead of silently dropping sample batches.
 - Added checkpoint-eval timeout support via `eval.max_wait_s`.

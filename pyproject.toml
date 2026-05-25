@@ -12,9 +12,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/PoohTheWinnie/chucking-eggs"
-Repository = "https://github.com/PoohTheWinnie/chucking-eggs"
-Issues = "https://github.com/PoohTheWinnie/chucking-eggs/issues"
+Homepage = "https://github.com/winstonxcai/chucking-eggs"
+Repository = "https://github.com/winstonxcai/chucking-eggs"
+Issues = "https://github.com/winstonxcai/chucking-eggs/issues"
 
 [project.scripts]
 guandan-analyze = "guandan.scripts.analyze:main"

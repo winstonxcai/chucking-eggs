@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/PoohTheWinnie/chucking-eggs
+git clone https://github.com/winstonxcai/chucking-eggs
 cd chucking-eggs
 uv sync --group dev
 ```

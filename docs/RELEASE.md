@@ -1,7 +1,7 @@
 # Release Process
 
-This repo does not yet publish formal binary artifacts. Use this checklist for
-GitHub releases and public result updates.
+This repo publishes source tags and model/evaluation bundles through GitHub
+Releases. Use this checklist for public result updates.
 
 ## Before Tagging
 
@@ -38,6 +38,9 @@ GitHub releases and public result updates.
 - Config file used for the run.
 - Evaluation commands and raw output.
 - Known limitations, including single-seed status and CUDA determinism notes.
+
+The DART 1.25M release bundle is attached to:
+<https://github.com/winstonxcai/chucking-eggs/releases/tag/v0.1.0>
 
 ## Versioning
 

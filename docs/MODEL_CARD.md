@@ -63,8 +63,11 @@ uv run guandan-eval-dart \
 
 ## Release Checklist
 
-Before publishing, verify `ml/results/release_1_25m/manifest.json` checksums and
-attach the same bundle to a GitHub Release or Hugging Face model repo if you want
-a release asset outside git. The raw learner metrics JSONL is intentionally not
+The release evidence is committed under `ml/results/release_1_25m/` and attached
+as a GitHub Release bundle at
+<https://github.com/winstonxcai/chucking-eggs/releases/tag/v0.1.0>.
+Before publishing a new checkpoint, verify
+`ml/results/release_1_25m/manifest.json` checksums and attach the same bundle to
+the new GitHub Release. The raw learner metrics JSONL is intentionally not
 committed because it is hundreds of megabytes; summarize or host it separately if
 needed.

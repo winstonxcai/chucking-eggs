@@ -109,7 +109,6 @@ does not reveal which opponent holds which card. See
 - [Evaluation guide](docs/EVALUATION.md): commands for win-rate, matrix, and leaderboard runs.
 - [Research overview](docs/RESEARCH.md): longer discussion of the DART formulation and benchmark setup.
 - Release evidence: [`ml/results/release_1_25m`](ml/results/release_1_25m) contains the checkpoint, raw eval JSON, Glicko injection inputs, derived leaderboard, checksums, and manifest.
-- Blog post: coming with the `v0.1.0` release.
 
 Evaluation commands:
 
@@ -133,7 +132,7 @@ Exact bitwise training reproducibility is not guaranteed across CUDA/cuDNN kerne
 
 ```bash
 # Install (Python 3.10+, requires uv: https://docs.astral.sh/uv/getting-started/installation/)
-git clone https://github.com/PoohTheWinnie/chucking-eggs && cd chucking-eggs
+git clone https://github.com/winstonxcai/chucking-eggs && cd chucking-eggs
 uv sync --group dev
 
 # Run tests
@@ -249,7 +248,7 @@ excluding evaluation sweeps.
 
 ## Web App
 
-Live app: [chucking-eggs.vercel.app](https://chucking-eggs.vercel.app) — solo, duo, and quad multiplayer with Elo ratings and leaderboard. Frontend is deployed on Vercel; backend is deployed on Fly.io.
+Live app: [chucking-eggs.vercel.app](https://chucking-eggs.vercel.app) — solo, duo, and quad multiplayer with Elo ratings and leaderboard. Frontend is deployed on Vercel; backend is deployed on Fly.io. The hosted app intentionally does not serve DART for cost reasons; use the local quick start above to play against the released checkpoint.
 
 Run it locally:
 
@@ -406,7 +405,7 @@ If you use this code or build on it, please cite the repo and the prior work it 
   author = {Cai, Winston},
   title = {DART: A Deep Monte Carlo RL Agent for Guan Dan},
   year = {2026},
-  url = {https://github.com/PoohTheWinnie/chucking-eggs}
+  url = {https://github.com/winstonxcai/chucking-eggs}
 }
 ```
 

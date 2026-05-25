@@ -86,6 +86,28 @@ def test_websocket_rejects_invalid_player_token() -> None:
         assert exc.value.code == 4003
 
 
+def test_websocket_rejects_missing_reconnect_token() -> None:
+    with TestClient(app) as client:
+        room = _create_room(client)
+
+        with client.websocket_connect(f"/ws/game/{room['game_id']}?seat=0") as ws:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                ws.receive_json()
+
+        assert exc.value.code == 4003
+
+
+def test_websocket_rejects_blank_reconnect_token() -> None:
+    with TestClient(app) as client:
+        room = _create_room(client)
+
+        with client.websocket_connect(f"/ws/game/{room['game_id']}?seat=0&token=") as ws:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                ws.receive_json()
+
+        assert exc.value.code == 4003
+
+
 def test_websocket_rejects_mismatched_player_id_and_token_without_room_corruption() -> None:
     with TestClient(app) as client:
         player_a = _claim(client, "tok-a")

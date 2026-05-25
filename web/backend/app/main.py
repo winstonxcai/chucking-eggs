@@ -474,7 +474,7 @@ async def game_websocket(
         await ws.close(code=4003, reason="Seat not valid")
         return
 
-    if token and room.reconnect_tokens.get(seat) != token:
+    if room.reconnect_tokens.get(seat) != token:
         await ws.accept()
         await ws.close(code=4003, reason="Invalid reconnect token")
         return

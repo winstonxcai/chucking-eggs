@@ -18,14 +18,15 @@ services:
       - MONGODB_URL=mongodb://mongo:27017
       - PYTHONPATH=/app/src:/app/web/backend
       - DATA_DIR=/app/data/web_backend
-      - DART_CHECKPOINT=/app/checkpoints/update_01250000.pt
+      - DART_WEB_ENABLED=true
+      - DART_CHECKPOINT=/app/ml/results/release_1_25m/update_01250000.pt
     depends_on:
       - mongo
     volumes:
       - ./ml/src:/app/src:ro
       - ./web/backend/app:/app/web/backend/app:ro
       - ./data/web_backend:/app/data/web_backend
-      - ./ml/checkpoints:/app/checkpoints:ro
+      - ./ml/results/release_1_25m:/app/ml/results/release_1_25m:ro
 
   frontend:
     image: node:22-alpine

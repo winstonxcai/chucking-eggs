@@ -1,0 +1,131 @@
+{
+  "description": "Postprocessing applied to append-only Modal learner metrics before plotting or reporting release training health.",
+  "source_volume": "pvguan-runs",
+  "source_path": "dart/dart_v5_baseline_400k/metrics_learner.jsonl",
+  "local_raw_path": "ml/runs/dart_l4_modal_1_35m/metrics_learner.jsonl",
+  "local_clean_path": "ml/runs/dart_l4_modal_1_35m/postprocessed/metrics_learner.jsonl",
+  "raw_rows": 119004,
+  "clean_rows": 114840,
+  "dropped_contained_segments": 3,
+  "duplicate_updates_skipped": 0,
+  "warmup_rows_per_resume": 20,
+  "update_start": 200010,
+  "update_end": 1350000,
+  "method": [
+    "Split raw JSONL at update decreases, large update jumps, or cumulative-counter resets.",
+    "Drop fully contained duplicate resume branches.",
+    "Cut each retained segment at the next retained resume start update.",
+    "Drop 20 warmup rows after each retained resume segment except the first.",
+    "Offset elapsed_s, fresh_samples_total, cumulative_drained, throttle_sleep_s, and throttle_sleeps so derived plots are monotonic."
+  ],
+  "kept_segments": [
+    {
+      "segment_id": 0,
+      "source_start_idx": 1,
+      "source_end_idx": 1502,
+      "source_start_update": 200010,
+      "source_end_update": 215020,
+      "source_rows": 1502,
+      "cut_at_next_start_update": 212510,
+      "dropped_for_next_resume": 252,
+      "dropped_warmup_rows": 0,
+      "kept_rows": 1250
+    },
+    {
+      "segment_id": 1,
+      "source_start_idx": 1503,
+      "source_end_idx": 6657,
+      "source_start_update": 212510,
+      "source_end_update": 264050,
+      "source_rows": 5155,
+      "cut_at_next_start_update": 262510,
+      "dropped_for_next_resume": 155,
+      "dropped_warmup_rows": 20,
+      "kept_rows": 4980
+    },
+    {
+      "segment_id": 2,
+      "source_start_idx": 7343,
+      "source_end_idx": 13744,
+      "source_start_update": 262510,
+      "source_end_update": 326520,
+      "source_rows": 6402,
+      "cut_at_next_start_update": 325010,
+      "dropped_for_next_resume": 152,
+      "dropped_warmup_rows": 20,
+      "kept_rows": 6230
+    },
+    {
+      "segment_id": 3,
+      "source_start_idx": 13745,
+      "source_end_idx": 36012,
+      "source_start_update": 325010,
+      "source_end_update": 547680,
+      "source_rows": 22268,
+      "cut_at_next_start_update": 547510,
+      "dropped_for_next_resume": 18,
+      "dropped_warmup_rows": 20,
+      "kept_rows": 22230
+    },
+    {
+      "segment_id": 4,
+      "source_start_idx": 36013,
+      "source_end_idx": 56262,
+      "source_start_update": 547510,
+      "source_end_update": 750000,
+      "source_rows": 20250,
+      "cut_at_next_start_update": 750010,
+      "dropped_for_next_resume": 0,
+      "dropped_warmup_rows": 20,
+      "kept_rows": 20230
+    },
+    {
+      "segment_id": 5,
+      "source_start_idx": 56275,
+      "source_end_idx": 77874,
+      "source_start_update": 750010,
+      "source_end_update": 966000,
+      "source_rows": 21600,
+      "cut_at_next_start_update": 950010,
+      "dropped_for_next_resume": 1600,
+      "dropped_warmup_rows": 20,
+      "kept_rows": 19980
+    },
+    {
+      "segment_id": 6,
+      "source_start_idx": 77875,
+      "source_end_idx": 92874,
+      "source_start_update": 950010,
+      "source_end_update": 1100000,
+      "source_rows": 15000,
+      "cut_at_next_start_update": 1100010,
+      "dropped_for_next_resume": 0,
+      "dropped_warmup_rows": 20,
+      "kept_rows": 14980
+    },
+    {
+      "segment_id": 7,
+      "source_start_idx": 92875,
+      "source_end_idx": 98003,
+      "source_start_update": 1100010,
+      "source_end_update": 1151290,
+      "source_rows": 5129,
+      "cut_at_next_start_update": 1150010,
+      "dropped_for_next_resume": 129,
+      "dropped_warmup_rows": 20,
+      "kept_rows": 4980
+    },
+    {
+      "segment_id": 8,
+      "source_start_idx": 99005,
+      "source_end_idx": 119004,
+      "source_start_update": 1150010,
+      "source_end_update": 1350000,
+      "source_rows": 20000,
+      "cut_at_next_start_update": null,
+      "dropped_for_next_resume": 0,
+      "dropped_warmup_rows": 20,
+      "kept_rows": 19980
+    }
+  ]
+}

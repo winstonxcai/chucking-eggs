@@ -32,6 +32,10 @@
     "note": "glicko_results.json has total_games=0 because it was derived from a loaded rule-bot matrix plus injected DART rows, not by running new games in that command."
   },
   "files": {
+    "README.md": {
+      "size_bytes": 958,
+      "sha256": "cb34bd7011c3eee599119a1128cbc3c4c0b977d7862de857c27a036aaf497cc8"
+    },
     "elos.json": {
       "size_bytes": 238,
       "sha256": "ca912d8b1372418a7e93b2e349a6bddf32fc0da3d51b3e12ffeb2b3a613d8392"
@@ -48,9 +52,21 @@
       "size_bytes": 30077,
       "sha256": "bea19966d039e9499cc88893c10e05cb50fc9e1bcd3fdc61bd5fc9d7a0cdb749"
     },
+    "metrics_postprocess_summary.json": {
+      "size_bytes": 4108,
+      "sha256": "73820005aef90dfeec68ff849a33ad10932225201b7a46890cf894c481b11e37"
+    },
     "train_config.yaml": {
       "size_bytes": 5516,
       "sha256": "b79c12316469574de21de484de580430571a15dc09d7730d733376e78cb7d601"
+    },
+    "training_metrics_summary.json": {
+      "size_bytes": 3589,
+      "sha256": "427c629b13060c57ee93dc6c416dab2b5715da06d147dfef793ffefb7ab405bc"
+    },
+    "training_metrics_summary.md": {
+      "size_bytes": 1263,
+      "sha256": "0fad3a1eeecd4fee943a110ecf0e77a597b94e2fb65cea98722ad647d9448727"
     },
     "update_01250000.pt": {
       "size_bytes": 18908585,
@@ -60,5 +76,14 @@
       "size_bytes": 25819,
       "sha256": "09b44bf447c7bf7d4d7c281150744ef924cfa9b6a0546189811049a9cbc26210"
     }
+  },
+  "training_metrics": {
+    "summary": "training_metrics_summary.json",
+    "summary_markdown": "training_metrics_summary.md",
+    "postprocess_summary": "metrics_postprocess_summary.json",
+    "source_volume": "pvguan-runs",
+    "source_path": "dart/dart_v5_baseline_400k/metrics_learner.jsonl",
+    "target_update": 1250000,
+    "raw_metrics_not_committed_reason": "Raw learner metrics are 1.38GB and append-only across resumed Modal jobs; this release commits compact postprocessed summaries instead."
   }
 }

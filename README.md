@@ -136,6 +136,27 @@ uv sync --group dev
 uv run pytest -q
 ```
 
+Run the web app locally and play against the released 1.25M-update DART model:
+
+```bash
+# Terminal 1: backend API + WebSocket server
+USE_MOCK_DB=true \
+DART_WEB_ENABLED=true \
+DART_CHECKPOINT=ml/results/release_1_25m/update_01250000.pt \
+uv run uvicorn app.main:app --app-dir web/backend --host 127.0.0.1 --port 8000
+
+# Terminal 2: frontend
+cd web/frontend
+nvm use
+npm ci
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 npm run dev
+```
+
+The frontend uses Node 22; `web/frontend/.nvmrc` is checked in for `nvm use`.
+Open `http://localhost:3000/game?difficulty=dart` to start a solo game directly
+against DART, or open `http://localhost:3000`, choose **Play Solo**, then select
+**DART**.
+
 The legal-move engine works out of the box via a pure-Python `guandan_rs`
 fallback. For faster local move generation, optionally build the native Rust
 extension:

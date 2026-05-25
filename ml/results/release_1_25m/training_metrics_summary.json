@@ -1,0 +1,119 @@
+{
+  "description": "Training health summary for the released DART 1.25M checkpoint, derived from postprocessed Modal learner metrics.",
+  "source_metrics": "pvguan-runs:dart/dart_v5_baseline_400k/metrics_learner.jsonl",
+  "postprocess_summary": "metrics_postprocess_summary.json",
+  "checkpoint": "update_01250000.pt",
+  "target_update": 1250000,
+  "target_row": {
+    "updates": 1250000,
+    "version": 6251,
+    "adjusted_elapsed_s_since_first_logged_row": 200890.6,
+    "adjusted_elapsed_hours_since_first_logged_row": 55.803,
+    "adjusted_fresh_samples_since_first_logged_row": 3435606016.0,
+    "buffer_total": 400000,
+    "buffer_per_player": {
+      "0": 83699,
+      "1": 179994,
+      "2": 70074,
+      "3": 66233
+    },
+    "replay_cumulative": 1.25,
+    "loss": 0.237801,
+    "grad_norm": 0.55183,
+    "grad_norm_trunk": 0.483412,
+    "head_losses": {
+      "0": 0.212964,
+      "1": 0.275623,
+      "2": 0.226689,
+      "3": 0.235926
+    }
+  },
+  "windows_ending_at_target": {
+    "last20": {
+      "rows": 20,
+      "update_start": 1249810,
+      "update_end": 1250000,
+      "loss_mean": 0.24805695,
+      "loss_median": 0.24884699999999998,
+      "grad_norm_median": 0.533446,
+      "grad_norm_trunk_median": 0.4573755,
+      "upd_per_sec_median": 4.951499999999999,
+      "learner_samples_per_sec_median": 20281.1,
+      "actor_samples_per_sec_median": 16370.300000000001,
+      "queue_depth_median": 64.0,
+      "replay_interval_median": 1.24,
+      "head_loss_mean": {
+        "0": 0.22178895,
+        "1": 0.27149065,
+        "2": 0.25110635000000003,
+        "3": 0.24784164999999997
+      },
+      "head_sample_count_mean": {
+        "0": 1024.0,
+        "1": 1024.0,
+        "2": 1024.0,
+        "3": 1024.0
+      }
+    },
+    "last100": {
+      "rows": 100,
+      "update_start": 1249010,
+      "update_end": 1250000,
+      "loss_mean": 0.24831994999999998,
+      "loss_median": 0.2487585,
+      "grad_norm_median": 0.5482994999999999,
+      "grad_norm_trunk_median": 0.4712925,
+      "upd_per_sec_median": 4.911,
+      "learner_samples_per_sec_median": 20115.6,
+      "actor_samples_per_sec_median": 16046.25,
+      "queue_depth_median": 64.0,
+      "replay_interval_median": 1.25,
+      "head_loss_mean": {
+        "0": 0.22132406,
+        "1": 0.27251743,
+        "2": 0.25195457,
+        "3": 0.24748355
+      },
+      "head_sample_count_mean": {
+        "0": 1024.0,
+        "1": 1024.0,
+        "2": 1024.0,
+        "3": 1024.0
+      }
+    },
+    "last500": {
+      "rows": 500,
+      "update_start": 1245010,
+      "update_end": 1250000,
+      "loss_mean": 0.247483298,
+      "loss_median": 0.2477505,
+      "grad_norm_median": 0.530958,
+      "grad_norm_trunk_median": 0.453716,
+      "upd_per_sec_median": 4.875,
+      "learner_samples_per_sec_median": 19967.949999999997,
+      "actor_samples_per_sec_median": 16054.05,
+      "queue_depth_median": 64.0,
+      "replay_interval_median": 1.25,
+      "head_loss_mean": {
+        "0": 0.21954665399999998,
+        "1": 0.27212745,
+        "2": 0.251126898,
+        "3": 0.247132178
+      },
+      "head_sample_count_mean": {
+        "0": 1024.0,
+        "1": 1024.0,
+        "2": 1024.0,
+        "3": 1024.0
+      }
+    }
+  },
+  "full_clean_log": {
+    "rows": 114840,
+    "update_start": 200010,
+    "update_end": 1350000,
+    "final_adjusted_elapsed_hours_since_first_logged_row": 61.65,
+    "final_update": 1350000
+  },
+  "reporting_recommendation": "Use last100 medians ending at update 1,250,000 for throughput and loss claims; use the target row only for checkpoint identity and buffer/replay state."
+}

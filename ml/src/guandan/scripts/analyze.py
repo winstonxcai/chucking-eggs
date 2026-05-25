@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
@@ -35,6 +36,19 @@ from ..dart.runtime.learners.loss_bucket_schema import (
 COLORS = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3"]
 HEAD_LABELS = ("leader", "first responder", "across", "last responder")
 SMOOTH_WINDOW = 5
+
+
+@dataclass
+class MetricSegment:
+    start_idx: int
+    end_idx: int
+    start_update: int
+    end_update: int
+    rows: list[dict]
+
+    @property
+    def n_rows(self) -> int:
+        return len(self.rows)
 
 
 @dataclass
@@ -117,6 +131,245 @@ def load_metrics(metrics_path: Path) -> RunMetrics:
     )
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    rows: list[dict] = []
+    for line in path.open():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+def _counter_decreased(row: dict, prev: dict, key: str) -> bool:
+    current = row.get(key)
+    previous = prev.get(key)
+    if not isinstance(current, (int, float)) or not isinstance(previous, (int, float)):
+        return False
+    return current < previous
+
+
+def _split_resume_segments(rows: list[dict], *, max_update_gap: int = 1000) -> list[MetricSegment]:
+    segments: list[MetricSegment] = []
+    current: list[dict] = []
+    start_idx = 1
+    prev: dict | None = None
+
+    for idx, row in enumerate(rows, start=1):
+        update = int(row.get("updates", 0))
+        boundary = False
+        if prev is not None:
+            prev_update = int(prev.get("updates", update))
+            update_delta = update - prev_update
+            boundary = (
+                update_delta <= 0
+                or update_delta > max_update_gap
+                or _counter_decreased(row, prev, "elapsed_s")
+                or _counter_decreased(row, prev, "fresh_samples_total")
+                or _counter_decreased(row, prev, "cumulative_drained")
+                or _counter_decreased(row, prev, "throttle_sleep_s")
+            )
+
+        if boundary and current:
+            segments.append(MetricSegment(
+                start_idx=start_idx,
+                end_idx=idx - 1,
+                start_update=int(current[0]["updates"]),
+                end_update=int(current[-1]["updates"]),
+                rows=current,
+            ))
+            current = []
+            start_idx = idx
+
+        current.append(row)
+        prev = row
+
+    if current:
+        segments.append(MetricSegment(
+            start_idx=start_idx,
+            end_idx=start_idx + len(current) - 1,
+            start_update=int(current[0]["updates"]),
+            end_update=int(current[-1]["updates"]),
+            rows=current,
+        ))
+    return segments
+
+
+def _drop_contained_segments(segments: list[MetricSegment]) -> list[MetricSegment]:
+    kept: list[MetricSegment] = []
+    for i, segment in enumerate(segments):
+        contained = False
+        for j, other in enumerate(segments):
+            if i == j:
+                continue
+            if (
+                other.start_update <= segment.start_update
+                and other.end_update >= segment.end_update
+                and other.n_rows > segment.n_rows
+            ):
+                contained = True
+                break
+        if not contained:
+            kept.append(segment)
+    return kept
+
+
+def _apply_cumulative_offsets(rows: list[dict], cumulative_keys: tuple[str, ...]) -> None:
+    offsets = {key: 0.0 for key in cumulative_keys}
+    segment_start_values: dict[str, float] = {}
+    current_segment: int | None = None
+    previous_row: dict | None = None
+
+    for row in rows:
+        segment_id = int(row["_postprocess"]["segment_id"])
+        if segment_id != current_segment:
+            if previous_row is not None:
+                for key in cumulative_keys:
+                    value = previous_row.get(key)
+                    if isinstance(value, (int, float)):
+                        offsets[key] = float(value)
+            current_segment = segment_id
+            segment_start_values = {
+                key: float(row.get(key, 0.0))
+                for key in cumulative_keys
+                if isinstance(row.get(key), (int, float))
+            }
+
+        for key in cumulative_keys:
+            value = row.get(key)
+            if not isinstance(value, (int, float)):
+                continue
+            start_value = segment_start_values.get(key, 0.0)
+            row[key] = round(offsets[key] + max(0.0, float(value) - start_value), 6)
+        previous_row = row
+
+
+def postprocess_resume_metrics(
+    metrics_path: Path,
+    out_path: Path,
+    *,
+    warmup_rows: int = 20,
+) -> dict:
+    """Clean append-only Modal metrics produced across multiple resumed jobs.
+
+    The raw log is preserved. The derived file removes superseded duplicate
+    resume branches, cuts each retained segment at the next resume start, drops
+    a tiny warmup after each resume, and offsets cumulative counters so systems
+    plots do not show artificial resets.
+    """
+    rows = _read_jsonl(metrics_path)
+    raw_segments = _split_resume_segments(rows)
+    kept_segments = _drop_contained_segments(raw_segments)
+
+    selected: list[dict] = []
+    segment_summaries: list[dict] = []
+    duplicate_updates = 0
+    seen_updates: set[int] = set()
+
+    for i, segment in enumerate(kept_segments):
+        next_start = (
+            kept_segments[i + 1].start_update
+            if i + 1 < len(kept_segments)
+            else None
+        )
+        segment_rows = [
+            dict(row)
+            for row in segment.rows
+            if next_start is None or int(row["updates"]) < next_start
+        ]
+        dropped_for_next = segment.n_rows - len(segment_rows)
+        warmup_drop = min(warmup_rows if i > 0 else 0, max(0, len(segment_rows) - 1))
+        segment_rows = segment_rows[warmup_drop:]
+
+        kept_count = 0
+        for row in segment_rows:
+            update = int(row["updates"])
+            if update in seen_updates:
+                duplicate_updates += 1
+                continue
+            seen_updates.add(update)
+            row["_postprocess"] = {
+                "segment_id": i,
+                "source_start_idx": segment.start_idx,
+                "source_end_idx": segment.end_idx,
+            }
+            selected.append(row)
+            kept_count += 1
+
+        segment_summaries.append({
+            "segment_id": i,
+            "source_start_idx": segment.start_idx,
+            "source_end_idx": segment.end_idx,
+            "source_start_update": segment.start_update,
+            "source_end_update": segment.end_update,
+            "source_rows": segment.n_rows,
+            "cut_at_next_start_update": next_start,
+            "dropped_for_next_resume": dropped_for_next,
+            "dropped_warmup_rows": warmup_drop,
+            "kept_rows": kept_count,
+        })
+
+    selected.sort(key=lambda row: int(row["updates"]))
+    _apply_cumulative_offsets(
+        selected,
+        (
+            "elapsed_s",
+            "fresh_samples_total",
+            "cumulative_drained",
+            "throttle_sleep_s",
+            "throttle_sleeps",
+        ),
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w") as f:
+        for row in selected:
+            f.write(json.dumps(row, separators=(",", ":")) + "\n")
+
+    summary = {
+        "raw_metrics": str(metrics_path),
+        "clean_metrics": str(out_path),
+        "raw_rows": len(rows),
+        "clean_rows": len(selected),
+        "raw_segments": [
+            {
+                "start_idx": s.start_idx,
+                "end_idx": s.end_idx,
+                "start_update": s.start_update,
+                "end_update": s.end_update,
+                "rows": s.n_rows,
+            }
+            for s in raw_segments
+        ],
+        "kept_segments": segment_summaries,
+        "dropped_contained_segments": len(raw_segments) - len(kept_segments),
+        "duplicate_updates_skipped": duplicate_updates,
+        "warmup_rows_per_resume": warmup_rows,
+        "update_start": int(selected[0]["updates"]) if selected else None,
+        "update_end": int(selected[-1]["updates"]) if selected else None,
+    }
+    return summary
+
+
+def postprocess_run_metrics(run_dir: Path, out_dir: Path, *, warmup_rows: int) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = run_dir / "metrics_learner.jsonl"
+    out_metrics = out_dir / "metrics_learner.jsonl"
+    summary = postprocess_resume_metrics(metrics_path, out_metrics, warmup_rows=warmup_rows)
+    summary_path = out_dir / "postprocess_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+
+    cfg_path = run_dir / "config.json"
+    if cfg_path.exists():
+        shutil.copy2(cfg_path, out_dir / "config.json")
+    print(f"wrote {out_metrics}")
+    print(f"wrote {summary_path}")
+    return out_dir
+
+
 def _slice_metrics(m: RunMetrics, mask: np.ndarray) -> RunMetrics:
     return RunMetrics(
         updates=m.updates[mask],
@@ -145,7 +398,8 @@ def causal_rolling_mean(x: np.ndarray, window: int) -> np.ndarray:
     out = np.empty_like(x)
     for i in range(len(x)):
         lo = max(0, i - window + 1)
-        out[i] = np.nanmean(x[lo : i + 1])
+        chunk = x[lo : i + 1]
+        out[i] = np.nan if np.isnan(chunk).all() else np.nanmean(chunk)
     return out
 
 
@@ -989,7 +1243,12 @@ def write_health_summary(run_dir: Path, out_path: Path) -> None:
 
     warnings: list[str] = []
     avg = np.nanmean(np.stack([m.losses[p] for p in range(4)], axis=0), axis=0)
-    final_avg = float(np.nanmean(avg[-min(20, len(avg)) :]))
+    recent_n = min(20, len(avg))
+    final_avg = float(np.nanmean(avg[-recent_n:]))
+    recent_upd_per_sec = float(np.nanmedian(m.upd_per_sec[-recent_n:]))
+    recent_samples_per_sec = float(np.nanmedian(m.samples_per_sec[-recent_n:]))
+    recent_actor_rate = float(np.nanmedian(m.actor_rate_samp_per_s[-recent_n:]))
+    recent_queue_depth = float(np.nanmedian(m.queue_depth[-recent_n:]))
     max_replay_cap = _read_max_replay(run_dir)
     finite_numbers = np.concatenate([
         avg[np.isfinite(avg)],
@@ -1004,7 +1263,9 @@ def write_health_summary(run_dir: Path, out_path: Path) -> None:
     if max_replay_cap is not None:
         finite_replay = m.replay_interval[np.isfinite(m.replay_interval)]
         if len(finite_replay):
-            exceed = float(np.mean(finite_replay > max_replay_cap))
+            # The logged interval ratio is rounded and often hovers at 1.25-1.27
+            # around a 1.25 cap. Warn only on material overshoot.
+            exceed = float(np.mean(finite_replay > max_replay_cap + 0.05))
             if exceed > 0.05:
                 warnings.append(
                     f"Replay interval exceeded max_replay_ratio={max_replay_cap:g} on {exceed:.1%} of logged intervals."
@@ -1031,8 +1292,12 @@ def write_health_summary(run_dir: Path, out_path: Path) -> None:
         "",
         f"- Rows: {len(m.updates):,}",
         f"- Update range: {int(m.updates[0]):,} to {int(m.updates[-1]):,}",
-        f"- Final average loss over last 20 rows: {final_avg:.6g}",
-        f"- Final update/sec: {float(m.upd_per_sec[-1]):.3g}",
+        f"- Adjusted wall time: {float(m.elapsed_s[-1]) / 3600:.2f} hours",
+        f"- Final average loss over last {recent_n} rows: {final_avg:.6g}",
+        f"- Recent median update/sec: {recent_upd_per_sec:.3g}",
+        f"- Recent median learner samples/sec: {recent_samples_per_sec:.3g}",
+        f"- Recent median actor samples/sec: {recent_actor_rate:.3g}",
+        f"- Recent median queue depth: {recent_queue_depth:.3g}",
         f"- Final cumulative replay ratio: {float(m.replay_cumulative[-1]):.3g}",
         "",
         "## Recent Head Sample Counts",
@@ -1065,22 +1330,39 @@ def main() -> None:
                     help="Output PNG path. Default: <run>/training_health.png")
     ap.add_argument("--recent-updates", type=int, default=50_000,
                     help="Window for training_health_recent_<N>.png.")
+    ap.add_argument("--postprocess-resumes", action="store_true",
+                    help=(
+                        "Create a postprocessed metrics file that removes superseded "
+                        "resume branches and offsets cumulative counters, then analyze it."
+                    ))
+    ap.add_argument("--postprocess-dir", type=Path, default=None,
+                    help="Directory for cleaned metrics and plots. Default: <run>/postprocessed.")
+    ap.add_argument("--resume-warmup-rows", type=int, default=20,
+                    help="Rows to drop after each retained resume segment when postprocessing.")
     args = ap.parse_args()
 
-    out_path = args.out or (args.run / "training_health.png")
-    plot(args.run, out_path)
+    run_dir = args.run
+    if args.postprocess_resumes:
+        run_dir = postprocess_run_metrics(
+            args.run,
+            args.postprocess_dir or (args.run / "postprocessed"),
+            warmup_rows=args.resume_warmup_rows,
+        )
+
+    out_path = args.out or (run_dir / "training_health.png")
+    plot(run_dir, out_path)
     if args.recent_updates > 0:
-        recent_out = args.run / f"training_health_recent_{_format_update_window(args.recent_updates)}.png"
-        plot(args.run, recent_out, recent_updates=args.recent_updates)
-    plot_systems_health(args.run, args.run / "systems_health.png")
-    plot_q_diagnostics(args.run, args.run / "q_diagnostics.png")
-    phase_out = args.run / "bucket_diagnostics.png"
+        recent_out = run_dir / f"training_health_recent_{_format_update_window(args.recent_updates)}.png"
+        plot(run_dir, recent_out, recent_updates=args.recent_updates)
+    plot_systems_health(run_dir, run_dir / "systems_health.png")
+    plot_q_diagnostics(run_dir, run_dir / "q_diagnostics.png")
+    phase_out = run_dir / "bucket_diagnostics.png"
     try:
-        plot_bucket_diagnostics(args.run, phase_out)
-        plot_bucket_shift(args.run, args.run / "bucket_shift.png")
+        plot_bucket_diagnostics(run_dir, phase_out)
+        plot_bucket_shift(run_dir, run_dir / "bucket_shift.png")
     except FileNotFoundError:
         pass
-    write_health_summary(args.run, args.run / "health_summary.md")
+    write_health_summary(run_dir, run_dir / "health_summary.md")
 
 
 if __name__ == "__main__":

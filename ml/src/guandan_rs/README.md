@@ -18,7 +18,5 @@ The Modal training image builds the wheel during image creation. Local users sho
 - `generate_responses(hand, level_rank, trick)`
 - `dedup_strategic(combos)`
 - `select_legal(hand, level_rank, trick)`
-- `mc_rollout(...)`
-- `mc_rollout_batch(...)`
 
-The Python fallback implements legal move generation and strategic deduplication. Monte Carlo rollout helpers require the native extension.
+The Python fallback implements legal move generation and strategic deduplication.

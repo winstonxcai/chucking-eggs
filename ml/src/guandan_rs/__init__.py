@@ -12,8 +12,6 @@ try:
         dedup_strategic,
         generate_all_leads,
         generate_responses,
-        mc_rollout,
-        mc_rollout_batch,
     )
     HAS_NATIVE = True
 except ImportError:
@@ -152,14 +150,6 @@ except ImportError:
                 seen.add(key)
                 out.append(combo)
         return out
-
-    def mc_rollout(*args, **kwargs) -> float:
-        raise NotImplementedError("mc_rollout requires the native _guandan_rs extension")
-
-    def mc_rollout_batch(*args, **kwargs) -> list[float]:
-        raise NotImplementedError(
-            "mc_rollout_batch requires the native _guandan_rs extension"
-        )
 
     def _unique_cards(cards: list[Card]) -> list[Card]:
         seen: set[tuple[int, int]] = set()
@@ -558,7 +548,5 @@ __all__ = [
     "generate_all_leads",
     "generate_responses",
     "select_legal",
-    "mc_rollout",
-    "mc_rollout_batch",
     "HAS_NATIVE",
 ]

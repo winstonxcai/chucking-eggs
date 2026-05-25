@@ -5,7 +5,6 @@ import importlib.util
 import random
 
 import guandan_rs
-import pytest
 
 from guandan.cards import Card, ComboType, Rank, Suit
 from guandan.combos import Combo
@@ -167,12 +166,3 @@ def test_guandan_rs_python_fallback_matches_public_select_legal(monkeypatch):
 
         legal = select_legal(env, player)
         env.step(legal[rng.randrange(len(legal))])
-
-
-def test_guandan_rs_python_fallback_rollout_helpers_are_explicit(monkeypatch):
-    fallback = _load_guandan_rs_without_native(monkeypatch)
-
-    with pytest.raises(NotImplementedError):
-        fallback.mc_rollout()
-    with pytest.raises(NotImplementedError):
-        fallback.mc_rollout_batch()

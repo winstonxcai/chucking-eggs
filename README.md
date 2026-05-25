@@ -66,13 +66,13 @@ with the new 1.25M DART matchups injected; the rule-bot matrix was not rerun.
 | Jidan | 1744 | NJUPT 2020 2nd place (NUAA) |
 | Yaoji | 1742 | NJUPT 2020 3rd place (NUAA) |
 | EZ | 1667 | NJUPT 2020 3rd place (HYIT) |
-| Strategic | 1597 | Hand-written heuristic |
+| Strategic | 1597 | Hand-written heuristic (authored by Winston Cai) |
 | XingDream | 1485 | NJUPT 2020 |
-| Heuristic | 1430 | Hand-written heuristic |
+| Heuristic | 1430 | Hand-written heuristic (authored by Winston Cai) |
 | Lalala | 1406 | NJUPT 2020 1st place (SEU) |
 | Hulalala | 1403 | NJUPT 2020 3rd place (SEU) |
 | Liuzha | 1401 | NJUPT 2020 2nd place (SEU) |
-| Greedy | 1361 | Hand-written baseline (this project) |
+| Greedy | 1361 | Hand-written baseline (authored by Winston Cai) |
 | WJSD | 1327 | NJUPT 2020 3rd place (SAU) |
 | Random | 1132 | |
 

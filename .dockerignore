@@ -11,7 +11,7 @@ __pycache__/
 data/
 ml/runs/
 ml/checkpoints/
-ml/src/guandan_rs/target/
+ml/src/guandan_rs/target
 
 web/backend/data/
 web/frontend/node_modules/

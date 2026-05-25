@@ -8,7 +8,8 @@
 
 Guan Dan is harder than it looks: **108 cards** (vs 52 for most card games), **wild cards that change every round** (the "level card" shifts which rank is wild each hand, making suit relationships non-stationary), and **2v2 team play** where the optimal move often means sacrificing your own position to set up your partner. Standard single-agent RL does not handle this cleanly. DART trains a shared Q-network across 32 parallel actors with trick-position-relative heads, routing each decision by the actor's role in the current trick (leading, 1st responder, across, last) rather than absolute seat.
 
-**Author**: Winston Cai · **License**: MIT
+**Author**: Winston Cai · **License**: MIT for original project code; vendored
+competition bots are separately attributed in [NOTICE](NOTICE).
 
 <p align="center">
   <img src="docs/assets/demo.png" alt="Chucking Eggs gameplay demo" width="760">
@@ -421,9 +422,9 @@ References:
 
 ## Acknowledgments
 
-The rule-based bot pool is the backbone of evaluation. All eight competition bots — Jidan, Yaoji, Lalala, Liuzha, Hulalala, WJSD, EZ, and the basis for XingDream — originate from the [NJUPT 2020 Guan Dan AI Competition](http://gameai.njupt.edu.cn/gameaicompetition/), with student authors at NUAA, SEU, NJUPT, SAU, and HYIT. Credit and gratitude to those teams — the entire evaluation track of this project is downstream of their work.
+The rule-based bot pool is the backbone of evaluation. The vendored competition bots — Jidan, Yaoji, Lalala, Liuzha, Hulalala, WJSD, EZ, and NoAI — originate from the [NJUPT 2020 Guan Dan AI Competition](http://gameai.njupt.edu.cn/gameaicompetition/), with student authors at NUAA, SEU, Fudan, SAU, and HYIT. Credit and gratitude to those teams — the entire evaluation track of this project is downstream of their work.
 
-- **Vendored bots** (Jidan, Yaoji, Lalala, Liuzha, Hulalala, WJSD, EZ) live under `ml/src/guandan/agents/_vendor/<bot>/` with the original team attribution preserved in each `__init__.py`. Changes were limited to import-path fixes and a thin adapter (`_vendor/adapter.py`) so each entry conforms to the `Agent.act(env, player) -> Combo` interface.
+- **Vendored bots** (Jidan, Yaoji, Lalala, Liuzha, Hulalala, WJSD, EZ, NoAI) live under `ml/src/guandan/agents/_vendor/<bot>/` with the original team attribution preserved in each `__init__.py`. Changes were limited to import-path fixes and a thin adapter (`_vendor/adapter.py`) so each entry conforms to the `Agent.act(env, player) -> Combo` interface.
 - **XingDream** (`xingdream_bot.py`) is a hand-written re-implementation of the strategy from the [xingdream/guandan](https://github.com/xingdream/guandan) repo, not a verbatim port.
-- **License note for vendored code:** the original competition submissions did not ship with an explicit open-source license. We include them in good faith as research artifacts under the academic norm of attributed use. If you are an original author and would prefer your code be removed or relicensed, please open an issue.
+- **License note for vendored code:** the MIT license applies to this repository except for vendored competition bot code under `ml/src/guandan/agents/_vendor/`. The original competition submissions did not ship with an explicit open-source license. We include them in good faith as research/evaluation artifacts unless and until original-author permission is obtained. If you are an original author and would prefer your code be removed or relicensed, please open an issue.
 - See [NOTICE](NOTICE) for the vendored-bot attribution and license-audit note.

@@ -1,16 +1,27 @@
 DART / chucking-eggs includes adapted rule-based Guan Dan bots for research
 benchmarking.
 
+License scope: the MIT license in this repository applies to project code
+except for vendored competition bot code under `ml/src/guandan/agents/_vendor/`.
+Those vendored bots are attributed below and are included only as
+research/evaluation artifacts unless and until original-author permission is
+obtained.
+
 Vendored competition submissions live under:
 
-- `ml/src/guandan/agents/_vendor/ez/`
-- `ml/src/guandan/agents/_vendor/hulalala/`
-- `ml/src/guandan/agents/_vendor/jidan/`
-- `ml/src/guandan/agents/_vendor/lalala/`
-- `ml/src/guandan/agents/_vendor/liuzha/`
-- `ml/src/guandan/agents/_vendor/noai/`
-- `ml/src/guandan/agents/_vendor/wjsd/`
-- `ml/src/guandan/agents/_vendor/yaoji/`
+| Bot | Source team / author | Institution | Source URL | Local path | License status |
+| --- | --- | --- | --- | --- | --- |
+| `lalala` | lalala / Li Jing (李菁) | Southeast University (东南大学) | [NJUPT code disclosure page](http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html) | `ml/src/guandan/agents/_vendor/lalala/` | No explicit license found |
+| `liuzha` | 小子六炸同花顺 / Yan Hui (严辉) | Southeast University (东南大学) | [NJUPT code disclosure page](http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html) | `ml/src/guandan/agents/_vendor/liuzha/` | No explicit license found |
+| `noai` | 不会AI怎么办 / Chen Yuguan (陈羽观) | Fudan University | [NJUPT code disclosure page](http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html) | `ml/src/guandan/agents/_vendor/noai/` | No explicit license found |
+| `jidan` | 鸡蛋灌饼 / Sun Hailong (孙海龙) | Nanjing University of Aeronautics and Astronautics (南京航空航天大学) | [NJUPT code disclosure page](http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html) | `ml/src/guandan/agents/_vendor/jidan/` | No explicit license found |
+| `hulalala` | hulalala / Yang Xinyan (杨欣妍) | Southeast University (东南大学) | [NJUPT code disclosure page](http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html) | `ml/src/guandan/agents/_vendor/hulalala/` | No explicit license found |
+| `yaoji` | 幺鸡小分队 / Qian Zenghui (钱增辉) | Nanjing University of Aeronautics and Astronautics (南京航空航天大学) | [NJUPT code disclosure page](http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html) | `ml/src/guandan/agents/_vendor/yaoji/` | No explicit license found |
+| `wjsd` | 我就是掼蛋 / Liang Kai (梁凯) | Shenyang Aerospace University (沈阳航空航天大学) | [NJUPT code disclosure page](http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html) | `ml/src/guandan/agents/_vendor/wjsd/` | No explicit license found |
+| `ez` | ez / Wu Jun (吴俊) | Huaiyin Institute of Technology (淮阴工学院) | [NJUPT code disclosure page](http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html) | `ml/src/guandan/agents/_vendor/ez/` | No explicit license found |
+
+Source page:
+`http://gameai.njupt.edu.cn/gameaicompetition/guandan_machine_code/index.html`
 
 These bots originate from the NJUPT 2020 Guan Dan AI Competition submissions
 and preserve original author/team attribution in their package files where it

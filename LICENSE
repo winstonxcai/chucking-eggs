@@ -1,3 +1,10 @@
+License scope note:
+
+The MIT license applies to this repository except for vendored competition bot
+code under `ml/src/guandan/agents/_vendor/`, which is attributed separately in
+NOTICE and is included only as a research/evaluation artifact unless and until
+original-author permission is obtained.
+
 MIT License
 
 Copyright (c) 2026 Winston Cai

@@ -21,13 +21,12 @@ function GameContent() {
   const [playingAgain, setPlayingAgain] = useState(false);
 
   const difficulty = searchParams.get("difficulty") || "greedy";
+  const urlGameId = searchParams.get("game_id");
+  const urlToken = searchParams.get("token");
+  const urlSeat = searchParams.get("seat");
 
   useEffect(() => {
     // URL params take priority (from lobby navigation)
-    const urlGameId = searchParams.get("game_id");
-    const urlToken = searchParams.get("token");
-    const urlSeat = searchParams.get("seat");
-
     if (urlGameId && urlToken) {
       const seatNum = urlSeat ? parseInt(urlSeat, 10) : 0;
       setGameId(urlGameId);
@@ -72,7 +71,7 @@ function GameContent() {
       }
     }
     createGame();
-  }, [difficulty, searchParams]);
+  }, [difficulty, urlGameId, urlToken, urlSeat]);
 
   const { gameState, aiThinking, gameOver, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, autoPlayed, rematch, forfeit, sendAbort, hasPlayedFirstMove } =
     useGameSocket(gameId, reconnectToken, seat);

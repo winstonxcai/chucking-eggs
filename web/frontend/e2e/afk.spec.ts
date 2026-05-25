@@ -28,12 +28,12 @@ async function waitForRope(page: import("@playwright/test").Page, timeout = 30_0
   const rope = page.locator("[data-testid='rope-timer']");
   while (Date.now() < deadline) {
     if (await rope.isVisible().catch(() => false)) return rope;
-    const playControl = page.locator("button").filter({ hasText: /^(Select|Play)/ }).first();
+    const playControl = page.getByTestId("play-button").first();
     if (await playControl.isVisible().catch(() => false)) {
-      await page.locator('[data-testid="player-hand"] [data-card-id]').first().click();
-      const playButton = page.locator("button").filter({ hasText: /^Play/ }).first();
+      await page.locator('[data-testid="player-hand"] [data-card-id]').first().click({ timeout: 1_000 }).catch(() => {});
+      const playButton = page.getByTestId("play-button").first();
       if (await playButton.isEnabled().catch(() => false)) {
-        await playButton.click();
+        await playButton.click({ timeout: 1_000 }).catch(() => {});
       }
     }
     await page.waitForTimeout(500);
@@ -87,15 +87,14 @@ test("AFK auto-play fires after timeout — server must be started with HUMAN_TU
   // Locally: kill docker backend, then `npx playwright test e2e/afk.spec.ts` (Playwright starts fresh).
   // CI: playwright.config.ts passes HUMAN_TURN_TIMEOUT_S=0 to the backend webServer command.
   test.skip(process.env.HUMAN_TURN_TIMEOUT_S !== "0", "Needs short AFK timeout — start backend with HUMAN_TURN_TIMEOUT_S=0");
-  test.slow(); // mark as potentially slow
+  test.setTimeout(60_000);
 
   await gotoSeededSolo(page, request);
   await expect(page.locator("[data-card-id]").first()).toBeVisible({ timeout: 15_000 });
 
-  // Wait for rope timer to appear (it's our turn)
-  const rope = await waitForRope(page, 15_000);
-
-  // Do NOT interact — wait for the 5-second backend timeout to trigger auto-play
-  // Then the rope should disappear (no longer our turn)
-  await expect(rope).not.toBeVisible({ timeout: 10_000 });
+  // Seed 3 starts on the human seat. With HUMAN_TURN_TIMEOUT_S=0 the backend
+  // may auto-play before Playwright can reliably click or observe the rope, so
+  // assert the user-visible auto-play notification instead of driving the turn.
+  await expect(page.getByTestId("toast").filter({ hasText: /Time's up/ })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("rope-timer")).not.toBeVisible({ timeout: 15_000 });
 });

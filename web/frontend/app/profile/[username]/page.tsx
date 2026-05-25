@@ -106,11 +106,12 @@ function ProfileContent() {
       <div className="bg-surface border border-border rounded-xl px-6 py-5 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">{player.username}</h1>
-          {player.created_at && (
-            <p className="text-xs text-text-secondary mt-1">
-              Joined {new Date(player.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-            </p>
-          )}
+          <p className="text-xs text-text-secondary mt-1">
+            {player.games_played} {player.games_played === 1 ? "game" : "games"} played
+            {player.created_at
+              ? ` · joined ${new Date(player.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" })}`
+              : ""}
+          </p>
         </div>
         <div className="flex flex-col items-end">
           <span className="text-2xl font-bold text-accent">{player.elo}</span>

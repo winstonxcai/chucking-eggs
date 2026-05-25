@@ -5,6 +5,7 @@ export const STORAGE_KEYS = {
   SEAT: "gd_seat",
   // localStorage — player identity
   PLAYER_ID: "ce_player_id",
+  PLAYER_TOKEN: "ce_player_token",
   USERNAME: "ce_username",
   ELO: "ce_elo",
 } as const;

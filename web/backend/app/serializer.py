@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+from copy import deepcopy
+from functools import lru_cache
+
 from guandan.cards import (
     BOMB_TYPES,
     Card,
@@ -13,6 +17,8 @@ from guandan.cards import (
 )
 from guandan.combos import Combo, generate_all_leads, generate_responses
 from guandan.game import GuanDanEnv
+
+logger = logging.getLogger(__name__)
 
 SUIT_SYMBOLS = {Suit.SPADE: "\u2660", Suit.HEART: "\u2665", Suit.DIAMOND: "\u2666", Suit.CLUB: "\u2663"}
 RANK_NAMES = {
@@ -170,9 +176,42 @@ def _compute_sf_options(
     return options
 
 
+def _card_cache_key(cards: set[Card]) -> tuple[tuple[int, int, int], ...]:
+    return tuple(sorted((int(c.rank), int(c.suit), int(c.deck)) for c in cards))
+
+
+def _cards_from_cache_key(card_key: tuple[tuple[int, int, int], ...]) -> set[Card]:
+    return {Card(rank, suit, deck) for rank, suit, deck in card_key}
+
+
+@lru_cache(maxsize=512)
+def _cached_hand_analysis(
+    hand_key: tuple[tuple[int, int, int], ...],
+    grouped_key: tuple[str, ...],
+    level_rank: int,
+) -> tuple[list[dict], dict[str, list[dict]]]:
+    hand = _cards_from_cache_key(hand_key)
+    all_lead_raw = generate_all_leads(hand, level_rank)
+    all_lead = [c for c in all_lead_raw if c.type != ComboType.PASS]
+    all_lead.sort(key=lambda c: combo_sort_key(c, level_rank))
+    all_moves = [combo_to_dto(c, level_rank) for c in all_lead]
+    sf_options = _compute_sf_options(hand, set(grouped_key), level_rank)
+    return all_moves, sf_options
+
+
 def _rotate(seat: int, human_seat: int) -> int:
     """Rotate absolute seat to viewer-relative seat (viewer is always 0)."""
     return (seat - human_seat + 4) % 4
+
+
+def _safe_rewards(env: GuanDanEnv) -> dict[int, float] | None:
+    if not env.done:
+        return None
+    try:
+        return env.get_rewards()
+    except (ValueError, IndexError):
+        logger.debug("Game is marked done with incomplete finish order: %s", env.finish_order)
+        return None
 
 
 def serialize_game_state(
@@ -261,13 +300,15 @@ def serialize_game_state(
                 legal_moves.insert(insert_pos, combo_to_dto(combo, env.level_rank))
                 insert_pos += 1
 
-    # All combos from full hand in leading context (for hand analysis sidebar)
-    all_lead_raw = generate_all_leads(env.hands[human_seat], env.level_rank)
-    all_lead = [c for c in all_lead_raw if c.type != ComboType.PASS]
-    all_lead.sort(key=lambda c: combo_sort_key(c, env.level_rank))
-    all_moves = [combo_to_dto(c, env.level_rank) for c in all_lead]
-
-    sf_options = _compute_sf_options(env.hands[human_seat], grouped_ids, env.level_rank)
+    # Hand-analysis payloads are identical across many WebSocket sends while a
+    # viewer's hand/groups do not change, so cache the expensive combo search.
+    all_moves, sf_options = _cached_hand_analysis(
+        _card_cache_key(env.hands[human_seat]),
+        tuple(sorted(grouped_ids)),
+        env.level_rank,
+    )
+    all_moves = deepcopy(all_moves)
+    sf_options = deepcopy(sf_options)
 
     # Reveal partner's hand once the human player has finished
     partner_seat = (human_seat + 2) % 4
@@ -302,7 +343,7 @@ def serialize_game_state(
         "finish_order": [_rotate(s, human_seat) for s in env.finish_order],
         "done": env.done,
         "level_rank": env.level_rank,
-        "rewards": env.get_rewards() if env.done else None,
+        "rewards": _safe_rewards(env),
         "groups": groups or [],
         "sf_options": sf_options,
         "partner_hand": partner_hand,

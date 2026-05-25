@@ -6,15 +6,16 @@ Usage:
     agent = make_agent("strategic", level_rank=Rank.TWO)
     combo = agent.act(env, player)
 
-Use ``make_agent("dart", checkpoint=<path>)`` to load a trained DART or
-GuanZero comparison checkpoint. See ``ml/LOGBOOK.md`` for the chronology of
-prior training attempts.
+Use ``make_agent("dart")`` to load the released DART checkpoint. Web-facing
+registration is local-only; override the path with ``checkpoint=`` or the
+``DART_CHECKPOINT`` environment variable.
 """
 
 from __future__ import annotations
 
 from ..cards import Rank
 from .base import Agent
+from .dart_bot import DartBot, is_dart_available, is_local_dart_enabled
 from .ez_bot import EzBot
 from .greedy_bot import GreedyBot
 from .heuristic_bot import HeuristicBot
@@ -38,6 +39,7 @@ __all__ = [
     "GreedyBot",
     "HeuristicBot",
     "StrategicBot",
+    "DartBot",
     "EzBot",
     "XingDreamBot",
     "NoAIBot",
@@ -64,6 +66,8 @@ AGENT_REGISTRY: dict[str, type[Agent]] = {
     "ez": EzBot,
     "wjsd": WjsdBot,
 }
+if is_local_dart_enabled() and is_dart_available():
+    AGENT_REGISTRY["dart"] = DartBot
 
 AGENT_META: dict[str, dict] = {
     name: {
@@ -83,18 +87,13 @@ def make_agent(
     checkpoint: str | None = None,
     **kwargs,
 ) -> Agent:
-    if name == "dart":
-        if checkpoint is None:
-            raise ValueError("make_agent('dart') requires a checkpoint= path")
-        from guandan.dart.agent import (
-            DartBot,  # lazy: avoids torch import for rule-based runs
-        )
-        return DartBot.load(checkpoint)
     if name == "llm":
         from .llm_bot import LLMBot  # lazy: avoids litellm import for rule-based runs
         if "model" not in kwargs:
             raise ValueError("make_agent('llm') requires a model= name (e.g. 'gpt-4o-mini')")
         return LLMBot(level_rank=level_rank, **kwargs)
+    if name == "dart":
+        return DartBot(level_rank=level_rank, checkpoint=checkpoint, **kwargs)
     cls = AGENT_REGISTRY[name]
     if name == "random":
         return cls()

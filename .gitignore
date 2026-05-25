@@ -50,9 +50,15 @@ ml/LOGBOOK.md
 
 # Data (generated training data, game logs)
 /data/
+/web/backend/data/
 
 # Playwright test results
 test-results/
+playwright-report/
+web/frontend/.next-e2e/
+web/frontend/.next-integration/
+web/frontend/test-results/
+web/frontend/playwright-report/
 
 # Log files
 *.log

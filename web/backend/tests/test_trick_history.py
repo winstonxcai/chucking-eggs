@@ -7,10 +7,8 @@ can verify the data structure without standing up a full game server.
 from __future__ import annotations
 
 import pytest
-from httpx import AsyncClient
-
 from guandan.cards import ComboType
-
+from httpx import AsyncClient
 
 # ---------------------------------------------------------------------------
 # Helpers

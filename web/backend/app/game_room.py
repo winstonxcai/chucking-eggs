@@ -5,12 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import random
 import secrets
 import time
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime
 
 from fastapi import WebSocket
 from guandan.cards import ComboType, Rank
@@ -19,17 +17,27 @@ from guandan.game import GuanDanEnv
 
 from .ai_service import AIService
 from .card_matcher import find_matching_combo
+from .persistence import (
+    compute_elo_changes,
+    compute_forfeit_elo_change,
+    persist_completed_game,
+    persist_forfeit_game,
+)
 from .serializer import card_to_dto, combo_to_dto, serialize_game_state, sort_hand
+from .settings import get_settings
+from .tasks import create_logged_task
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 
-ACTION_PAUSE = 0.3    # seconds each AI play is visible before next turn
-AI_THINK_PAUSE = 0.2  # seconds for "thinking" animation before AI move
+SETTINGS = get_settings()
+DATA_DIR = SETTINGS.data_dir
 
-DISCONNECT_TAKEOVER_S: int = int(os.getenv("DISCONNECT_TAKEOVER_S", "60"))
-HUMAN_TURN_TIMEOUT_S: int = int(os.getenv("HUMAN_TURN_TIMEOUT_S", "30"))
+ACTION_PAUSE = SETTINGS.action_pause_s    # seconds each AI play is visible before next turn
+AI_THINK_PAUSE = SETTINGS.ai_think_pause_s  # seconds for "thinking" animation before AI move
+
+DISCONNECT_TAKEOVER_S = SETTINGS.disconnect_takeover_s
+HUMAN_TURN_TIMEOUT_S = SETTINGS.human_turn_timeout_s
 
 
 def _human_seats_for_mode(mode: str) -> set[int]:
@@ -91,6 +99,7 @@ class GameRoom:
         self.turn_deadlines: dict[int, float] = {}
         # Cached wall-clock deadline (Unix ms) — avoids jitter from repeated conversion
         self.turn_deadline_wallclock_ms: dict[int, int] = {}
+        self._turn_timeout_tasks: dict[int, asyncio.Task] = {}
 
         # Disconnect takeover tasks
         self._takeover_tasks: dict[int, asyncio.Task] = {}
@@ -110,6 +119,41 @@ class GameRoom:
         elif mode == "quad":
             for seat in [1, 2, 3]:
                 self.player_infos[seat] = {"name": f"Player {seat + 1}", "avatar": None, "elo": 1200}
+
+    @property
+    def start_time(self) -> float:
+        return self._start_time
+
+    def clear_turn_deadline(self, seat: int) -> None:
+        self.turn_deadlines.pop(seat, None)
+        self.turn_deadline_wallclock_ms.pop(seat, None)
+        task = self._turn_timeout_tasks.pop(seat, None)
+        if task and task is not asyncio.current_task():
+            task.cancel()
+
+    def clear_all_turn_deadlines(self) -> None:
+        for seat in set(self.turn_deadlines) | set(self._turn_timeout_tasks):
+            self.clear_turn_deadline(seat)
+
+    def ensure_turn_deadline(self, seat: int) -> None:
+        """Start or refresh the AFK deadline for the active human seat."""
+        self.clear_turn_deadline(seat)
+        deadline = asyncio.get_event_loop().time() + HUMAN_TURN_TIMEOUT_S
+        self.turn_deadlines[seat] = deadline
+        self.turn_deadline_wallclock_ms[seat] = int((time.time() + HUMAN_TURN_TIMEOUT_S) * 1000)
+        self._turn_timeout_tasks[seat] = create_logged_task(
+            self._auto_play_after_deadline(seat, deadline),
+            name=f"turn-timeout:{self.game_id}:{seat}",
+        )
+
+    async def _auto_play_after_deadline(self, seat: int, deadline: float) -> None:
+        min_wait = 0.05 if HUMAN_TURN_TIMEOUT_S == 0 else 0.5
+        await asyncio.sleep(max(min_wait, deadline - asyncio.get_event_loop().time()))
+        if self.turn_deadlines.get(seat) != deadline:
+            return
+        if seat not in self.connections:
+            return
+        await self.handle_afk_timeout(seat)
 
     # ---------------------------------------------------------------------------
     # Difficulty
@@ -193,8 +237,9 @@ class GameRoom:
         if existing:
             existing.cancel()
         if not self.env.done:
-            self._takeover_tasks[seat] = asyncio.create_task(
-                self._takeover_after_delay(seat)
+            self._takeover_tasks[seat] = create_logged_task(
+                self._takeover_after_delay(seat),
+                name=f"disconnect-takeover:{self.game_id}:{seat}",
             )
 
     def cancel_disconnect_takeover(self, seat: int) -> None:
@@ -334,13 +379,29 @@ class GameRoom:
     # Game result persistence (DB + Elo)
     # ---------------------------------------------------------------------------
 
+    def _completed_game_rewards(self) -> dict[int, float] | None:
+        try:
+            return self.env.get_rewards()
+        except (ValueError, IndexError):
+            logger.debug(
+                "Game %s is done with incomplete finish order: %s",
+                self.game_id,
+                self.env.finish_order,
+            )
+            return None
+
     def _record_game_result_local(self) -> None:
         """Append game record to local JSONL file (always runs, no DB dep)."""
         primary = min(self.human_seats) if self.human_seats else 0
         fo = self.env.finish_order
         human_pos = fo.index(primary) + 1 if primary in fo else -1
-        rewards = self.env.get_rewards()
-        team_result = "win" if rewards[primary] > 0 else "loss"
+        rewards = self._completed_game_rewards()
+        primary_reward = rewards.get(primary) if rewards else None
+        team_result = (
+            "win" if primary_reward is not None and primary_reward > 0
+            else "loss" if primary_reward is not None
+            else "unknown"
+        )
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": self.mode,
@@ -349,7 +410,7 @@ class GameRoom:
             "finish_order": fo,
             "human_finish_pos": human_pos,
             "team_result": team_result,
-            "reward": rewards[primary],
+            "reward": primary_reward,
             "n_moves": len(self.env.move_history),
             "duration_s": int(time.time() - self._start_time),
             "players": [
@@ -362,114 +423,22 @@ class GameRoom:
                 for i, info in enumerate(self.player_infos)
             ],
         }
-        DATA_DIR.mkdir(exist_ok=True)
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
         with open(DATA_DIR / "human_games.jsonl", "a") as f:
             f.write(json.dumps(record) + "\n")
 
-    async def _compute_elo_changes(self, rewards: dict[int, int]) -> dict[int, dict]:
-        """Fetch player docs and compute Elo changes. Returns {} on any DB error.
-
-        Return value: {seat: {delta, before, after, username}}
-        Runs before game-over broadcast so Elo info can be included in the message.
-        """
-        try:
-            from . import db as _db
-            from .elo import BOT_ELOS, compute_elo_delta
-
-            human_docs: dict[int, dict] = {}
-            for seat in self.human_seats:
-                pid = self.player_ids.get(seat)
-                if pid:
-                    doc = await asyncio.wait_for(_db.get_player_by_id(pid), timeout=5.0)
-                    if doc:
-                        human_docs[seat] = doc
-
-            def _seat_elo(seat: int) -> int:
-                if seat in human_docs:
-                    return human_docs[seat].get("elo", 1200)
-                return self.player_infos[seat].get("elo") or BOT_ELOS.get(self.difficulty, 1500)
-
-            finish_order = self.env.finish_order
-            elo_changes: dict[int, dict] = {}
-            for seat in self.human_seats:
-                if seat not in human_docs:
-                    continue
-                partner = 2 if seat == 0 else (0 if seat == 2 else (3 if seat == 1 else 1))
-                opps = [s for s in range(4) if s != seat and s != partner]
-                delta = compute_elo_delta(
-                    player_elo=human_docs[seat].get("elo", 1200),
-                    partner_elo=_seat_elo(partner),
-                    opp1_elo=_seat_elo(opps[0]),
-                    opp2_elo=_seat_elo(opps[1]),
-                    player_games=human_docs[seat].get("games_played", 0),
-                    finish_pos=finish_order.index(seat),
-                    reward=rewards[seat],
-                )
-                before = human_docs[seat].get("elo", 1200)
-                elo_changes[seat] = {
-                    "delta": delta,
-                    "before": before,
-                    "after": before + delta,
-                    "username": human_docs[seat].get("username"),
-                }
-            return elo_changes
-        except Exception:
-            logger.exception("Elo computation failed for game %s", self.game_id)
-            return {}
-
-    async def _persist_to_db(self, rewards: dict[int, int], elo_changes: dict[int, dict]) -> None:
-        """Save game to MongoDB and update Elo. Uses pre-computed elo_changes.
-
-        Wrapped in try/except — a DB failure must NOT block game-over delivery.
-        """
-        try:
-            from . import db as _db
-
-            fo = self.env.finish_order
-            game_doc = {
-                "_id": self.game_id,
-                "mode": self.mode,
-                "difficulty": self.difficulty,
-                "duration_seconds": int(time.time() - self._start_time),
-                "played_at": datetime.now(timezone.utc),
-                "trick_history": self.trick_history,  # absolute seats (unrotated)
-                "players": [
-                    {
-                        "player_id": self.player_ids.get(seat) if seat in self.human_seats else None,
-                        # Use actual username (from elo_changes) so profile page can match by display_name
-                        "display_name": (
-                            elo_changes[seat]["username"]
-                            if seat in elo_changes and elo_changes[seat].get("username")
-                            else self.player_infos[seat]["name"]
-                        ),
-                        "is_bot": seat not in self.human_seats,
-                        "seat": seat,
-                        "finish_pos": fo.index(seat) + 1 if seat in fo else -1,
-                        "team_result": (
-                            "win" if rewards[seat] > 0
-                            else ("loss" if rewards[seat] < 0 else "neutral")
-                        ),
-                        "elo_before": elo_changes.get(seat, {}).get("before"),
-                        "elo_after": elo_changes.get(seat, {}).get("after"),
-                    }
-                    for seat in range(4)
-                ],
-            }
-            await _db.save_game(game_doc)
-            for seat, change in elo_changes.items():
-                pid = self.player_ids.get(seat)
-                if pid:
-                    await _db.update_player_elo(pid, change["after"])
-        except Exception:
-            logger.exception("DB persistence failed for game %s — game-over still delivered", self.game_id)
-
     async def _send_game_over(self) -> None:
         self._record_game_result_local()
-        rewards = self.env.get_rewards()
+        rewards = self._completed_game_rewards()
+        if rewards is None:
+            return
         # Compute Elo before broadcasting so the modal can show the change
-        elo_changes = await self._compute_elo_changes(rewards)
+        elo_changes = await compute_elo_changes(self, rewards)
         # DB persistence runs in background — never blocks game-over broadcast
-        asyncio.create_task(self._persist_to_db(rewards, elo_changes))
+        create_logged_task(
+            persist_completed_game(self, rewards, elo_changes),
+            name=f"persist-completed-game:{self.game_id}",
+        )
         # Send per-viewer with rotated seats (frontend always sees itself as seat 0)
         for viewer in list(self.connections.keys()):
             def r(s: int, v: int = viewer) -> int:
@@ -490,6 +459,7 @@ class GameRoom:
                     self._rotate_trick_snapshot(t, viewer) for t in self.trick_history
                 ],
             })
+        self.clear_all_turn_deadlines()
 
     # ---------------------------------------------------------------------------
     # Forfeit
@@ -503,70 +473,11 @@ class GameRoom:
         if self.env.done:
             return
         self.env.done = True
+        self.clear_all_turn_deadlines()
         forfeiter_name = self.player_infos[forfeiter_seat]["name"]
 
-        # Compute ELO for forfeiter only
-        elo_changes: dict[int, dict] = {}
-        try:
-            from . import db as _db
-            from .elo import BOT_ELOS, compute_forfeit_elo
-
-            pid = self.player_ids.get(forfeiter_seat)
-            if pid:
-                doc = await asyncio.wait_for(_db.get_player_by_id(pid), timeout=5.0)
-                if doc:
-                    partner = 2 if forfeiter_seat == 0 else (0 if forfeiter_seat == 2 else (3 if forfeiter_seat == 1 else 1))
-                    opps = [s for s in range(4) if s != forfeiter_seat and s != partner]
-
-                    def _seat_elo(seat: int) -> int:
-                        return self.player_infos[seat].get("elo") or BOT_ELOS.get(self.difficulty, 1500)
-
-                    delta = compute_forfeit_elo(
-                        player_elo=doc.get("elo", 1200),
-                        partner_elo=_seat_elo(partner),
-                        opp1_elo=_seat_elo(opps[0]),
-                        opp2_elo=_seat_elo(opps[1]),
-                        player_games=doc.get("games_played", 0),
-                    )
-                    before = doc.get("elo", 1200)
-                    elo_changes[forfeiter_seat] = {
-                        "delta": delta,
-                        "before": before,
-                        "after": before + delta,
-                        "username": doc.get("username"),
-                    }
-                    await _db.update_player_elo(pid, before + delta)
-
-            # Save game record
-            game_doc = {
-                "_id": self.game_id,
-                "mode": self.mode,
-                "difficulty": self.difficulty,
-                "duration_seconds": int(time.time() - self._start_time),
-                "played_at": datetime.now(timezone.utc),
-                "result_type": "forfeit",
-                "forfeiter_seat": forfeiter_seat,
-                "players": [
-                    {
-                        "player_id": self.player_ids.get(seat) if seat in self.human_seats else None,
-                        "display_name": (
-                            elo_changes[seat]["username"]
-                            if seat in elo_changes and elo_changes[seat].get("username")
-                            else self.player_infos[seat]["name"]
-                        ),
-                        "is_bot": seat not in self.human_seats,
-                        "seat": seat,
-                        "finish_pos": -1,
-                        "team_result": "forfeit" if seat == forfeiter_seat else "voided",
-                        "elo_before": elo_changes.get(seat, {}).get("before"),
-                        "elo_after": elo_changes.get(seat, {}).get("after"),
-                    }
-                    for seat in range(4)
-                ],
-            }
-            await _db.save_game(game_doc)
-        except Exception:
-            logger.exception("Forfeit ELO/DB failed for game %s", self.game_id)
+        elo_changes = await compute_forfeit_elo_change(self, forfeiter_seat)
+        await persist_forfeit_game(self, forfeiter_seat, elo_changes)
 
         # Send per-viewer with rotated seats
         for viewer in list(self.connections.keys()):
@@ -604,8 +515,8 @@ class GameRoom:
                         combo = await self.ai_service.get_ai_move(self.agent, self.env, seat)
                 else:
                     # Human's turn — set AFK deadline (monotonic for wait_for) and stop
-                    self.turn_deadlines[seat] = asyncio.get_event_loop().time() + HUMAN_TURN_TIMEOUT_S
-                    self.turn_deadline_wallclock_ms[seat] = int((time.time() + HUMAN_TURN_TIMEOUT_S) * 1000)
+                    if seat in self.connections:
+                        self.ensure_turn_deadline(seat)
                     break
 
                 next_player, done = self._advance(combo, seat)
@@ -641,8 +552,7 @@ class GameRoom:
         """
         if self.env.done or self.env.current_player != seat:
             return
-        self.turn_deadlines.pop(seat, None)
-        self.turn_deadline_wallclock_ms.pop(seat, None)
+        self.clear_turn_deadline(seat)
         legal = self.env.legal_moves(seat)
         leading = self.env.is_leading()
         if leading:
@@ -704,8 +614,7 @@ class GameRoom:
         await self._do_ai_takeover(seat)
 
     async def _do_move(self, combo: Combo, seat: int) -> None:
-        self.turn_deadlines.pop(seat, None)
-        self.turn_deadline_wallclock_ms.pop(seat, None)
+        self.clear_turn_deadline(seat)
         next_player, done = self._advance(combo, seat)
         self._record_move(seat, combo)
         self.moves_played_by[seat] += 1
@@ -741,6 +650,14 @@ class GameRoom:
 
         if self.env.current_player != seat:
             await self.send_to(seat, {"type": "error", "message": "Not your turn"})
+            return
+
+        if (
+            not isinstance(card_ids, list)
+            or any(not isinstance(card_id, str) for card_id in card_ids)
+            or len(card_ids) != len(set(card_ids))
+        ):
+            await self.send_to(seat, {"type": "error", "message": "Invalid combo"})
             return
 
         legal = self.env.legal_moves(seat)

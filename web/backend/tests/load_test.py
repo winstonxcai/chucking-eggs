@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -353,9 +352,11 @@ async def run_load_test(
 # Reporting
 # ---------------------------------------------------------------------------
 
-def _percentiles(values: list[float], qs: list[float] = [0.5, 0.95]) -> dict[str, float]:
+def _percentiles(values: list[float], qs: list[float] | None = None) -> dict[str, float]:
     if not values:
         return {}
+    if qs is None:
+        qs = [0.5, 0.95]
     result = {}
     sorted_v = sorted(values)
     for q in qs:
@@ -372,7 +373,7 @@ def print_report(r: LoadTestResults) -> None:
     throughput = len(completed) / r.wall_time_s * 60 if r.wall_time_s > 0 else 0
 
     print(f"\n{'=' * 50}")
-    print(f"  LOAD TEST RESULTS")
+    print("  LOAD TEST RESULTS")
     print(f"{'=' * 50}")
     print(f"  Target:      {r.url}")
     print(f"  Mode:        {r.mode}")
@@ -386,41 +387,41 @@ def print_report(r: LoadTestResults) -> None:
     create_vals = [g.room_create_ms for g in r.game_metrics]
     if create_vals:
         s = _percentiles(create_vals)
-        print(f"\n  --- Room Creation (HTTP) ---")
+        print("\n  --- Room Creation (HTTP) ---")
         print(f"    Mean: {s['mean']:.0f}ms  p50: {s['p50']:.0f}ms  p95: {s['p95']:.0f}ms")
 
     # Join latency (duo/quad)
     join_vals = [j for g in r.game_metrics for j in g.join_ms]
     if join_vals:
         s = _percentiles(join_vals)
-        print(f"\n  --- Room Join (HTTP) ---")
+        print("\n  --- Room Join (HTTP) ---")
         print(f"    Mean: {s['mean']:.0f}ms  p50: {s['p50']:.0f}ms  p95: {s['p95']:.0f}ms  (N={len(join_vals)})")
 
     # WS connect
     ws_vals = [sm.ws_connect_ms for g in r.game_metrics for sm in g.seat_metrics if sm.ws_connect_ms > 0]
     if ws_vals:
         s = _percentiles(ws_vals)
-        print(f"\n  --- WS Connect to First State ---")
+        print("\n  --- WS Connect to First State ---")
         print(f"    Mean: {s['mean']:.0f}ms  p50: {s['p50']:.0f}ms  p95: {s['p95']:.0f}ms  (N={len(ws_vals)})")
 
     # Move RTT
     rtt_vals = [rtt for g in r.game_metrics for rtt in g.move_rtts_ms]
     if rtt_vals:
         s = _percentiles(rtt_vals)
-        print(f"\n  --- Move Round-Trip Time ---")
+        print("\n  --- Move Round-Trip Time ---")
         print(f"    Mean: {s['mean']:.0f}ms  p50: {s['p50']:.0f}ms  p95: {s['p95']:.0f}ms  (N={len(rtt_vals)})")
 
     # Games
     durations = [g.total_duration_s for g in completed]
     if durations:
         s = _percentiles(durations)
-        print(f"\n  --- Games ---")
+        print("\n  --- Games ---")
         print(f"    Completed:  {len(completed)}/{r.total_games} ({len(completed)/r.total_games*100:.0f}%)")
         print(f"    Duration:   mean={s['mean']:.1f}s  p50={s['p50']:.1f}s  p95={s['p95']:.1f}s")
         total_moves = sum(g.total_moves for g in completed)
         print(f"    Avg Moves:  {total_moves / len(completed):.1f}/game")
     else:
-        print(f"\n  --- Games ---")
+        print("\n  --- Games ---")
         print(f"    Completed: 0/{r.total_games}")
 
     # Errors
@@ -436,8 +437,8 @@ def print_report(r: LoadTestResults) -> None:
         for err, count in sorted(error_counts.items(), key=lambda x: -x[1]):
             print(f"    [{count}x] {err}")
     else:
-        print(f"\n  --- Errors ---")
-        print(f"    (none)")
+        print("\n  --- Errors ---")
+        print("    (none)")
 
     print(f"{'=' * 50}\n")
 

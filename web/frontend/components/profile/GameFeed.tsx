@@ -43,7 +43,7 @@ export default function GameFeed({ games, username, viewerUsername }: GameFeedPr
 
   return (
     <div className="flex flex-col divide-y divide-border">
-      {games.slice(0, visible).map((game) => {
+      {games.slice(0, visible).map((game, index) => {
         // Find the seat of this user
         const mySeat = game.players.find(
           (p) => !p.is_bot && p.display_name === username
@@ -69,7 +69,7 @@ export default function GameFeed({ games, username, viewerUsername }: GameFeedPr
         const opp2Name = opps[1]?.display_name ?? "?";
 
         return (
-          <div key={game._id} className="py-3 flex items-center justify-between gap-3">
+          <div key={`${game._id}-${game.played_at}-${index}`} className="py-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0">
               <span className={`text-xs font-bold w-3 ${won ? "text-team-green" : "text-team-red"}`}>
                 {won ? "W" : "L"}

@@ -5,6 +5,7 @@ primary_region = 'lax'
   dockerfile = "web/backend/Dockerfile"
 
 [env]
+  APP_ENV = "production"
   PORT = "8000"
   ALLOWED_ORIGINS = "https://chucking-eggs.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
 

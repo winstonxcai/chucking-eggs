@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
 import time
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-
-from app.main import app, lifespan, game_manager as _gm_ref
-from app.game_manager import GameManager, GRACE_PERIOD, IDLE_TIMEOUT
+from app.game_manager import GRACE_PERIOD, IDLE_TIMEOUT
+from httpx import AsyncClient
 
 from .conftest import create_game
-
 
 # ---------------------------------------------------------------------------
 # CORS
@@ -134,16 +128,7 @@ class TestCleanup:
         gid = data["game_id"]
         from app.main import game_manager
 
-        # Simulate a cleanup sweep
-        expired = []
-        now = time.time()
-        for rid, room in game_manager.rooms.items():
-            if room.disconnected_at and (now - room.disconnected_at > GRACE_PERIOD):
-                expired.append(rid)
-            elif now - room.last_activity > IDLE_TIMEOUT:
-                expired.append(rid)
-        for rid in expired:
-            game_manager.rooms.pop(rid, None)
+        await game_manager.cleanup_once()
 
         # Room should still exist
         assert game_manager.get_room(gid) is not None
@@ -160,12 +145,7 @@ class TestCleanup:
         room = game_manager.get_room(gid)
         room.disconnected_at = time.time() - GRACE_PERIOD - 1
 
-        # Run one cleanup pass
-        now = time.time()
-        expired = [rid for rid, r in game_manager.rooms.items()
-                   if r.disconnected_at and (now - r.disconnected_at > GRACE_PERIOD)]
-        for rid in expired:
-            game_manager.rooms.pop(rid, None)
+        await game_manager.cleanup_once()
 
         assert game_manager.get_room(gid) is None
 
@@ -180,11 +160,7 @@ class TestCleanup:
         room = game_manager.get_room(gid)
         room.last_activity = time.time() - IDLE_TIMEOUT - 1
 
-        now = time.time()
-        expired = [rid for rid, r in game_manager.rooms.items()
-                   if now - r.last_activity > IDLE_TIMEOUT]
-        for rid in expired:
-            game_manager.rooms.pop(rid, None)
+        await game_manager.cleanup_once()
 
         assert game_manager.get_room(gid) is None
 
@@ -200,11 +176,7 @@ class TestCleanup:
             room = game_manager.get_room(data["game_id"])
             room.disconnected_at = time.time() - GRACE_PERIOD - 1
 
-        now = time.time()
-        expired = [rid for rid, r in game_manager.rooms.items()
-                   if r.disconnected_at and (now - r.disconnected_at > GRACE_PERIOD)]
-        for rid in expired:
-            game_manager.rooms.pop(rid, None)
+        await game_manager.cleanup_once()
 
         for gid in ids:
             assert game_manager.get_room(gid) is None

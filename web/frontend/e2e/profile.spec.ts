@@ -32,7 +32,7 @@ test("profile page renders player info", async ({ page }) => {
   await page.goto("/profile/tiger_slayer");
 
   await expect(page.getByRole("heading", { name: "tiger_slayer" })).toBeVisible();
-  await expect(page.getByText("1350")).toBeVisible();
+  await expect(page.getByText("1350").first()).toBeVisible();
   await expect(page.getByText(/5 games/)).toBeVisible();
 });
 
@@ -63,7 +63,7 @@ test("profile page shows no-games message when elo_history is empty", async ({ p
 
   await page.goto("/profile/tiger_slayer");
 
-  await expect(page.getByText("No games yet")).toBeVisible();
+  await expect(page.getByText("No games yet").first()).toBeVisible();
 });
 
 test("profile page shows error state for unknown player", async ({ page }) => {
@@ -87,7 +87,10 @@ test("profile page does not crash when elo_history is absent (regression)", asyn
   });
 
   // Old API shape without elo_history
-  const { elo_history: _omit, ...oldShape } = baseFixture;
+  const oldShape = {
+    player: baseFixture.player,
+    games: baseFixture.games,
+  };
   await page.route(API_PROFILE, (route) =>
     route.fulfill({
       status: 200,

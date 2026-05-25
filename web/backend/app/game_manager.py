@@ -10,11 +10,15 @@ import uuid
 
 from .ai_service import AIService
 from .game_room import GameRoom
+from .settings import get_settings
+from .tasks import create_logged_task
+
+SETTINGS = get_settings()
 
 GRACE_PERIOD = 60      # seconds to keep a disconnected room alive
 IDLE_TIMEOUT = 300     # seconds before cleaning up an idle room
-CLEANUP_INTERVAL = 30  # seconds between cleanup sweeps
-LOBBY_TIMEOUT = 300    # seconds before auto-closing an unstarted duo/quad room
+CLEANUP_INTERVAL = SETTINGS.cleanup_interval_s  # seconds between cleanup sweeps
+LOBBY_TIMEOUT = SETTINGS.lobby_timeout_s        # seconds before auto-closing an unstarted duo/quad room
 
 
 _ROOM_CODE_CHARS = string.ascii_uppercase + string.digits
@@ -34,7 +38,7 @@ class GameManager:
         self._room_lock = asyncio.Lock()  # prevents duplicate codes under concurrent creates
 
     async def start_cleanup_loop(self) -> None:
-        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+        self._cleanup_task = create_logged_task(self._cleanup_loop(), name="room-cleanup-loop")
 
     async def stop_cleanup_loop(self) -> None:
         if self._cleanup_task:
@@ -47,26 +51,37 @@ class GameManager:
     async def _cleanup_loop(self) -> None:
         while True:
             await asyncio.sleep(CLEANUP_INTERVAL)
-            now = time.time()
-            expired_lobby: list[str] = []
-            expired_silent: list[str] = []
-            for gid, room in self.rooms.items():
-                if not room.started and room.room_code and now - room.created_at > LOBBY_TIMEOUT:
-                    expired_lobby.append(gid)
-                elif room.disconnected_at and (now - room.disconnected_at > GRACE_PERIOD):
-                    expired_silent.append(gid)
-                elif now - room.last_activity > IDLE_TIMEOUT:
-                    expired_silent.append(gid)
-            for gid in expired_lobby:
-                room = self.rooms.pop(gid, None)
-                if room:
-                    if room.room_code:
-                        self.room_codes.pop(room.room_code, None)
-                    asyncio.create_task(room.broadcast({"type": "room_closed", "reason": "lobby_timeout"}))
-            for gid in expired_silent:
-                room = self.rooms.pop(gid, None)
-                if room and room.room_code:
+            await self.cleanup_once()
+
+    async def cleanup_once(self, now: float | None = None) -> None:
+        """Run one room cleanup sweep.
+
+        Exposed separately so tests exercise production cleanup behavior instead
+        of duplicating the expiry rules.
+        """
+        now = time.time() if now is None else now
+        expired_lobby: list[str] = []
+        expired_silent: list[str] = []
+        for gid, room in self.rooms.items():
+            if not room.started and room.room_code and now - room.created_at > LOBBY_TIMEOUT:
+                expired_lobby.append(gid)
+            elif room.disconnected_at and (now - room.disconnected_at > GRACE_PERIOD):
+                expired_silent.append(gid)
+            elif now - room.last_activity > IDLE_TIMEOUT:
+                expired_silent.append(gid)
+        for gid in expired_lobby:
+            room = self.rooms.pop(gid, None)
+            if room:
+                if room.room_code:
                     self.room_codes.pop(room.room_code, None)
+                create_logged_task(
+                    room.broadcast({"type": "room_closed", "reason": "lobby_timeout"}),
+                    name=f"broadcast-lobby-timeout:{gid}",
+                )
+        for gid in expired_silent:
+            room = self.rooms.pop(gid, None)
+            if room and room.room_code:
+                self.room_codes.pop(room.room_code, None)
 
     # ---------------------------------------------------------------------------
     # Room creation
@@ -81,7 +96,9 @@ class GameManager:
         Must be called while holding self._room_lock."""
         return [
             room for gid, room in self.rooms.items()
-            if gid != exclude_game_id and player_id in room.seat_player_ids.values()
+            if gid != exclude_game_id
+            and not room.env.done
+            and player_id in room.seat_player_ids.values()
         ]
 
     async def create_room(self, mode: str, difficulty: str, seed: int | None = None, creator_player_id: str | None = None) -> GameRoom:
@@ -192,6 +209,7 @@ class GameManager:
                 return
             room.connections.pop(seat, None)
             room.disconnected_seats[seat] = time.time()
+            room.clear_turn_deadline(seat)
 
     def reconnect_seat(self, game_id: str, seat: int, token: str) -> GameRoom | None:
         """Reconnect a specific seat using its token. Returns room or None."""
@@ -215,6 +233,9 @@ class GameManager:
         if old_room is None or not old_room.env.done:
             return None
         new_room = await self.create_room(old_room.mode, old_room.difficulty)
+        # Rematch players join through the shared room code, so no seat should
+        # be pre-reserved for a creator.
+        new_room.assigned_seats.clear()
         # Broadcast to all still-connected players in the old room
         await old_room.broadcast({
             "type": "rematch_created",

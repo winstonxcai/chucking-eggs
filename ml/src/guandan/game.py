@@ -232,8 +232,9 @@ class GuanDanEnv:
     def get_rewards(self) -> dict[int, float]:
         """Team-level rewards: each player gets their team's level change."""
         fo = self.finish_order
-        team_pos = tuple(sorted([fo.index(0), fo.index(2)]))
-        LEVEL_CHANGE = {
+        first, second = sorted([fo.index(0), fo.index(2)])
+        team_pos = (first, second)
+        LEVEL_CHANGE: dict[tuple[int, int], float] = {
             (0, 1): 3.0, (0, 2): 2.0, (0, 3): 1.0,
             (1, 2): -1.0, (1, 3): -2.0, (2, 3): -3.0,
         }

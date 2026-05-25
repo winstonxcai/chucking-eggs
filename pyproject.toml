@@ -28,6 +28,7 @@ modal = ["modal>=1.4.2"]
 llm = ["litellm>=1.50"]
 web = [
     "fastapi>=0.104",
+    "starlette>=1.0.1",
     "uvicorn[standard]>=0.29.0",
     "websockets>=12.0",
     "redis>=5.0",
@@ -53,6 +54,7 @@ exclude = [
 testpaths = ["ml/tests", "web/backend/tests"]
 markers = [
     "slow: spawns subprocesses or takes >5s; opt in with `-m slow`",
+    "mongo: opt-in tests that require a real MongoDB instance",
 ]
 
 [tool.ruff]
@@ -65,12 +67,20 @@ ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.10"
-files = ["ml/src/guandan"]
+files = [
+    "ml/src/guandan/cards.py",
+    "ml/src/guandan/combos.py",
+    "ml/src/guandan/game.py",
+    "ml/src/guandan/agents/base.py",
+    "ml/src/guandan/agents/random_bot.py",
+    "ml/src/guandan/agents/greedy_bot.py",
+    "ml/src/guandan/agents/heuristic_bot.py",
+    "ml/src/guandan/agents/strategic_bot.py",
+]
 ignore_missing_imports = true
 follow_imports = "silent"
-check_untyped_defs = false
-ignore_errors = true
-warn_unused_ignores = false
+check_untyped_defs = true
+warn_unused_ignores = true
 
 [dependency-groups]
 dev = [
@@ -89,7 +99,8 @@ dev = [
     "redis>=5.0",
     "ruff>=0.14",
     "slowapi>=0.1.9",
+    "starlette>=1.0.1",
     "uvicorn[standard]>=0.29.0",
     "websockets>=12.0",
-    "aiohttp>=3.9",
+    "aiohttp>=3.13.4",
 ]

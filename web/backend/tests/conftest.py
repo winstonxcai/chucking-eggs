@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from typing import AsyncGenerator
+import os
+from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from app.main import app, lifespan
+TEST_DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "pytest"
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("USE_MOCK_DB", "true")
+os.environ.setdefault("DATA_DIR", str(TEST_DATA_DIR))
 
 
 @pytest.fixture(scope="session")
@@ -23,6 +27,8 @@ def event_loop():
 @pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
     """Async HTTP client against the FastAPI app."""
+    from app.main import app, lifespan
+
     async with lifespan(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:

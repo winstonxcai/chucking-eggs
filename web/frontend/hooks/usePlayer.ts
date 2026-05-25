@@ -5,11 +5,13 @@ import { STORAGE_KEYS } from "@/lib/storage-keys";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const LS_PLAYER_ID = STORAGE_KEYS.PLAYER_ID;
+const LS_PLAYER_TOKEN = STORAGE_KEYS.PLAYER_TOKEN;
 const LS_USERNAME = STORAGE_KEYS.USERNAME;
 const LS_ELO = STORAGE_KEYS.ELO;
 
 export interface Player {
   playerId: string;
+  playerToken: string | null;
   username: string;
   elo: number;
 }
@@ -21,17 +23,26 @@ function lsGet(key: string): string | null {
 function lsSet(key: string, val: string): void {
   try { localStorage.setItem(key, val); } catch { /* ignore */ }
 }
+function storedValue(value: string | null): string | null {
+  if (!value || value === "undefined" || value === "null") return null;
+  return value;
+}
+function storedElo(value: string | null): number {
+  const parsed = value ? parseInt(value, 10) : NaN;
+  return Number.isFinite(parsed) ? parsed : 1200;
+}
 
 export function usePlayer() {
   const [player, setPlayer] = useState<Player | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const id = lsGet(LS_PLAYER_ID);
-    const name = lsGet(LS_USERNAME);
+    const id = storedValue(lsGet(LS_PLAYER_ID));
+    const token = storedValue(lsGet(LS_PLAYER_TOKEN));
+    const name = storedValue(lsGet(LS_USERNAME));
     const elo = lsGet(LS_ELO);
     if (id && name) {
-      setPlayer({ playerId: id, username: name, elo: elo ? parseInt(elo, 10) : 1200 });
+      setPlayer({ playerId: id, playerToken: token, username: name, elo: storedElo(elo) });
     }
     setLoaded(true);
 
@@ -55,9 +66,10 @@ export function usePlayer() {
     }
     const data = await res.json();
     lsSet(LS_PLAYER_ID, data.player_id);
+    if (data.player_token) lsSet(LS_PLAYER_TOKEN, data.player_token);
     lsSet(LS_USERNAME, data.username);
     lsSet(LS_ELO, String(data.elo));
-    setPlayer({ playerId: data.player_id, username: data.username, elo: data.elo });
+    setPlayer({ playerId: data.player_id, playerToken: data.player_token ?? null, username: data.username, elo: data.elo });
   }, []);
 
   const updateElo = useCallback((elo: number) => {

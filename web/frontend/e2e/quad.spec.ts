@@ -1,10 +1,9 @@
 import { test, expect } from "@playwright/test";
 
 const fakePlayer = () => {
-  localStorage.setItem(
-    "ce_player_id",
-    "test-player-00000000-0000-0000-0000-000000000000"
-  );
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem("ce_player_id", `test-player-${suffix}`);
+  localStorage.removeItem("ce_player_token");
   localStorage.setItem("ce_username", "testbot");
   localStorage.setItem("ce_elo", "1200");
 };

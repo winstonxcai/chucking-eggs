@@ -19,8 +19,10 @@ Guan Dan agents. It is suitable for offline evaluation against the bundled
 rule-based bots and for local inference through `DartBot.load()`.
 
 It is not a human-deployable hidden-information policy. The reported checkpoint
-uses partner-visible state and includes an opponent-hand channel, so results
-should be read as partner-visible/oracle-style benchmarking.
+uses partner-visible state and includes an `others_hand` channel that holds
+the *union* of the two opponent hands — i.e., the deck-complement of own +
+partner, not per-opponent oracle information. See
+[TRADEOFFS.md](TRADEOFFS.md) §10 for the full discussion.
 
 ## Training Data and Procedure
 
@@ -53,7 +55,9 @@ uv run guandan-eval-dart \
 - Single training seed; there are no cross-seed confidence intervals.
 - Rule-bot-only evaluation; no human study and no comparison against another
   openly released learned partner-visible Guan Dan agent.
-- Partner-visible/oracle-style observation, not strict hidden information.
+- Partner-visible observation with a deck-complement `others_hand` feature;
+  not strict hidden information, but also not per-opponent oracle. See
+  [TRADEOFFS.md](TRADEOFFS.md) §10.
 - Vendored competition bots need original-author license confirmation before a
   broad public release.
 

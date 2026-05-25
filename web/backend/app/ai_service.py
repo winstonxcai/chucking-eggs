@@ -16,10 +16,15 @@ _ELOS: dict[str, int] = json.loads(
     resources.files("guandan").joinpath("elos.json").read_text()
 )
 
-AGENT_INFO: dict[str, dict] = {
-    name: {**meta, "elo": _ELOS.get(name, 1500)}
-    for name, meta in AGENT_META.items()
-}
+AGENT_INFO: dict[str, dict] = dict(
+    sorted(
+        (
+            (name, {**meta, "elo": _ELOS.get(name, 1500)})
+            for name, meta in AGENT_META.items()
+        ),
+        key=lambda item: (item[1]["elo"], item[1]["label"]),
+    )
+)
 
 
 class AIService:
@@ -29,8 +34,6 @@ class AIService:
 
     def _load_agents(self) -> None:
         for agent_name in AGENT_REGISTRY:
-            if agent_name == "dart":
-                continue
             self.agents[agent_name] = make_agent(agent_name, level_rank=Rank.TWO)
 
     def get_agent(self, difficulty: str) -> Agent:

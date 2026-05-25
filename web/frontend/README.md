@@ -4,7 +4,10 @@ Next.js frontend for the Guan Dan web app: solo play, multiplayer rooms, profile
 
 ## Setup
 
+Use Node 22 (`.nvmrc` is provided):
+
 ```bash
+nvm use
 npm install
 npm run dev
 ```
@@ -17,7 +20,7 @@ Open `http://localhost:3000`. The frontend expects the FastAPI backend to be run
 npm run dev
 npm run lint
 npm run build
-npm run test:e2e
+npm run e2e
 ```
 
 ## Project Map

@@ -1,5 +1,6 @@
 # Dart — L4 GPU training (32 vCPU actors, CUDA learner).
-# Actor-bound at ~1.8 upd/s steady-state. ~$2.50/hr on Modal.
+# Early actor-limited resumes ran ~1.6 upd/s; tuned resumes run ~5-6 upd/s.
+# Reference Modal cost is ~$2.50/hr.
 #
 # Launch:
 #   modal run --detach ml/scripts/modal/train_dart_modal.py \
@@ -14,7 +15,7 @@ actor_push_batch_size: 512      # Queue batches are large enough to amortize IPC
 sample_queue_maxsize: 64        # Bounded queue exposes learner backpressure instead of unbounded RAM growth.
 max_drain_batches_per_loop: 16  # Drain several actor batches per loop while keeping learner steps responsive.
 publish_interval_updates: 200   # Publish often enough for actors to track training without excess I/O.
-checkpoint_every_updates: 25000 # Roughly every few hours on L4; keeps resume/eval artifacts manageable.
+checkpoint_every_updates: 25000 # Roughly hourly on tuned L4; keeps resume/eval artifacts manageable.
 checkpoint_save_type: weight    # Periodic checkpoints are light; clean final checkpoint is full resume state.
 log_every_updates: 10           # High-frequency metrics for diagnosing actor/learner throughput on Modal.
 

@@ -12,9 +12,14 @@ Default local URLs:
 ## Environment
 
 - `ALLOWED_ORIGINS`: comma-separated CORS origins. Defaults to local frontend origins.
-- `DATA_DIR`: local JSONL game-record directory.
+- `APP_ENV`: set to `production` in deployed environments.
+- `AUTH_SECRET`: secret used to sign player identity tokens. Required when
+  `APP_ENV=production`; set it through your host's secret manager.
+- `DATA_DIR`: local JSONL game-record directory. Defaults to ignored `data/web_backend`.
 - `DISCONNECT_TAKEOVER_S`: seconds before disconnected human seats forfeit or are taken over.
 - `HUMAN_TURN_TIMEOUT_S`: AFK turn timer in seconds.
+- `USE_MOCK_DB`: set to exactly `true` or `false`; use `true` for local/test
+  runs without MongoDB. Production MongoDB initialization failures are fatal.
 - MongoDB/Redis settings are read by `web/backend/app/db.py` and `redis_client.py`.
 
 ## HTTP Endpoints
@@ -35,7 +40,9 @@ Body:
 {"username": "winston", "email": "optional@example.com", "is_test": false}
 ```
 
-Claims or returns a player identity. Rate limited to 5/minute per remote address.
+Claims or returns a player identity plus a signed `player_token`. Rate limited
+to 5/minute per remote address. Send the token as `X-Player-Token` on
+player-bound HTTP requests and as `player_token` on the game WebSocket.
 
 ### Profile And Leaderboard
 
@@ -59,6 +66,7 @@ Body:
 
 Creates a solo room and returns `game_id` plus seat-0 reconnect token. Prefer
 `/api/room/create` for new clients.
+Unknown difficulties return HTTP 400.
 
 ### Rooms
 
@@ -66,7 +74,8 @@ Creates a solo room and returns `game_id` plus seat-0 reconnect token. Prefer
 
 Headers:
 
-- `X-Player-Id`: optional player id used for in-game Elo/profile tracking.
+- `X-Player-Token`: optional signed player token used for in-game Elo/profile tracking.
+- `X-Player-Id`: accepted only outside production for local smoke tests.
 
 Body:
 
@@ -75,6 +84,7 @@ Body:
 ```
 
 `mode` is `solo`, `duo`, or `quad`. The creator always receives seat 0.
+Unknown modes or difficulties return HTTP 400.
 
 `POST /api/room/{game_id}/set_difficulty`
 
@@ -90,7 +100,8 @@ Allowed only before the room starts.
 
 Headers:
 
-- `X-Player-Id`: optional player id.
+- `X-Player-Token`: optional signed player token.
+- `X-Player-Id`: accepted only outside production for local smoke tests.
 
 Joins the next open human seat in a duo/quad room.
 
@@ -110,13 +121,18 @@ Allowed only before the game starts.
 
 `POST /api/room/{game_id}/forfeit`
 
+Headers:
+
+- `X-Player-Token`: signed player token for the forfeiting player.
+
 Body:
 
 ```json
 {"player_id": "player-object-id"}
 ```
 
-Forfeits an active game for the matching human player.
+Forfeits an active game for the matching human player. `player_id` is retained
+for local compatibility; production authorization uses `X-Player-Token`.
 
 `POST /api/room/{game_id}/rematch`
 
@@ -133,12 +149,13 @@ Returns `{"status": "ok"}`.
 Connect:
 
 ```text
-GET /ws/game/{game_id}?seat=0&token=<reconnect_token>&player_id=<player_id>
+GET /ws/game/{game_id}?seat=0&token=<reconnect_token>&player_token=<player_token>
 ```
 
 `seat` is the absolute seat assigned by the room create/join response. `token`
-is optional on first connect and required for reconnect. `player_id` is optional
-but needed for Elo/profile tracking.
+is optional on first connect and required for reconnect. `player_token` is
+optional but needed for Elo/profile tracking. Unsigned `player_id` is accepted
+only outside production for local smoke tests.
 
 ### Client Messages
 

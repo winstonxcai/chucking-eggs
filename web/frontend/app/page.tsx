@@ -32,7 +32,11 @@ export default function Home() {
     try {
       const res = await fetch(`${API_BASE}/api/room/create`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(player?.playerToken ? { "X-Player-Token": player.playerToken } : {}),
+          ...(player?.playerId ? { "X-Player-ID": player.playerId } : {}),
+        },
         body: JSON.stringify({ mode, difficulty }),
       });
       const data = await res.json();
@@ -97,7 +101,10 @@ export default function Home() {
                         try {
                           await fetch(`${API_BASE}/api/room/${params.gameId}/forfeit`, {
                             method: "POST",
-                            headers: { "Content-Type": "application/json" },
+                            headers: {
+                              "Content-Type": "application/json",
+                              ...(player.playerToken ? { "X-Player-Token": player.playerToken } : {}),
+                            },
                             body: JSON.stringify({ player_id: player.playerId }),
                           });
                         } catch { /* best effort */ }

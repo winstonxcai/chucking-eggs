@@ -80,6 +80,7 @@ export default function ComboBrowser({ legalMoves, onSelectCombo }: ComboBrowser
         return (
           <div key={type} className="flex flex-col gap-1.5">
             <button
+              data-testid={`combo-type-${type}`}
               className="flex items-center gap-1.5 w-full text-left"
               onClick={() => toggleType(type)}
             >
@@ -98,6 +99,7 @@ export default function ComboBrowser({ legalMoves, onSelectCombo }: ComboBrowser
                 {combos.map((combo, i) => (
                   <button
                     key={i}
+                    data-testid="legal-combo"
                     className={`px-2.5 py-1 text-[13px] font-semibold rounded-md cursor-pointer transition-colors ${
                       isBomb
                         ? "bg-[#FFF8F5] border border-accent text-accent hover:bg-accent hover:text-white"

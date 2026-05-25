@@ -2,12 +2,18 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "e2e": "playwright test"
+    "test:unit": "vitest run",
+    "e2e": "node scripts/kill-e2e-ports.mjs && API_URL=http://127.0.0.1:8001 BASE_URL=http://127.0.0.1:3001 playwright test",
+    "e2e:integration": "node scripts/kill-e2e-ports.mjs && HUMAN_TURN_TIMEOUT_S=0 DISCONNECT_TAKEOVER_S=10 LOBBY_TIMEOUT_S=5 CLEANUP_INTERVAL_S=0.5 ACTION_PAUSE_S=0 AI_THINK_PAUSE_S=0 API_URL=http://127.0.0.1:8010 BASE_URL=http://127.0.0.1:3010 playwright test -c playwright.integration.config.ts"
   },
   "dependencies": {
     "@radix-ui/react-dropdown-menu": "^2.1.16",
@@ -27,6 +33,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.7"
   }
 }

@@ -24,6 +24,7 @@ export default function SettingsPage() {
         headers: {
           "Content-Type": "application/json",
           "X-Player-ID": player.playerId,
+          ...(player.playerToken ? { "X-Player-Token": player.playerToken } : {}),
         },
         body: JSON.stringify({ email }),
       });

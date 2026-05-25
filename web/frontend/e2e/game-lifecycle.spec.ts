@@ -1,16 +1,22 @@
 /**
  * Game session lifecycle e2e tests — solo disposal + multiplayer forfeit system.
  *
- * These tests require the backend to be started with HUMAN_TURN_TIMEOUT_S=5
+ * These tests require the backend to be started with HUMAN_TURN_TIMEOUT_S=0
  * for the auto-forfeit test (Test 10). The playwright.config.ts passes that
  * env var when it starts the backend fresh.
  */
 import { test, expect, type Page } from "@playwright/test";
 
 const fakePlayer = () => {
-  localStorage.setItem("ce_player_id", "test-player-00000000-0000-0000-0000-000000000000");
-  localStorage.setItem("ce_username", "testbot");
-  localStorage.setItem("ce_elo", "1200");
+  try {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem("ce_player_id", `test-player-${suffix}`);
+    localStorage.removeItem("ce_player_token");
+    localStorage.setItem("ce_username", "testbot");
+    localStorage.setItem("ce_elo", "1200");
+  } catch {
+    // Some initial about:blank documents do not expose localStorage.
+  }
 };
 
 async function waitForCards(page: Page, timeout = 20_000) {
@@ -28,7 +34,7 @@ async function waitForActiveGameSaved(page: Page, timeout = 5_000) {
 /** Navigate home via the sidebar link (client-side nav, triggers React cleanup). */
 async function goHome(page: Page) {
   await page.locator('a[href="/"]').first().click();
-  await expect(page).toHaveURL(/localhost:3000\/$/, { timeout: 5_000 });
+  await expect(page).toHaveURL(/\/$/, { timeout: 5_000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -37,7 +43,7 @@ async function goHome(page: Page) {
 test("solo game disposal — navigating away and back starts a fresh game", async ({ page }) => {
   await page.addInitScript(fakePlayer);
 
-  await page.goto("/game?difficulty=easy");
+  await page.goto("/game?difficulty=greedy");
   await waitForCards(page);
 
   const firstGameId = await page.evaluate(() => sessionStorage.getItem("gd_game_id"));
@@ -50,7 +56,7 @@ test("solo game disposal — navigating away and back starts a fresh game", asyn
   expect(afterNavGameId).toBeNull();
 
   // Navigate back to game — should create a fresh game (no "Game not found" error)
-  await page.goto("/game?difficulty=easy");
+  await page.goto("/game?difficulty=greedy");
   await waitForCards(page, 25_000);
 
   await expect(page.getByText(/game not found/i)).not.toBeVisible();
@@ -238,13 +244,13 @@ test("forfeiting player broadcasts game_forfeited and other player sees end scre
     const menuBtn = page1.locator("[data-testid='game-menu-button']");
     await expect(menuBtn).toBeVisible({ timeout: 5_000 });
     await menuBtn.click();
-    await page1.getByRole("button", { name: /forfeit game/i }).click();
+    await page1.getByRole("menuitem", { name: /forfeit game/i }).click();
     await page1.getByRole("button", { name: /confirm/i }).click();
 
     // Player 2 should see the forfeit screen
     await expect(page2.getByText(/forfeited/i)).toBeVisible({ timeout: 15_000 });
     // Auto-redirect for player 2 — should go home within ~4s
-    await expect(page2).toHaveURL(/localhost:3000\/$/, { timeout: 8_000 });
+    await expect(page2).toHaveURL(/\/$/, { timeout: 8_000 });
   } finally {
     await ctx1.close();
     await ctx2.close();
@@ -262,7 +268,7 @@ test("canceling in lobby dissolves the room with no active game banner", async (
   await expect(page).toHaveURL(/\/lobby/, { timeout: 10_000 });
 
   await page.getByRole("button", { name: /cancel/i }).click();
-  await expect(page).toHaveURL(/localhost:3000\/$/, { timeout: 8_000 });
+  await expect(page).toHaveURL(/\/$/, { timeout: 8_000 });
 
   // No active game banner (lobby was pre-start, no ELO, no saved game)
   await expect(page.getByText(/active game/i)).not.toBeVisible();
@@ -345,8 +351,8 @@ test("in-game gear menu allows forfeit with confirmation dialog", async ({ brows
     await menuBtn.click();
 
     // Dropdown with Forfeit Game
-    await expect(page1.getByRole("button", { name: /forfeit game/i })).toBeVisible();
-    await page1.getByRole("button", { name: /forfeit game/i }).click();
+    await expect(page1.getByRole("menuitem", { name: /forfeit game/i })).toBeVisible();
+    await page1.getByRole("menuitem", { name: /forfeit game/i }).click();
 
     // Confirmation text
     await expect(page1.getByText(/you will lose elo/i)).toBeVisible({ timeout: 3_000 });
@@ -355,7 +361,7 @@ test("in-game gear menu allows forfeit with confirmation dialog", async ({ brows
     await page1.getByRole("button", { name: /confirm/i }).click();
 
     // Should redirect home and clear game
-    await expect(page1).toHaveURL(/localhost:3000\/$/, { timeout: 10_000 });
+    await expect(page1).toHaveURL(/\/$/, { timeout: 10_000 });
     const lsGameId = await page1.evaluate(() => localStorage.getItem("gd_game_id"));
     expect(lsGameId).toBeNull();
   } finally {
@@ -365,27 +371,30 @@ test("in-game gear menu allows forfeit with confirmation dialog", async ({ brows
 });
 
 // ---------------------------------------------------------------------------
-// Test 9: Gear icon hidden in solo games
+// Test 9: Solo game menu
 // ---------------------------------------------------------------------------
-test("gear/menu icon is NOT shown in solo games", async ({ page }) => {
+test("gear/menu icon is shown in solo games with rules only", async ({ page }) => {
   await page.addInitScript(fakePlayer);
 
-  await page.goto("/game?difficulty=easy");
+  await page.goto("/game?difficulty=greedy");
   await waitForCards(page);
 
-  // Gear menu button should not exist for solo games
-  await expect(page.locator("[data-testid='game-menu-button']")).not.toBeVisible();
+  const menuBtn = page.locator("[data-testid='game-menu-button']");
+  await expect(menuBtn).toBeVisible();
+  await menuBtn.click();
+  await expect(page.getByRole("menuitem", { name: /rules/i })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /forfeit game/i })).not.toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
 // Test 10: Auto-forfeit on disconnect timeout
 // ---------------------------------------------------------------------------
-test("disconnected multiplayer player is auto-forfeited after timeout — requires HUMAN_TURN_TIMEOUT_S=5", async ({
+test("disconnected multiplayer player is auto-forfeited after timeout — requires HUMAN_TURN_TIMEOUT_S=0", { tag: "@zero-timeout" }, async ({
   browser,
 }) => {
   test.skip(
-    process.env.HUMAN_TURN_TIMEOUT_S !== "5",
-    "Needs short timeouts — start backend with HUMAN_TURN_TIMEOUT_S=5 DISCONNECT_TAKEOVER_S=10"
+    process.env.HUMAN_TURN_TIMEOUT_S !== "0",
+    "Needs short timeouts — start backend with HUMAN_TURN_TIMEOUT_S=0 DISCONNECT_TAKEOVER_S=10"
   );
   test.slow();
   // DISCONNECT_TAKEOVER_S=10 → auto-forfeit fires after ~10s.
@@ -420,7 +429,7 @@ test("disconnected multiplayer player is auto-forfeited after timeout — requir
     // Player 2 should receive the auto-forfeit broadcast within 20s (DISCONNECT_TAKEOVER_S=10 + buffer)
     await expect(page2.getByText(/forfeited/i)).toBeVisible({ timeout: 20_000 });
     // Auto-redirect to home
-    await expect(page2).toHaveURL(/localhost:3000\/$/, { timeout: 8_000 });
+    await expect(page2).toHaveURL(/\/$/, { timeout: 8_000 });
   } finally {
     try { await ctx2.close(); } catch { /* already closed */ }
   }

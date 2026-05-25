@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
-from typing import AsyncGenerator
-
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-
-from app.main import app, lifespan, game_manager as _gm_ref
-from app.game_manager import GameManager
 from app.game_room import _human_seats_for_mode
+from httpx import AsyncClient
 
 from .conftest import create_game
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,6 +71,24 @@ class TestRoomCreate:
         assert data["room_code"] is not None
         assert len(data["room_code"]) == 6
         assert data["seat"] == 0
+
+    @pytest.mark.asyncio
+    async def test_create_room_rejects_invalid_mode(self, client: AsyncClient):
+        res = await client.post("/api/room/create", json={"mode": "bogus", "difficulty": "greedy"})
+        assert res.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_create_room_rejects_invalid_difficulty(self, client: AsyncClient):
+        res = await client.post("/api/room/create", json={"mode": "solo", "difficulty": "not-a-bot"})
+        assert res.status_code == 400
+        assert res.json()["detail"] == "Invalid difficulty: not-a-bot"
+
+    @pytest.mark.asyncio
+    async def test_forfeit_requires_player_identity(self, client: AsyncClient):
+        data = await create_room(client, mode="solo")
+        res = await client.post(f"/api/room/{data['game_id']}/forfeit", json={})
+        assert res.status_code == 401
+        assert res.json()["detail"] == "Player token required"
 
     @pytest.mark.asyncio
     async def test_solo_room_auto_started(self, client: AsyncClient):

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-import os
+import logging
 from typing import Any
 
-REDIS_URL = os.getenv("REDIS_URL", "")
+from .settings import get_settings
+
+REDIS_URL = get_settings().redis_url
 
 _client: RedisLike | None = None
+logger = logging.getLogger(__name__)
 
 
 class InMemoryRedis:
@@ -84,12 +87,12 @@ async def get_redis() -> RedisLike:
             import redis.asyncio as aioredis
             _client = aioredis.from_url(REDIS_URL, decode_responses=True)
             await _client.ping()
-            print(f"Connected to Redis at {REDIS_URL}")
+            logger.info("Connected to Redis at %s", REDIS_URL)
         except Exception as e:
-            print(f"Redis connection failed ({e}), using in-memory fallback")
+            logger.warning("Redis connection failed (%s), using in-memory fallback", e)
             _client = InMemoryRedis()
     else:
-        print("No REDIS_URL set, using in-memory fallback")
+        logger.info("No REDIS_URL set, using in-memory fallback")
         _client = InMemoryRedis()
 
     return _client

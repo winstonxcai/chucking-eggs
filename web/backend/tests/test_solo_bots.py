@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 
 import pytest
+from app.ai_service import AGENT_INFO
 from httpx import AsyncClient
 
-DIFFICULTIES = ["greedy", "strategic"]
+DIFFICULTIES = list(AGENT_INFO)
 
 
 # ---------------------------------------------------------------------------
@@ -21,9 +22,16 @@ DIFFICULTIES = ["greedy", "strategic"]
 
 class TestSoloBotHTTP:
     @pytest.mark.asyncio
+    async def test_bots_are_ordered_by_elo_ascending(self, client: AsyncClient):
+        res = await client.get("/api/bots")
+        assert res.status_code == 200
+        elos = [info["elo"] for info in res.json().values()]
+        assert elos == sorted(elos)
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("difficulty", DIFFICULTIES)
     async def test_create_game_returns_200(self, client: AsyncClient, difficulty: str):
-        """POST /api/game/create should succeed for all 4 difficulties."""
+        """POST /api/game/create should succeed for supported smoke-test difficulties."""
         res = await client.post("/api/game/create", json={"difficulty": difficulty})
         assert res.status_code == 200, f"{difficulty}: {res.text}"
         data = res.json()
@@ -31,6 +39,11 @@ class TestSoloBotHTTP:
         assert "reconnect_token" in data
 
     @pytest.mark.asyncio
+    async def test_create_game_rejects_invalid_difficulty(self, client: AsyncClient):
+        res = await client.post("/api/game/create", json={"difficulty": "not-a-bot"})
+        assert res.status_code == 400
+        assert res.json()["detail"] == "Invalid difficulty: not-a-bot"
+
     @pytest.mark.asyncio
     async def test_strategic_agent_loaded(self, client: AsyncClient):
         """Strategic difficulty should map to a named agent — not None."""

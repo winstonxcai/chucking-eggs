@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { STORAGE_KEYS } from "@/lib/storage-keys";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -25,8 +26,14 @@ function JoinContent() {
     setError(null);
     setLoading(true);
     try {
+      const playerToken = localStorage.getItem(STORAGE_KEYS.PLAYER_TOKEN);
+      const playerId = localStorage.getItem(STORAGE_KEYS.PLAYER_ID);
       const res = await fetch(`${API_BASE}/api/room/join/${trimmed}`, {
         method: "POST",
+        headers: {
+          ...(playerToken ? { "X-Player-Token": playerToken } : {}),
+          ...(playerId ? { "X-Player-ID": playerId } : {}),
+        },
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));

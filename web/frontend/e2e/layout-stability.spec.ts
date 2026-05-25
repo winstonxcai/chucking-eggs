@@ -16,7 +16,7 @@ async function waitForCards(page: import("@playwright/test").Page, timeout = 20_
 
 test("OpponentPanel panels do not shift when border-pulse animation class is toggled", async ({ page }) => {
   await page.addInitScript(fakePlayer);
-  await page.goto("/game?difficulty=easy");
+  await page.goto("/game?difficulty=greedy");
   await waitForCards(page);
 
   // Baseline rect snapshot of all opponent panel divs.
@@ -78,24 +78,20 @@ test("OpponentPanel panels do not shift when border-pulse animation class is tog
 
 test("GameControls Play and Pass buttons do not shift when a card is selected or deselected", async ({ page }) => {
   await page.addInitScript(fakePlayer);
-  await page.goto("/game?difficulty=easy");
+  await page.goto("/game?difficulty=greedy");
   await waitForCards(page);
 
   // Wait until it is the human player's turn so the controls row is visible.
   await page.waitForFunction(() => {
     const btns = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
-    return btns.some(
-      (b) =>
-        (b.textContent?.includes("Select cards") || b.textContent?.includes("Play")) &&
-        b.offsetParent !== null
-    );
+    return btns.some((b) => /^(Select|Play)/.test(b.textContent?.trim() ?? "") && b.offsetParent !== null);
   }, { timeout: 30_000 });
 
   // Baseline: record Play and Pass button rects before any card selection.
   const recsBefore = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
     const playBtn = btns.find(
-      (b) => b.textContent?.trim().startsWith("Select cards") || b.textContent?.trim().startsWith("Play")
+      (b) => /^(Select|Play)/.test(b.textContent?.trim() ?? "")
     );
     const passBtn = btns.find((b) => b.textContent?.trim() === "Pass");
     if (!playBtn || !passBtn) return null;
@@ -112,7 +108,7 @@ test("GameControls Play and Pass buttons do not shift when a card is selected or
   const recsAfterSelect = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
     const playBtn = btns.find(
-      (b) => b.textContent?.trim().startsWith("Select cards") || b.textContent?.trim().startsWith("Play")
+      (b) => /^(Select|Play)/.test(b.textContent?.trim() ?? "")
     );
     const passBtn = btns.find((b) => b.textContent?.trim() === "Pass");
     if (!playBtn || !passBtn) return null;
@@ -135,7 +131,7 @@ test("GameControls Play and Pass buttons do not shift when a card is selected or
   const recsAfterDeselect = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
     const playBtn = btns.find(
-      (b) => b.textContent?.trim().startsWith("Select cards") || b.textContent?.trim().startsWith("Play")
+      (b) => /^(Select|Play)/.test(b.textContent?.trim() ?? "")
     );
     const passBtn = btns.find((b) => b.textContent?.trim() === "Pass");
     if (!playBtn || !passBtn) return null;

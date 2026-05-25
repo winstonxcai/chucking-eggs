@@ -11,6 +11,11 @@ const BACKOFF_BASE = 1000; // 1s, 2s, 4s, 8s, 8s
 
 export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
+function storedValue(value: string | null): string | null {
+  if (!value || value === "undefined" || value === "null") return null;
+  return value;
+}
+
 export function useGameSocket(gameId: string | null, reconnectToken: string | null = null, seat: number = 0) {
   const wsRef = useRef<WebSocket | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -46,8 +51,10 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
 
     const params = new URLSearchParams({ seat: String(seatNum) });
     if (token) params.set("token", token);
-    const playerId = (() => { try { return localStorage.getItem(STORAGE_KEYS.PLAYER_ID); } catch { return null; } })();
+    const playerId = (() => { try { return storedValue(localStorage.getItem(STORAGE_KEYS.PLAYER_ID)); } catch { return null; } })();
+    const playerToken = (() => { try { return storedValue(localStorage.getItem(STORAGE_KEYS.PLAYER_TOKEN)); } catch { return null; } })();
     if (playerId) params.set("player_id", playerId);
+    if (playerToken) params.set("player_token", playerToken);
     const ws = new WebSocket(`${WS_BASE}/ws/game/${gid}?${params.toString()}`);
     wsRef.current = ws;
 
@@ -118,7 +125,7 @@ export function useGameSocket(gameId: string | null, reconnectToken: string | nu
           setAiThinking(null);
           break;
         case "move_played":
-          if (gameState && msg.seat === gameState.my_seat) setHasPlayedFirstMove(true);
+          if (msg.seat === seatRef.current) setHasPlayedFirstMove(true);
           break;
         case "ai_thinking":
           setAiThinking(msg.seat);

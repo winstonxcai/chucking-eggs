@@ -323,7 +323,7 @@ export default function GameBoard({
   const reviewTotal = reviewSteps.length;
   const currentStep = reviewMode && reviewSteps.length > 0 ? reviewSteps[reviewPlayIdx] : null;
   const snapshot = currentStep?.snapshot ?? null;
-  const reviewHands = snapshot?.hands_before ?? {};
+  const reviewHands = useMemo(() => snapshot?.hands_before ?? {}, [snapshot]);
   const reviewWinnerSeat = snapshot?.winner_seat ?? null;
   // Crown only appears at the last play of a trick in review (not prematurely on earlier steps)
   const isLastPlayOfTrick = !reviewMode ? false :
@@ -500,7 +500,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["2"] ?? null} size="sm" />
-                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 2 ? "" : " invisible"}`} />
+                      <Crown data-review-winner={reviewMode && trickLeadOrWinner === 2 ? "true" : undefined} className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 2 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -513,7 +513,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["1"] ?? null} size="sm" />
-                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 1 ? "" : " invisible"}`} />
+                      <Crown data-review-winner={reviewMode && trickLeadOrWinner === 1 ? "true" : undefined} className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 1 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -526,7 +526,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       <TrickActionDisplay action={ta?.["3"] ?? null} size="sm" />
-                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 3 ? "" : " invisible"}`} />
+                      <Crown data-review-winner={reviewMode && trickLeadOrWinner === 3 ? "true" : undefined} className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 3 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -539,7 +539,7 @@ export default function GameBoard({
                   ) : (
                     <>
                       {!flyingCards && <TrickActionDisplay action={ta?.["0"] ?? null} size="sm" />}
-                      <Crown className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 0 ? "" : " invisible"}`} />
+                      <Crown data-review-winner={reviewMode && trickLeadOrWinner === 0 ? "true" : undefined} className={`absolute -top-2 -right-2 w-4 h-4 text-amber-500${trickLeadOrWinner === 0 ? "" : " invisible"}`} />
                     </>
                   )}
                 </div>
@@ -564,7 +564,7 @@ export default function GameBoard({
         </div>
 
         {/* Your turn indicator + Controls — or Review nav bar */}
-        <div className={`mt-auto lg:mt-0 py-0.5 lg:py-0 ${handDone ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
+        <div className={`relative z-20 mt-auto lg:mt-0 py-0.5 lg:py-0 ${handDone ? "invisible pointer-events-none lg:visible lg:pointer-events-auto" : ""}`}>
           {reviewMode ? (
             <div data-testid="review-nav" className="flex items-center justify-center gap-2 py-2.5">
               <button
@@ -603,6 +603,8 @@ export default function GameBoard({
                 <ChevronsRight size={16} />
               </button>
               <button
+                aria-label="Done reviewing"
+                data-testid="review-done"
                 onClick={() => { setReviewMode(false); setGameOverDismissed(false); }}
                 className="w-9 h-9 flex items-center justify-center text-xs font-medium text-text-secondary border border-border rounded-lg hover:text-foreground hover:border-foreground/30 transition-colors"
               >
@@ -614,7 +616,7 @@ export default function GameBoard({
               {/* Desktop-only turn label */}
               <div className={`hidden lg:flex items-center justify-center gap-1.5 pb-1 ${!gameState.is_my_turn ? "invisible" : ""}`}>
                 <div className="w-1.5 h-1.5 rounded-full bg-accent" />
-                <span className="text-[13px] font-medium text-accent">
+                <span data-testid="turn-label" className="text-[13px] font-medium text-accent">
                   {gameState.is_leading ? "Your turn to lead" : "Your turn to play"}
                 </span>
               </div>
@@ -789,6 +791,7 @@ export default function GameBoard({
           {toasts.map((toast) => (
             <div
               key={toast.id}
+              data-testid="toast"
               className="bg-foreground text-background text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg"
             >
               {toast.text}

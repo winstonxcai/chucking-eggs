@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGameSocket } from "@/hooks/useGameSocket";
 import { usePlayer } from "@/hooks/usePlayer";
@@ -74,7 +74,7 @@ function GameContent() {
     createGame();
   }, [difficulty, searchParams]);
 
-  const { gameState, aiThinking, gameOver, connected, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, autoPlayed, rematch, forfeit, sendAbort, hasPlayedFirstMove } =
+  const { gameState, aiThinking, gameOver, connectionStatus, closeReason, playCards, pass, createGroup, deleteGroup, latestError, autoPlayed, rematch, forfeit, sendAbort, hasPlayedFirstMove } =
     useGameSocket(gameId, reconnectToken, seat);
 
   const { updateElo } = usePlayer();
@@ -133,8 +133,12 @@ function GameContent() {
   const handleRematch = useCallback(async () => {
     if (!gameId) return;
     try {
-      await fetch(`${API_BASE}/api/room/${gameId}/rematch`, { method: "POST" });
-      // The broadcast handler above will navigate us to the new room
+      const res = await fetch(`${API_BASE}/api/room/${gameId}/rematch`, { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (data?.room_code && !rematchHandled.current) {
+        rematchHandled.current = true;
+        router.push(`/join?code=${data.room_code}`);
+      }
     } catch {
       // Fallback: go home
       router.push("/");
@@ -176,9 +180,13 @@ function GameContent() {
     const playerId = (() => { try { return localStorage.getItem("ce_player_id"); } catch { return null; } })();
     if (!playerId) return;
     try {
+      const playerToken = (() => { try { return localStorage.getItem(STORAGE_KEYS.PLAYER_TOKEN); } catch { return null; } })();
       await fetch(`${API_BASE}/api/room/${gameId}/forfeit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(playerToken ? { "X-Player-Token": playerToken } : {}),
+        },
         body: JSON.stringify({ player_id: playerId }),
       });
     } catch { /* best effort */ }
@@ -216,6 +224,8 @@ function GameContent() {
         variant="warning"
         title="Game ended"
         message={`${forfeit.forfeiter_name} forfeited the game. Redirecting you home...`}
+        action={{ label: "Rematch", onClick: handleRematch }}
+        secondaryAction={{ label: "Home", href: "/" }}
       />
     );
   }

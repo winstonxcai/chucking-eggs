@@ -148,7 +148,6 @@ export function validateCombo(
   if (cards.length === 0) return null;
 
   const ranks = cards.map((c) => c.rank).sort((a, b) => a - b);
-  const suits = cards.map((c) => c.suit);
   const rankCounts: Map<number, number> = new Map();
   for (const r of ranks) {
     rankCounts.set(r, (rankCounts.get(r) || 0) + 1);
@@ -252,5 +251,4 @@ export function validateCombo(
 
   return null;
 }
-
 

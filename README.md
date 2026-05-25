@@ -22,7 +22,9 @@ DART is, to our knowledge, the first open partner-visible Guan Dan RL agent with
 
 The hard-4 slice is the strongest public rule-bot evaluation set used during
 long runs: Yaoji, EZ, Jidan, and Strategic. Integrated checkpoint evals use
-10,000 paired fixed-deck games per opponent.
+10,000 paired fixed-deck games per opponent. On tuned Modal L4 resumes,
+roughly 500k learner updates corresponds to one day of training, so the
+trajectory x-axis is also a coarse wall-clock proxy after warmup.
 
 | Checkpoint | Yaoji | EZ | Jidan | Strategic | Hard-4 Avg |
 |------------|------:|---:|------:|----------:|-----------:|
@@ -87,13 +89,15 @@ In that sense, partner visibility is a research assumption for studying
 cooperative play, not a claim that the policy is directly human-deployable under
 strict hidden-information rules.
 
-This is deliberately different from perfect-information play. The opponent
-hands are not part of the target deployment setting; when an experiment exposes
-opponent cards, it should be read as an oracle diagnostic or ablation that
-measures the ceiling after removing hidden-state uncertainty. The current
-reported checkpoint includes that opponent-hand channel, so the leaderboard
-numbers above are labeled as partner-visible/oracle-style benchmarking in the
-limitations rather than as strict partial-observation performance.
+This is deliberately different from perfect-information play. The encoder
+does include an `others_hand` channel, but it is the *union* of the two
+opponent hands — the complement of `own_hand + partner_hand` in the 108-card
+deck. A normal player already knows their own hand and therefore the
+collective deck-complement; with partner visibility, that complement narrows
+to exactly the cards held by the opposing team. `others_hand` is that
+deck-subtraction precomputed as a feature, not per-opponent information. It
+does not reveal which opponent holds which card. See
+[`docs/TRADEOFFS.md`](docs/TRADEOFFS.md) §10 for the full discussion.
 
 ## Reproducibility Artifacts
 
@@ -175,7 +179,7 @@ L4 learner + 32 vCPU actors costs roughly $2.50/hr.
 modal run ml/scripts/modal/train_dart_modal.py --dry-run \
     --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml
 
-# Full run (~50k updates, ~8h, ~$20 at ~1.8 upd/s steady-state)
+# Example 50k shard (~8h from cold start; later resumed shards run faster)
 modal run --detach ml/scripts/modal/train_dart_modal.py \
     --updates 50000 --run-name my_run \
     --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml
@@ -190,23 +194,12 @@ modal volume get dart-runs dart/my_run/checkpoints/update_00050000.pt .
 Set `DART_MODAL_VOL=<volume-name>` or `DART_HF_CACHE=<volume-name>` before
 `modal run` if you want to use existing Modal volumes instead of the defaults.
 
-**Reference cost for a full run (0→200k updates):** ~30 hours, ~$75 across
-multiple resumes. Steady-state throughput is ~1.8 upd/s on L4; the cold-start
-phase (0→20k) is slower at ~1.4 upd/s.
-
-Recent Modal throughput smokes show why DART uses intra-actor lane batching.
-Numbers below are post-warmup means from 1000-update runs and report accepted
-fresh actor samples/sec in `metrics_learner.jsonl`:
-
-| GPU | GuanZero-style `32 x 1` | DART `32 x 128` | DART speedup |
-|---|---:|---:|---:|
-| L4 | 4,640 | 19,765 | **4.3×** |
-| A10G | 4,889 | 22,383 | **4.6×** |
-
-The `32 x 1` shape is actor-limited: the learner queue stays near empty. The
-`32 x 128` shape is no longer actor-limited in these smokes: the learner queue
-is mostly full and throughput is governed by learner speed and replay-ratio
-throttling.
+**Reference cost for the 1.25M-update release run:** logged learner metrics
+cover the first 548k updates. The 0→200k actor-limited phase ran at ~1.6
+upd/s (~34h); later tuned L4 resumes run at ~5-6 upd/s. Extrapolating that
+post-200k rate to `update_01250000.pt`, the release checkpoint is roughly
+85-90 L4 learner-hours, or ~$215-$225 at the reference $2.50/hr Modal rate,
+excluding evaluation sweeps.
 
 ### Troubleshooting
 
@@ -265,6 +258,20 @@ epsilon-random decisions bypass the network; nontrivial decisions are encoded
 as legal candidate-action rows, scored by the local Q-network in a batched
 forward pass, segmented back by lane, and resolved by per-lane argmax.
 
+Recent Modal throughput smokes show why DART uses intra-actor lane batching.
+Numbers below are post-warmup means from 1000-update runs and report accepted
+fresh actor samples/sec in `metrics_learner.jsonl`:
+
+| GPU | GuanZero-style `32 x 1` | DART `32 x 128` | DART speedup |
+|---|---:|---:|---:|
+| L4 | 4,640 | 19,765 | **4.3x** |
+| A10G | 4,889 | 22,383 | **4.6x** |
+
+The `32 x 1` shape is actor-limited: the learner queue stays near empty. The
+`32 x 128` shape is no longer actor-limited in these smokes: the learner queue
+is mostly full and throughput is governed by learner speed and replay-ratio
+throttling.
+
 ![DART trick-relative Q-head routing](docs/figures/model_architecture.png)
 
 This figure shows the model's action-relative output layer. State and candidate
@@ -281,6 +288,7 @@ trick, first responder, across from leader, or last responder.
 - [Terminology](docs/TERMINOLOGY.md)
 - [Evaluation guide](docs/EVALUATION.md)
 - [Architecture map](docs/ARCHITECTURE.md)
+- [Tradeoffs and design decisions](docs/TRADEOFFS.md)
 - [Debugging](docs/DEBUGGING.md)
 - [Profiling](docs/PROFILING.md)
 - [Backend API and WebSocket protocol](docs/API.md)
@@ -337,10 +345,11 @@ The broader lineage comes from **DQN** [4] (deep value-based RL) and **A3C** [5]
 DART's hardest matchup remains Yaoji: the latest 1.35M checkpoint reaches
 62.74% in the 10,000-game hard-4 eval, below the other hard opponents. The
 reported model is **partner-visible** and should not be read as a strict
-hidden-information policy: the partner hand is exposed, and the current
-role-aware checkpoint also carries an `others_hand` opponent-hand channel.
-Treat the numbers as partner-visible/oracle-style benchmarking, not as
-human-deployable partial-observation performance. Training is **single-seed**:
+hidden-information policy: the partner hand is exposed in the state encoding.
+The encoder also carries an `others_hand` channel that is the *union* of the
+two opponent hands; this is a precomputed deck-complement (`full_deck −
+own − partner`), not per-opponent oracle information — see
+[`docs/TRADEOFFS.md`](docs/TRADEOFFS.md) §10. Training is **single-seed**:
 there are no error bars across runs, only across eval games. Only the **L4 + M1
 Pro** training paths are validated end-to-end. Evaluation is exclusively
 head-to-head against rule-based bots; no human evaluation, and no comparison

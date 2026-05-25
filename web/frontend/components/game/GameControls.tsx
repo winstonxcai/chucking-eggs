@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { animate } from "framer-motion";
 import { LayoutList, X } from "lucide-react";
 import type { ComboDTO } from "@/lib/types";
@@ -130,6 +130,7 @@ export default function GameControls({
 
           <div className={`flex items-center gap-1.5 ${!isMyTurn ? "invisible" : ""}`}>
             <button
+              data-testid="play-button"
               className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
                 matchingCombo
                   ? "bg-accent text-white hover:bg-accent-hover cursor-pointer"
@@ -141,12 +142,14 @@ export default function GameControls({
               {matchingCombo ? "Play" : "Select"}
             </button>
             <button
+              data-testid="unselect-button"
               className={`px-2 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer${hasSelection ? "" : " invisible"}`}
               onClick={onUnselect}
             >
               <X size={14} strokeWidth={2} />
             </button>
             <button
+              data-testid="pass-button"
               className={`px-2.5 py-1 rounded-lg text-xs font-medium border-[1.5px] border-border text-text-secondary hover:border-foreground hover:text-foreground transition-colors cursor-pointer ${isLeading ? "invisible" : ""}`}
               onClick={onPass}
             >
@@ -188,6 +191,7 @@ export default function GameControls({
 
       <div className={`flex items-center justify-center gap-3 ${!isMyTurn ? "invisible" : ""}`}>
         <button
+          data-testid="play-button"
           className={`px-7 py-2.5 rounded-lg text-sm font-semibold transition-colors min-w-[160px] ${
             matchingCombo
               ? "bg-accent text-white hover:bg-accent-hover cursor-pointer"
@@ -199,6 +203,7 @@ export default function GameControls({
           {matchingCombo ? `Play ${matchingCombo.type_name}` : "Select"}
         </button>
         <button
+          data-testid="unselect-button"
           className={`px-4 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border transition-colors ${
             hasSelection
               ? "text-text-secondary hover:border-foreground hover:text-foreground cursor-pointer"
@@ -210,6 +215,7 @@ export default function GameControls({
           Unselect
         </button>
         <button
+          data-testid="pass-button"
           className={`px-7 py-2.5 rounded-lg text-sm font-medium border-[1.5px] border-border transition-colors ${
             isLeading
               ? "text-text-secondary opacity-50 cursor-not-allowed"

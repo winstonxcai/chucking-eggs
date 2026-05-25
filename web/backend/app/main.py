@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import time
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from typing import Literal
 
 from fastapi import (
     FastAPI,
@@ -19,35 +19,44 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from . import db
 from .ai_service import AGENT_INFO, AIService
+from .auth import resolve_player_id
 from .elo import BOT_LEADERBOARD_ENTRIES
 from .game_manager import LOBBY_TIMEOUT, GameManager
-from .game_room import HUMAN_TURN_TIMEOUT_S
 from .redis_client import close_redis
+from .settings import get_settings
+from .tasks import create_logged_task
 
 ai_service: AIService | None = None
 game_manager: GameManager | None = None
+logger = logging.getLogger(__name__)
+
+VALID_ROOM_MODES = {"solo", "duo", "quad"}
+RoomMode = Literal["solo", "duo", "quad"]
+SETTINGS = get_settings()
+HUMAN_TURN_TIMEOUT_S = SETTINGS.human_turn_timeout_s
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global ai_service, game_manager
+    settings = get_settings()
     ai_service = AIService()
     game_manager = GameManager(ai_service)
     await game_manager.start_cleanup_loop()
-    await db.init_db()
-    print("AI agents loaded, DB connected, server ready")
+    await db.init_db(settings)
+    logger.info("AI agents loaded, DB connected, server ready")
     yield
     await game_manager.stop_cleanup_loop()
     await close_redis()
     await db.close_db()
-    print("Shutting down")
+    logger.info("Shutting down")
 
 
 app = FastAPI(title="Guan Dan", lifespan=lifespan)
@@ -56,9 +65,13 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-_cors_origins = os.getenv(
-    "ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
-).split(",")
+_cors_origins = SETTINGS.allowed_origins
+
+
+def _rate_limit(limit: str):
+    if SETTINGS.app_env == "test":
+        return lambda fn: fn
+    return limiter.limit(limit)
 
 app.add_middleware(
     CORSMiddleware,
@@ -83,7 +96,7 @@ class CreateGameResponse(BaseModel):
 
 
 class CreateRoomRequest(BaseModel):
-    mode: str = "solo"       # "solo" | "duo" | "quad"
+    mode: RoomMode = "solo"
     difficulty: str = "greedy"
     seed: int | None = None
 
@@ -137,12 +150,24 @@ async def list_bots():
     return AGENT_INFO
 
 
+def _require_valid_difficulty(difficulty: str) -> str:
+    if difficulty not in AGENT_INFO:
+        raise HTTPException(status_code=400, detail=f"Invalid difficulty: {difficulty}")
+    return difficulty
+
+
+def _require_valid_mode(mode: str) -> str:
+    if mode not in VALID_ROOM_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
+    return mode
+
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 
 @app.post("/api/auth/claim")
-@limiter.limit("5/minute")
+@_rate_limit("5/minute")
 async def claim_username(request: Request, req: ClaimUsernameRequest):
     from .auth import claim_username as _claim
     return await _claim(req.username, req.email, req.is_test)
@@ -250,9 +275,8 @@ async def get_leaderboard():
 @app.post("/api/game/create", response_model=CreateGameResponse)
 async def create_game(req: CreateGameRequest):
     assert game_manager is not None
-    if req.difficulty not in AGENT_INFO:
-        req.difficulty = "greedy"
-    room = await game_manager.create_game(req.difficulty)
+    difficulty = _require_valid_difficulty(req.difficulty)
+    room = await game_manager.create_game(difficulty)
     return CreateGameResponse(
         game_id=room.game_id,
         reconnect_token=room.reconnect_token,
@@ -264,14 +288,17 @@ async def create_game(req: CreateGameRequest):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/room/create", response_model=CreateRoomResponse)
-async def create_room(req: CreateRoomRequest, x_player_id: str | None = Header(None)):
+async def create_room(
+    req: CreateRoomRequest,
+    x_player_token: str | None = Header(None),
+    x_player_id: str | None = Header(None),
+):
     assert game_manager is not None
-    if req.mode not in ("solo", "duo", "quad"):
-        req.mode = "solo"
-    if req.difficulty not in AGENT_INFO:
-        req.difficulty = "greedy"
+    mode = _require_valid_mode(req.mode)
+    difficulty = _require_valid_difficulty(req.difficulty)
+    creator_player_id = resolve_player_id(x_player_token, legacy_player_id=x_player_id)
     try:
-        room = await game_manager.create_room(req.mode, req.difficulty, seed=req.seed, creator_player_id=x_player_id)
+        room = await game_manager.create_room(mode, difficulty, seed=req.seed, creator_player_id=creator_player_id)
     except ValueError:
         raise HTTPException(status_code=409, detail="already_in_game") from None
     seat = 0  # creator always gets seat 0
@@ -298,10 +325,15 @@ async def set_room_difficulty(game_id: str, req: SetDifficultyRequest):
 
 
 @app.post("/api/room/join/{room_code}", response_model=JoinRoomResponse)
-async def join_room(room_code: str, x_player_id: str | None = Header(None)):
+async def join_room(
+    room_code: str,
+    x_player_token: str | None = Header(None),
+    x_player_id: str | None = Header(None),
+):
     assert game_manager is not None
+    joiner_player_id = resolve_player_id(x_player_token, legacy_player_id=x_player_id)
     try:
-        result = await game_manager.join_room(room_code, joiner_player_id=x_player_id)
+        result = await game_manager.join_room(room_code, joiner_player_id=joiner_player_id)
     except ValueError:
         raise HTTPException(status_code=409, detail="already_in_game") from None
     if result is None:
@@ -346,11 +378,11 @@ async def room_status(game_id: str):
 
 
 class LeaveRoomRequest(BaseModel):
-    seat: int
+    seat: int = Field(ge=0, le=3)
 
 
 class ForfeitRequest(BaseModel):
-    player_id: str
+    player_id: str | None = None
 
 
 @app.post("/api/room/{game_id}/leave")
@@ -366,7 +398,11 @@ async def leave_room(game_id: str, req: LeaveRoomRequest):
 
 
 @app.post("/api/room/{game_id}/forfeit")
-async def forfeit_game(game_id: str, req: ForfeitRequest):
+async def forfeit_game(
+    game_id: str,
+    req: ForfeitRequest,
+    x_player_token: str | None = Header(None),
+):
     assert game_manager is not None
     room = game_manager.get_room(game_id)
     if room is None:
@@ -375,10 +411,13 @@ async def forfeit_game(game_id: str, req: ForfeitRequest):
         raise HTTPException(status_code=400, detail="Game has not started")
     if room.env.done:
         raise HTTPException(status_code=400, detail="Game is already over")
+    player_id = resolve_player_id(x_player_token, legacy_player_id=req.player_id)
+    if player_id is None:
+        raise HTTPException(status_code=401, detail="Player token required")
     # Find forfeiter's seat
     seat = None
     for s, pid in room.player_ids.items():
-        if pid == req.player_id:
+        if pid == player_id:
             seat = s
             break
     if seat is None:
@@ -410,6 +449,7 @@ async def game_websocket(
     token: str = Query(default=""),
     seat: int = Query(default=0),
     player_id: str = Query(default=""),
+    player_token: str = Query(default=""),
 ):
     assert game_manager is not None
 
@@ -434,24 +474,36 @@ async def game_websocket(
         await ws.close(code=4003, reason="Seat not valid")
         return
 
+    if token and room.reconnect_tokens.get(seat) != token:
+        await ws.accept()
+        await ws.close(code=4003, reason="Invalid reconnect token")
+        return
+
+    try:
+        resolved_player_id = resolve_player_id(player_token or None, legacy_player_id=player_id or None)
+    except HTTPException as exc:
+        await ws.accept()
+        await ws.close(code=4003, reason=str(exc.detail))
+        return
+
     await room.connect(ws, seat)
 
     # Register player_id immediately (no I/O)
-    if player_id:
-        room.player_ids[seat] = player_id
+    if resolved_player_id:
+        room.player_ids[seat] = resolved_player_id
 
     # Fetch display name/elo from DB concurrently — don't block game start
-    if player_id:
+    if resolved_player_id:
         async def _update_player_info() -> None:
             try:
-                player_doc = await db.get_player_by_id(player_id)
+                player_doc = await db.get_player_by_id(resolved_player_id)
                 if player_doc:
                     room.player_infos[seat]["name"] = player_doc["username"]
                     room.player_infos[seat]["elo"] = player_doc.get("elo", 1200)
                     await room.broadcast_game_state()
             except Exception:
-                pass
-        asyncio.create_task(_update_player_info())
+                logger.exception("Failed to refresh player info for game %s seat %s", game_id, seat)
+        create_logged_task(_update_player_info(), name=f"refresh-player-info:{game_id}:{seat}")
 
     # Determine whether this connection causes the game to start
     game_just_started = False
@@ -461,6 +513,8 @@ async def game_websocket(
 
     try:
         if game_just_started:
+            if room.env.current_player in room.human_seats and not room.env.done:
+                room.ensure_turn_deadline(room.env.current_player)
             await room.broadcast_game_state()
             if room.env.current_player not in room.human_seats and not room.env.done:
                 await room.run_ai_turns()
@@ -471,10 +525,8 @@ async def game_websocket(
                 room.started
                 and not room.env.done
                 and room.env.current_player == seat
-                and seat in room.turn_deadlines
             ):
-                room.turn_deadlines[seat] = asyncio.get_event_loop().time() + HUMAN_TURN_TIMEOUT_S
-                room.turn_deadline_wallclock_ms[seat] = int((time.time() + HUMAN_TURN_TIMEOUT_S) * 1000)
+                room.ensure_turn_deadline(seat)
             await room.send_game_state_to(seat)
             if (
                 room.started
@@ -488,7 +540,8 @@ async def game_websocket(
             # AFK rope: use wait_for when it's this seat's turn and a deadline is set
             deadline = room.turn_deadlines.get(seat)
             if deadline is not None and room.env.current_player == seat:
-                remaining = max(0.5, deadline - asyncio.get_event_loop().time())
+                min_wait = 0.05 if HUMAN_TURN_TIMEOUT_S == 0 else 0.5
+                remaining = max(min_wait, deadline - asyncio.get_event_loop().time())
                 try:
                     raw = await asyncio.wait_for(ws.receive_text(), timeout=remaining)
                 except asyncio.TimeoutError:
@@ -506,8 +559,11 @@ async def game_websocket(
 
     except WebSocketDisconnect:
         pass
+    except RuntimeError as e:
+        if "WebSocket is not connected" not in str(e):
+            logger.exception("WebSocket runtime error in game %s seat %s: %s", game_id, seat, e)
     except Exception as e:
-        print(f"WebSocket error in game {game_id} seat {seat}: {e}")
+        logger.exception("WebSocket error in game %s seat %s: %s", game_id, seat, e)
     finally:
         game_manager.disconnect_seat(game_id, seat, ws)
         room.schedule_disconnect_takeover(seat)

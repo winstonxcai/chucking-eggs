@@ -17,12 +17,14 @@ services:
       - ALLOWED_ORIGINS=http://localhost:3000
       - MONGODB_URL=mongodb://mongo:27017
       - PYTHONPATH=/app/src:/app/web/backend
+      - DATA_DIR=/app/data/web_backend
+      - DART_CHECKPOINT=/app/checkpoints/update_01250000.pt
     depends_on:
       - mongo
     volumes:
       - ./ml/src:/app/src:ro
       - ./web/backend/app:/app/web/backend/app:ro
-      - ./ml/data:/app/data
+      - ./data/web_backend:/app/data/web_backend
       - ./ml/checkpoints:/app/checkpoints:ro
 
   frontend:

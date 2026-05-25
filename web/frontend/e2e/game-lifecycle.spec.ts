@@ -7,6 +7,8 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 
+const API_BASE = process.env.API_URL || "http://localhost:8000";
+
 const fakePlayer = () => {
   try {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -21,6 +23,82 @@ const fakePlayer = () => {
 
 async function waitForCards(page: Page, timeout = 20_000) {
   await expect(page.locator("[data-card-id]").first()).toBeVisible({ timeout });
+}
+
+type TestPlayer = {
+  player_id: string;
+  player_token: string;
+  username: string;
+  elo: number;
+};
+
+type RoomSession = {
+  game_id: string;
+  room_code: string;
+  seat: number;
+  reconnect_token: string;
+};
+
+const uniqueName = (prefix: string) =>
+  `${prefix.slice(0, 10)}-${Math.random().toString(36).slice(2, 8)}`;
+
+async function claimPlayer(
+  request: import("@playwright/test").APIRequestContext,
+  username: string
+): Promise<TestPlayer> {
+  const res = await request.post(`${API_BASE}/api/auth/claim`, {
+    data: { username, is_test: true },
+  });
+  expect(res.ok(), await res.text()).toBeTruthy();
+  return res.json() as Promise<TestPlayer>;
+}
+
+async function addSignedPlayer(
+  context: import("@playwright/test").BrowserContext,
+  player: TestPlayer
+) {
+  await context.addInitScript(
+    ({ id, token, name, elo }: { id: string; token: string; name: string; elo: number }) => {
+      localStorage.setItem("ce_player_id", id);
+      localStorage.setItem("ce_player_token", token);
+      localStorage.setItem("ce_username", name);
+      localStorage.setItem("ce_elo", String(elo));
+    },
+    {
+      id: player.player_id,
+      token: player.player_token,
+      name: player.username,
+      elo: player.elo,
+    }
+  );
+}
+
+async function createSignedDuo(
+  request: import("@playwright/test").APIRequestContext,
+  p1: TestPlayer,
+  p2: TestPlayer
+): Promise<[RoomSession, RoomSession]> {
+  const create = await request.post(`${API_BASE}/api/room/create`, {
+    data: { mode: "duo", difficulty: "greedy", seed: 7 },
+    headers: { "X-Player-Token": p1.player_token },
+  });
+  expect(create.ok(), await create.text()).toBeTruthy();
+  const host = (await create.json()) as RoomSession;
+
+  const join = await request.post(`${API_BASE}/api/room/join/${host.room_code}`, {
+    headers: { "X-Player-Token": p2.player_token },
+  });
+  expect(join.ok(), await join.text()).toBeTruthy();
+  const guest = (await join.json()) as RoomSession;
+  return [host, guest];
+}
+
+async function openMultiplayerGame(page: Page, session: RoomSession) {
+  await page.goto(
+    `/game?game_id=${session.game_id}&seat=${session.seat}&token=${encodeURIComponent(session.reconnect_token)}`
+  );
+  await expect(page).toHaveURL(/\/game/, { timeout: 20_000 });
+  await waitForCards(page);
 }
 
 /** Wait for saveGame to flush to localStorage before navigating away. */
@@ -391,6 +469,7 @@ test("gear/menu icon is shown in solo games with rules only", async ({ page }) =
 // ---------------------------------------------------------------------------
 test("disconnected multiplayer player is auto-forfeited after timeout — requires HUMAN_TURN_TIMEOUT_S=0", { tag: "@zero-timeout" }, async ({
   browser,
+  request,
 }) => {
   test.skip(
     process.env.HUMAN_TURN_TIMEOUT_S !== "0",
@@ -400,28 +479,23 @@ test("disconnected multiplayer player is auto-forfeited after timeout — requir
   // DISCONNECT_TAKEOVER_S=10 → auto-forfeit fires after ~10s.
   test.setTimeout(60_000);
 
+  const [p1, p2] = await Promise.all([
+    claimPlayer(request, uniqueName("disc-a")),
+    claimPlayer(request, uniqueName("disc-b")),
+  ]);
+  const [hostSession, guestSession] = await createSignedDuo(request, p1, p2);
+
   const ctx1 = await browser.newContext();
   const ctx2 = await browser.newContext();
-  await ctx1.addInitScript(fakePlayer);
-  await ctx2.addInitScript(fakePlayer);
+  await Promise.all([addSignedPlayer(ctx1, p1), addSignedPlayer(ctx2, p2)]);
   const page1 = await ctx1.newPage();
   const page2 = await ctx2.newPage();
 
   try {
-    await page1.goto("/");
-    await page1.getByRole("button", { name: /2-player/i }).click();
-    await expect(page1).toHaveURL(/\/lobby/, { timeout: 10_000 });
-
-    const roomCode = (await page1.locator("[data-testid='room-code']").textContent())?.trim();
-    await page2.goto("/join");
-    await page2.locator('input[placeholder="XXXXXX"]').fill(roomCode!);
-    await page2.getByRole("button", { name: /join game/i }).click();
-
     await Promise.all([
-      expect(page1).toHaveURL(/\/game/, { timeout: 20_000 }),
-      expect(page2).toHaveURL(/\/game/, { timeout: 20_000 }),
+      openMultiplayerGame(page1, hostSession),
+      openMultiplayerGame(page2, guestSession),
     ]);
-    await Promise.all([waitForCards(page1), waitForCards(page2)]);
 
     // Simulate player 1 disconnect by closing their context (closes WebSocket)
     await ctx1.close();

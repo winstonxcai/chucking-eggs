@@ -2,22 +2,22 @@ from __future__ import annotations
 
 import dataclasses
 import glob
+from pathlib import Path
 
 import pytest
 import yaml
-
 from guandan.dart.config import (
-    EpsilonConfig,
-    EpisodeMixConfig,
     MODEL_TYPE_DART,
     MODEL_TYPE_GUANZERO,
+    EpisodeMixConfig,
+    EpsilonConfig,
     OpponentConfig,
     OpponentSamplingConfig,
     QNetConfig,
     TrainConfig,
+    dart_qnet_config,
     load_config_from_cli,
     load_config_from_yaml,
-    dart_qnet_config,
 )
 from guandan.dart.model.q_network import DartQNetConfig
 
@@ -65,6 +65,20 @@ def test_yaml_and_cli_loading_apply_precedence(tmp_path):
     assert cfg.qnet.hidden_lstm == 16
     assert cfg.epsilon.start == 0.5
     assert cfg.n_actors == 2
+
+
+def test_cpu_smoke_config_is_tiny_and_portable():
+    cfg = load_config_from_yaml(
+        Path("ml/src/guandan/dart/configs/dart_cpu_smoke.yaml")
+    )
+
+    assert cfg.device == "cpu"
+    assert cfg.n_actors == 1
+    assert cfg.actor_batch_lanes == 1
+    assert cfg.batch_size == 16
+    assert cfg.buffer_min_size == 16
+    assert cfg.checkpoint_every_updates == 5
+    assert cfg.eval.enabled is False
 
 
 def test_unknown_flat_config_key_fails_fast():

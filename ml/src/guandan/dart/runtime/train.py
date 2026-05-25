@@ -58,6 +58,7 @@ import sys
 import time
 from pathlib import Path
 
+import torch
 from tqdm import tqdm
 
 from ..config import TrainConfig, load_config_from_cli
@@ -130,6 +131,34 @@ def _tqdm_disabled() -> bool:
     if setting in {"1", "true", "yes", "on"}:
         return False
     return not sys.stderr.isatty()
+
+
+def _validate_torch_device_available(device: str, *, field: str) -> None:
+    """Fail before spawning subprocesses when a config requests unavailable hardware."""
+    try:
+        torch_device = torch.device(device)
+    except (RuntimeError, TypeError) as exc:
+        raise ValueError(f"{field}={device!r} is not a valid Torch device") from exc
+
+    if torch_device.type == "cuda" and not torch.cuda.is_available():
+        raise ValueError(
+            f"{field}={device!r} requires CUDA, but this PyTorch install cannot use CUDA. "
+            "Use --device cpu, dart_cpu_smoke.yaml, dart_mps.yaml on Apple Silicon, "
+            "or run a CUDA config on Modal/GPU hardware."
+        )
+    if torch_device.type == "mps":
+        mps_backend = getattr(torch.backends, "mps", None)
+        if mps_backend is None or not mps_backend.is_available():
+            raise ValueError(
+                f"{field}={device!r} requires Apple MPS, but MPS is not available. "
+                "Use --device cpu or dart_cpu_smoke.yaml for a local smoke test."
+            )
+
+
+def _validate_config_devices(cfg: TrainConfig) -> None:
+    _validate_torch_device_available(cfg.device, field="device")
+    if cfg.eval.enabled:
+        _validate_torch_device_available(cfg.eval.device, field="eval.device")
 
 
 def _resolve_eval_opponents(cfg: TrainConfig) -> list[str]:
@@ -399,6 +428,7 @@ def _shutdown_all(
 def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     import multiprocessing as mp
 
+    _validate_config_devices(cfg)
     seed_everything(cfg.seed)
 
     layout         = RunLayout(Path(cfg.resolved_run_dir))
@@ -515,7 +545,11 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
 
 def main() -> None:
     cfg, resume = _parse_args()
-    train(cfg, resume_checkpoint=resume)
+    try:
+        train(cfg, resume_checkpoint=resume)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":

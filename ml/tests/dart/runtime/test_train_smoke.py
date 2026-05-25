@@ -12,11 +12,9 @@ from pathlib import Path
 
 import pytest
 import torch
-
 from guandan.dart.config import EpsilonConfig, QNetConfig, TrainConfig
-from guandan.dart.utils.metrics import METRICS_SCHEMA_VERSION
 from guandan.dart.runtime.train import train
-
+from guandan.dart.utils.metrics import METRICS_SCHEMA_VERSION
 
 pytestmark = pytest.mark.slow
 

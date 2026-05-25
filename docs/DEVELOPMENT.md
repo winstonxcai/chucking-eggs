@@ -24,12 +24,20 @@ uv run pytest -q ml/tests/dart/runtime/test_train_smoke.py
 uv run pytest -q web/backend/tests
 ```
 
-Local DART smoke:
+Local DART CPU smoke:
+
+```bash
+uv run python -m guandan.dart \
+  --config ml/src/guandan/dart/configs/dart_cpu_smoke.yaml \
+  --updates 5 --run-dir ml/runs/dev_smoke
+```
+
+Apple Silicon longer smoke:
 
 ```bash
 uv run python -m guandan.dart \
   --config ml/src/guandan/dart/configs/dart_mps.yaml \
-  --updates 100 --run-dir ml/runs/dev_smoke
+  --updates 100 --run-dir ml/runs/mps_smoke
 ```
 
 Modal dry run:

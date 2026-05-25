@@ -43,6 +43,13 @@ jobs:
       - name: Run ML tests
         run: uv run pytest -q ml/tests
 
+      - name: Run DART CPU smoke
+        run: >
+          uv run python -m guandan.dart
+          --config ml/src/guandan/dart/configs/dart_cpu_smoke.yaml
+          --updates 5
+          --run-dir /tmp/dart_cpu_smoke_ci
+
       - name: Run web backend tests
         run: uv run pytest -q web/backend/tests
 

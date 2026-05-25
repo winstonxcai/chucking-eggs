@@ -1,0 +1,80 @@
+# Dart CPU smoke config.
+# Exercises the full actor -> learner -> checkpoint path on any developer or CI machine.
+#
+# Launch:
+#   uv run python -m guandan.dart \
+#     --config ml/src/guandan/dart/configs/dart_cpu_smoke.yaml \
+#     --updates 5 --run-dir ml/runs/cpu_smoke
+
+n_actors: 1
+actor_batch_lanes: 1
+sync_interval_updates: 5
+sync_jitter_updates: 0
+actor_push_batch_size: 16
+sample_queue_maxsize: 16
+max_drain_batches_per_loop: 8
+publish_interval_updates: 5
+checkpoint_every_updates: 5
+checkpoint_save_type: weight
+log_every_updates: 5
+
+eval:
+  enabled: false
+  opponents: all
+  n_eval_games_per_opponent: 200
+  every_updates: 0
+  workers: 0
+  lanes: 0
+  device: cpu
+
+model_type: Dart
+hidden_lstm: 16
+hidden_mlp: 32
+n_mlp_layers: 2
+dropout: 0.0
+
+dart_role_d_model: 8
+dart_history_hidden: 8
+dart_global_hidden: 8
+dart_action_hidden: 8
+dart_trunk_hidden: 16
+dart_trunk_layers: 1
+
+target_replay_ratio: 0.0
+max_replay_ratio: 4.0
+max_throttle_sleep_s: 0.01
+
+lr: 1.0e-4
+gamma: 1.0
+batch_size: 16
+buffer_capacity_per_player: 2000
+buffer_min_size: 16
+
+epsilon_start: 0.05
+epsilon_final: 0.05
+epsilon_decay_updates: 0
+is_partner_visible: true
+
+opponents:
+  latest_learner_team_odd_probability: 0.5
+  episode_mix:
+    self_play: 1.0
+    frozen_pool: 0.0
+    hard_bot: 0.0
+  frozen_pool:
+    checkpoints: []
+    epsilon: 0.0
+    sampling: uniform
+  hard_bot:
+    bots: []
+    sampling:
+      type: uniform
+      weights: {}
+
+max_forced_pass_replay_frac: 1.0
+coordination_bucket_card_threshold: 5
+coordination_bucket_final_fraction: 0.6666666667
+
+device: cpu
+use_bf16_learner: false
+compile_mode: default

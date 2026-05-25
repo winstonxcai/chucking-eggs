@@ -49,6 +49,8 @@ files.
 
 ## Smoke Configs
 
-- `dart_l4_lanes1_smoke.yaml`: actor-limited baseline.
-- `dart_l4_lanes64_smoke.yaml`: production-like lane batching.
-- `dart_l4_lanes128_smoke.yaml`: high-lane throughput probe.
+- `dart_cpu_smoke.yaml`: tiny CPU-only actor/learner/checkpoint smoke for CI and local setup checks.
+- `dart_mps.yaml`: Apple Silicon local training/smoke config.
+- `dart_l4_lanes1_smoke.yaml`: CUDA actor-limited throughput baseline.
+- `dart_l4_lanes64_smoke.yaml`: CUDA production-like lane batching throughput probe.
+- `dart_l4_lanes128_smoke.yaml`: CUDA high-lane throughput probe.

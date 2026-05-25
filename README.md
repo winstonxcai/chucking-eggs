@@ -150,6 +150,21 @@ step to restore native acceleration.
 
 ## Training
 
+### Local CPU Smoke
+
+Every contributor should be able to run the tiny CPU smoke. It checks the full
+actor -> learner -> checkpoint path without requiring CUDA or Apple MPS.
+
+```bash
+uv run python -m guandan.dart \
+    --config ml/src/guandan/dart/configs/dart_cpu_smoke.yaml \
+    --updates 5 --run-dir ml/runs/cpu_smoke
+```
+
+CUDA configs fail fast on machines without CUDA. Use the CPU smoke for setup
+checks, `dart_mps.yaml` for Apple Silicon, and the L4 configs only on GPU
+hardware or Modal.
+
 ### Local MPS
 
 DART is the production training path. We tested centralized GPU inference-server

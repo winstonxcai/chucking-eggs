@@ -12,15 +12,20 @@ to solve() and returns the highest-scoring action index.
 
 from __future__ import annotations
 
-from ..cards import ComboType, Rank
+from ..cards import Rank
 from ._vendor.adapter import (
     cards_to_strings,
-    combo_to_action_list,
     find_pass,
     rank_to_string,
 )
 from ._vendor.yaoji.mysolve import solve
 from .base import Agent
+from .competition_bridge import (
+    build_action_list,
+    current_comp_context,
+    env_to_comp_pos,
+    public_info_for_comp_positions,
+)
 
 
 class YaojiBot(Agent):
@@ -44,26 +49,17 @@ class YaojiBot(Agent):
 
         rank_str = rank_to_string(self.level_rank)
         hand_strings = cards_to_strings(env.hands[player])
-
-        action_list = [["PASS", "PASS", []]]
-        combo_map = [None]
-        for combo in legal:
-            if combo.type == ComboType.PASS:
-                continue
-            action_list.append(combo_to_action_list(combo, self.level_rank))
-            combo_map.append(combo)
-
-        greater_pos = -1 if env.current_trick is None else (
-            env.trick_winner if env.trick_winner is not None else player
-        )
-        mate_pos = (player + 2) % 4
+        action_list, combo_map = build_action_list(legal, self.level_rank)
+        _, _, greater_pos, _ = current_comp_context(env, self.level_rank)
+        comp_player = env_to_comp_pos(player)
+        mate_pos = (comp_player + 2) % 4
 
         msg = {
             "curRank": rank_str,
             "greaterPos": greater_pos,
             "handCards": hand_strings,
             "actionList": action_list,
-            "publicInfo": [{"rest": len(env.hands[p])} for p in range(4)],
+            "publicInfo": public_info_for_comp_positions(env),
         }
 
         try:

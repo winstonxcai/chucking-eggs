@@ -11,7 +11,8 @@ and threshold-based leading strategy with rankone/ranktwo/rankthree/rankfour
 sub-decisions.
 
 The original code returns an index into the server's actionList. This wrapper
-builds the same actionList format from our legal_moves() and converts back.
+tracks the same public state the competition client maintained, calls
+Action.rule_parse(), and converts the selected actionList index back.
 """
 
 from __future__ import annotations
@@ -26,35 +27,89 @@ from ._vendor.adapter import (
 from ._vendor.lalala.action import Action
 from .base import Agent
 
-# Rank index for building remaincards structure (2-deck card count dict)
 _RANK_IDX = {
     "A": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "7": 6,
     "8": 7, "9": 8, "T": 9, "J": 10, "Q": 11, "K": 12,
+    "R": 13, "B": 13,
 }
 
 
-def _build_remaincards(hand_strings: list[str]) -> dict:
-    """Build 2-deck card count dict, subtracting known hand cards.
+def _initial_history() -> dict[str, dict[str, object]]:
+    return {str(pos): {"send": [], "remain": 27} for pos in range(4)}
 
-    Structure: {'S': [count_A, ..., count_K, count_joker], ...}
-    Index 13 = joker (Black joker under 'S', Red joker under 'H').
-    """
-    # 2 decks: 2 copies of each rank per suit
-    remaincards = {
-        "S": [2] * 13 + [2],  # index 13 = Black Joker
-        "H": [2] * 13 + [2],  # index 13 = Red Joker
-        "C": [2] * 13 + [0],  # no joker
-        "D": [2] * 13 + [0],  # no joker
+
+def _initial_remain_cards() -> dict[str, list[int]]:
+    return {
+        "S": [2] * 13 + [2],
+        "H": [2] * 13 + [2],
+        "C": [2] * 13 + [0],
+        "D": [2] * 13 + [0],
     }
-    for card in hand_strings:
-        suit = card[0]
-        rank = card[1]
-        if rank in ("B", "R"):
-            remaincards[suit][13] = max(0, remaincards[suit][13] - 1)
-        elif rank in _RANK_IDX:
-            idx = _RANK_IDX[rank]
-            remaincards[suit][idx] = max(0, remaincards[suit][idx] - 1)
-    return remaincards
+
+
+def _env_to_comp_pos(pos: int) -> int:
+    """Map engine seats to vendor seats where next player is +1 mod 4."""
+    return (-pos) % 4
+
+
+def _comp_to_env_pos(pos: int) -> int:
+    return (-pos) % 4
+
+
+class _CompetitionState:
+    """Minimal port of lalala/state.py for play-stage decisions.
+
+    The official client kept one State object per websocket seat. Eval reuses a
+    single Agent object for both teammates, so this wrapper keeps one tracker per
+    seat and replays env.move_history into each tracker before acting.
+    """
+
+    def __init__(self, my_pos: int):
+        self.my_pos = my_pos
+        self.reset()
+
+    def reset(self) -> None:
+        self.history = _initial_history()
+        self.remain_cards = _initial_remain_cards()
+        self.remain_cards_classbynum = [8] * 13 + [2, 2]
+        self.tribute_result = None
+        self.pass_num = 0
+        self.my_pass_num = 0
+        self._synced_history_len = 0
+
+    def sync_from_env(self, env, level_rank: int) -> None:
+        if len(env.move_history) < self._synced_history_len:
+            self.reset()
+
+        for cur_pos, combo in env.move_history[self._synced_history_len:]:
+            self._notify_play(
+                _env_to_comp_pos(cur_pos),
+                combo_to_action_list(combo, level_rank),
+            )
+
+        self._synced_history_len = len(env.move_history)
+
+    def _notify_play(self, cur_pos: int, cur_action: list) -> None:
+        if cur_action[0] != "PASS":
+            row = self.history[str(cur_pos)]
+            sent = row["send"]
+            assert isinstance(sent, list)
+            for card in cur_action[2]:
+                sent.append(card)
+                row["remain"] = int(row["remain"]) - 1
+                self.remain_cards[card[0]][_RANK_IDX[card[1]]] -= 1
+
+        if cur_pos in (self.my_pos, (self.my_pos + 2) % 4):
+            if cur_action[0] == "PASS":
+                self.pass_num += 1
+            else:
+                self.pass_num = 0
+
+        if cur_pos == self.my_pos:
+            if cur_action[0] == "PASS":
+                self.my_pass_num += 1
+            else:
+                self.my_pass_num = 0
 
 
 class LalalaBot(Agent):
@@ -69,37 +124,21 @@ class LalalaBot(Agent):
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
-        self._action = Action("lalala_bot")
-        self._last_history_len = -1
-        # Per-game state (mirrors competition client)
-        self._remaining = {0: 27, 1: 27, 2: 27, 3: 27}
-        self._pass_num = 0        # cumulative passes observed this game
-        self._my_pass_num = 0
+        self._actions: dict[int, Action] = {}
+        self._states: dict[int, _CompetitionState] = {}
 
     def act(self, env, player: int):
         legal = env.legal_moves(player)
         if len(legal) == 1:
             return legal[0]
 
-        # Detect new game → reset state
-        history_len = len(env.move_history)
-        if history_len < self._last_history_len or self._last_history_len == -1:
-            self._remaining = {0: 27, 1: 27, 2: 27, 3: 27}
-            self._pass_num = 0
-            self._my_pass_num = 0
-        self._last_history_len = history_len
-
-        # Reset my_pass_num at the start of each new trick
-        if env.current_trick is None:
-            self._my_pass_num = 0
-
-        # Sync remaining counts from env
-        for p in range(4):
-            self._remaining[p] = len(env.hands[p])
+        comp_player = _env_to_comp_pos(player)
+        state = self._states.setdefault(player, _CompetitionState(comp_player))
+        state.sync_from_env(env, self.level_rank)
+        action = self._actions.setdefault(player, Action(f"lalala_bot_{player}"))
 
         rank_str = rank_to_string(self.level_rank)
         hand_strings = cards_to_strings(env.hands[player])
-        remaincards = _build_remaincards(hand_strings)
 
         # Build actionList in competition format: [['PASS','PASS',[]], ['Single','5',['S5']], ...]
         action_list = [["PASS", "PASS", []]]
@@ -110,12 +149,20 @@ class LalalaBot(Agent):
             action_list.append(combo_to_action_list(combo, self.level_rank))
             combo_map.append(combo)
 
-        if env.current_trick is None:
-            idx = self._lead(action_list, hand_strings, rank_str, player, remaincards)
-        else:
-            idx = self._follow(
-                env, player, action_list, hand_strings, rank_str, remaincards,
+        msg = self._build_play_message(env, player, action_list, hand_strings, rank_str)
+        try:
+            idx = action.rule_parse(
+                msg,
+                comp_player,
+                state.remain_cards,
+                state.history,
+                state.remain_cards_classbynum,
+                state.pass_num,
+                state.my_pass_num,
+                state.tribute_result,
             )
+        except Exception:
+            idx = 0
 
         # Clamp index
         if idx is None or idx < 0 or idx >= len(action_list):
@@ -125,38 +172,39 @@ class LalalaBot(Agent):
             return find_pass(legal)
         return combo_map[idx] if idx < len(combo_map) else find_pass(legal)
 
-    def _lead(self, action_list, hand_strings, rank_str, player, remaincards):
-        """Leading play using Action.active()."""
-        try:
-            idx = self._action.active(
-                action_list, hand_strings, rank_str,
-                self._remaining, player, remaincards,
+    def _build_play_message(self, env, player: int, action_list: list, hand_strings: list[str], rank_str: str) -> dict:
+        comp_player = _env_to_comp_pos(player)
+        if env.current_trick is None:
+            cur_pos = -1
+            greater_pos = -1
+            cur_action = ["PASS", "PASS", []]
+            greater_action = ["PASS", "PASS", []]
+        else:
+            env_cur_pos, cur_combo = env.move_history[-1]
+            cur_pos = _env_to_comp_pos(env_cur_pos)
+            cur_action = combo_to_action_list(cur_combo, self.level_rank)
+            greater_pos = (
+                _env_to_comp_pos(env.trick_winner)
+                if env.trick_winner is not None
+                else comp_player
             )
-            return idx if idx is not None else 0
-        except Exception:
-            return 0
+            greater_action = combo_to_action_list(env.current_trick, self.level_rank)
 
-    def _follow(self, env, player, action_list, hand_strings, rank_str, remaincards):
-        """Following play using Action.passive() — the competition code path."""
-        trick_type = combo_to_action_list(env.current_trick, self.level_rank)
-        greater_pos = env.trick_winner if env.trick_winner is not None else player
-
-        try:
-            idx = self._action.passive(
-                action_list, hand_strings, rank_str,
-                trick_type, trick_type,   # curAction = greaterAction = current trick
-                player, greater_pos,
-                remaincards, self._remaining,
-                self._pass_num,           # cumulative passes this game
-                self._my_pass_num,
-                None,  # remain_cards_classbynum — not used inside passive()
-            )
-            result = idx if idx is not None else 0
-            if result == 0:
-                self._pass_num += 1
-                self._my_pass_num += 1
-            return result
-        except Exception:
-            self._pass_num += 1
-            self._my_pass_num += 1
-            return 0
+        return {
+            "type": "act",
+            "stage": "play",
+            "myPos": comp_player,
+            "curPos": cur_pos,
+            "curAction": cur_action,
+            "greaterPos": greater_pos,
+            "greaterAction": greater_action,
+            "handCards": hand_strings,
+            "curRank": rank_str,
+            "selfRank": rank_str,
+            "oppoRank": rank_str,
+            "actionList": action_list,
+            "publicInfo": [
+                {"rest": len(env.hands[_comp_to_env_pos(pos)]), "playArea": None}
+                for pos in range(4)
+            ],
+        }

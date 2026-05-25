@@ -13,15 +13,15 @@ WebSocket client; self.send()+return replaced with return act_index.
 
 from __future__ import annotations
 
-from ..cards import ComboType, Rank
+from ..cards import Rank
 from ._vendor.adapter import (
     cards_to_strings,
-    combo_to_action_list,
     find_pass,
     rank_to_string,
 )
 from ._vendor.wjsd.client import WjsdClient
 from .base import Agent
+from .competition_bridge import build_action_list, build_play_message
 
 # Vendor scans its 4x16 shoupaijuzhen matrix with row order S,H,C,D
 # (see hua_dict in client.py). Match its convention by ordering each
@@ -100,37 +100,19 @@ class WjsdBot(Agent):
 
         rank_str = rank_to_string(self.level_rank)
         hand_strings = cards_to_strings(env.hands[player])
-
-        action_list = [["PASS", "PASS", []]]
-        combo_map = [None]
-        for combo in legal:
-            if combo.type == ComboType.PASS:
-                continue
-            action_list.append(_sort_action_cards(combo_to_action_list(combo, self.level_rank)))
-            combo_map.append(combo)
-
-        greater_pos = -1 if env.current_trick is None else (
-            env.trick_winner if env.trick_winner is not None else player
+        action_list, combo_map = build_action_list(
+            legal,
+            self.level_rank,
+            transform=_sort_action_cards,
         )
-        greater_action = (
-            combo_to_action_list(env.current_trick, self.level_rank)
-            if env.current_trick is not None
-            else ["PASS", "PASS", []]
+        msg = build_play_message(
+            env,
+            player,
+            action_list=action_list,
+            hand_strings=hand_strings,
+            rank_str=rank_str,
+            level_rank=self.level_rank,
         )
-
-        msg = {
-            "curRank": rank_str,
-            "stage": "play",
-            "type": "act",
-            "myPos": player,
-            "greaterPos": greater_pos,
-            "greaterAction": greater_action,
-            "curAction": greater_action,
-            "handCards": hand_strings,
-            "actionList": action_list,
-            "indexRange": len(action_list) - 1,
-            "publicInfo": [{"rest": len(env.hands[p])} for p in range(4)],
-        }
 
         try:
             idx = self._client.received_message(msg)

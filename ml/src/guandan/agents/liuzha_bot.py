@@ -13,39 +13,20 @@ interface as Lalala (also SEU).
 
 from __future__ import annotations
 
-from ..cards import ComboType, Rank
+from ..cards import Rank
 from ._vendor.adapter import (
     cards_to_strings,
-    combo_to_action_list,
     find_pass,
     rank_to_string,
 )
 from ._vendor.liuzha.action import Action
 from .base import Agent
-
-_RANK_IDX = {
-    "A": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "7": 6,
-    "8": 7, "9": 8, "T": 9, "J": 10, "Q": 11, "K": 12,
-}
-
-
-def _build_remaincards(hand_strings: list[str]) -> dict:
-    """Build 2-deck card count dict, subtracting known hand cards."""
-    remaincards = {
-        "S": [2] * 13 + [2],
-        "H": [2] * 13 + [2],
-        "C": [2] * 13 + [0],
-        "D": [2] * 13 + [0],
-    }
-    for card in hand_strings:
-        suit = card[0]
-        rank = card[1]
-        if rank in ("B", "R"):
-            remaincards[suit][13] = max(0, remaincards[suit][13] - 1)
-        elif rank in _RANK_IDX:
-            idx = _RANK_IDX[rank]
-            remaincards[suit][idx] = max(0, remaincards[suit][idx] - 1)
-    return remaincards
+from .competition_bridge import (
+    CompetitionPlayState,
+    build_action_list,
+    build_play_message,
+    env_to_comp_pos,
+)
 
 
 class LiuzhaBot(Agent):
@@ -60,46 +41,44 @@ class LiuzhaBot(Agent):
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
-        self._action = Action("liuzha_bot")
-        self._last_history_len = -1
-        self._remaining = {0: 27, 1: 27, 2: 27, 3: 27}
-        self._pass_num = 0
-        self._my_pass_num = 0
+        self._actions: dict[int, Action] = {}
+        self._states: dict[int, CompetitionPlayState] = {}
 
     def act(self, env, player: int):
         legal = env.legal_moves(player)
         if len(legal) == 1:
             return legal[0]
 
-        history_len = len(env.move_history)
-        if history_len < self._last_history_len or self._last_history_len == -1:
-            self._remaining = {0: 27, 1: 27, 2: 27, 3: 27}
-            self._pass_num = 0
-            self._my_pass_num = 0
-        self._last_history_len = history_len
-
-        if env.current_trick is None:
-            self._my_pass_num = 0
-
-        for p in range(4):
-            self._remaining[p] = len(env.hands[p])
+        comp_player = env_to_comp_pos(player)
+        state = self._states.setdefault(player, CompetitionPlayState(comp_player))
+        state.sync_from_env(env, self.level_rank)
+        action = self._actions.setdefault(player, Action(f"liuzha_bot_{player}"))
 
         rank_str = rank_to_string(self.level_rank)
         hand_strings = cards_to_strings(env.hands[player])
-        remaincards = _build_remaincards(hand_strings)
+        action_list, combo_map = build_action_list(legal, self.level_rank)
 
-        action_list = [["PASS", "PASS", []]]
-        combo_map = [None]
-        for combo in legal:
-            if combo.type == ComboType.PASS:
-                continue
-            action_list.append(combo_to_action_list(combo, self.level_rank))
-            combo_map.append(combo)
-
-        if env.current_trick is None:
-            idx = self._lead(action_list, hand_strings, rank_str, player, remaincards)
-        else:
-            idx = self._follow(env, player, action_list, hand_strings, rank_str, remaincards)
+        msg = build_play_message(
+            env,
+            player,
+            action_list=action_list,
+            hand_strings=hand_strings,
+            rank_str=rank_str,
+            level_rank=self.level_rank,
+        )
+        try:
+            idx = action.rule_parse(
+                msg,
+                comp_player,
+                state.remain_cards,
+                state.history,
+                state.remain_cards_classbynum,
+                state.pass_num,
+                state.my_pass_num,
+                state.tribute_result,
+            )
+        except Exception:
+            idx = 0
 
         if idx is None or idx < 0 or idx >= len(action_list):
             idx = 0
@@ -107,35 +86,3 @@ class LiuzhaBot(Agent):
         if idx == 0:
             return find_pass(legal)
         return combo_map[idx] if idx < len(combo_map) else find_pass(legal)
-
-    def _lead(self, action_list, hand_strings, rank_str, player, remaincards):
-        try:
-            idx = self._action.active(
-                action_list, hand_strings, rank_str,
-                self._remaining, player, remaincards,
-            )
-            return idx if idx is not None else 0
-        except Exception:
-            return 0
-
-    def _follow(self, env, player, action_list, hand_strings, rank_str, remaincards):
-        trick_type = combo_to_action_list(env.current_trick, self.level_rank)
-        greater_pos = env.trick_winner if env.trick_winner is not None else player
-        try:
-            idx = self._action.passive(
-                action_list, hand_strings, rank_str,
-                trick_type, trick_type,
-                player, greater_pos,
-                remaincards, self._remaining,
-                self._pass_num, self._my_pass_num,
-                None,
-            )
-            result = idx if idx is not None else 0
-            if result == 0:
-                self._pass_num += 1
-                self._my_pass_num += 1
-            return result
-        except Exception:
-            self._pass_num += 1
-            self._my_pass_num += 1
-            return 0

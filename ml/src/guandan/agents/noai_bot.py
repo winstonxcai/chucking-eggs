@@ -24,6 +24,7 @@ from ._vendor.adapter import (
 from ._vendor.noai.play_card import PlayCard
 from ._vendor.noai.strategy import Strategy
 from .base import Agent
+from .competition_bridge import env_to_comp_pos
 
 
 class NoAIBot(Agent):
@@ -38,10 +39,9 @@ class NoAIBot(Agent):
 
     def __init__(self, level_rank: int = Rank.TWO):
         self.level_rank = level_rank
-        self._strategy = Strategy()
         self._play_card = PlayCard()
-        self._last_history_len = -1
-        self._synced_up_to = 0
+        self._strategies: dict[int, Strategy] = {}
+        self._synced_up_to: dict[int, int] = {}
 
     def act(self, env, player: int):
         legal = env.legal_moves(player)
@@ -49,21 +49,24 @@ class NoAIBot(Agent):
             return legal[0]
 
         cur_rank_str = rank_to_string(self.level_rank)
+        comp_player = env_to_comp_pos(player)
+        hand_strings = cards_to_strings(env.hands[player])
 
-        # Detect new game → reset strategy
         history_len = len(env.move_history)
-        if history_len < self._last_history_len or self._last_history_len == -1:
-            hand_strings = cards_to_strings(env.hands[player])
-            self._strategy.SetBeginning(player, hand_strings)
-            self._strategy.UpdateCurRank(cur_rank_str)
-            self._synced_up_to = 0
-        self._last_history_len = history_len
+        strategy = self._strategies.get(player)
+        if (
+            strategy is None
+            or history_len < self._synced_up_to.get(player, 0)
+        ):
+            strategy = Strategy()
+            strategy.SetBeginning(comp_player, hand_strings)
+            strategy.UpdateCurRank(cur_rank_str)
+            self._strategies[player] = strategy
+            self._synced_up_to[player] = 0
 
-        # Sync strategy state from move_history (new moves since last call)
-        self._sync_state(env, player)
+        self._sync_state(env, player, strategy)
 
         # Convert hand and legal moves to competition format
-        hand_strings = cards_to_strings(env.hands[player])
         full_action_list = []
         for combo in legal:
             if combo.type != ComboType.PASS:
@@ -72,12 +75,12 @@ class NoAIBot(Agent):
         # Decide
         if env.current_trick is None:
             result = self._play_card.FreePlay(
-                hand_strings, cur_rank_str, self._strategy, full_action_list,
+                hand_strings, cur_rank_str, strategy, full_action_list,
             )
         else:
             former = combo_to_action_dict(env.current_trick, self.level_rank)
             result = self._play_card.RestrictedPlay(
-                hand_strings, former, cur_rank_str, self._strategy, full_action_list,
+                hand_strings, former, cur_rank_str, strategy, full_action_list,
             )
 
         # Map result back to Combo
@@ -85,38 +88,32 @@ class NoAIBot(Agent):
             return find_pass(legal)
         return find_combo_by_cards(result["action"], legal, self.level_rank)
 
-    def _sync_state(self, env, player: int):
+    def _sync_state(self, env, player: int, strategy: Strategy):
         """Replay new moves from env.move_history into strategy state."""
-        rank_to_string(self.level_rank)
         history = env.move_history
+        synced_up_to = self._synced_up_to.get(player, 0)
 
-        # Track who currently has the greatest play (trick winner)
-        for i in range(self._synced_up_to, len(history)):
+        greater_pos = getattr(strategy, "greaterPos", -1)
+        greater_action = getattr(strategy, "greaterAction", None)
+        if greater_action is None:
+            greater_action = ["PASS", "PASS", []]
+
+        for i in range(synced_up_to, len(history)):
             move_player, combo = history[i]
+            comp_move_player = env_to_comp_pos(move_player)
 
-            # Convert to competition format
             if combo.type == ComboType.PASS:
                 cur_action = ["PASS", "PASS", []]
             else:
                 cur_action = combo_to_action_list(combo, self.level_rank)
-
-            # Determine greaterPos/greaterAction
-            if env.trick_winner is not None:
-                greater_pos = env.trick_winner
-            else:
-                greater_pos = -1
-
-            # For greaterAction, we need the trick winner's combo
-            if env.current_trick is not None:
-                greater_action = combo_to_action_list(env.current_trick, self.level_rank)
-            elif greater_pos == -1:
-                greater_action = None
-            else:
+                greater_pos = comp_move_player
                 greater_action = cur_action
 
-            if greater_action is not None:
-                self._strategy.UpdatePlay(
-                    move_player, cur_action, greater_pos, greater_action,
-                )
+            strategy.UpdatePlay(
+                comp_move_player,
+                cur_action,
+                greater_pos,
+                greater_action,
+            )
 
-        self._synced_up_to = len(history)
+        self._synced_up_to[player] = len(history)

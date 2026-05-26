@@ -24,6 +24,7 @@ ModelType = Literal["GuanZero", "Dart"]
 MODEL_TYPE_GUANZERO: ModelType = "GuanZero"
 MODEL_TYPE_DART: ModelType = "Dart"
 CheckpointSaveType = Literal["weight", "full"]
+QueueFullPolicy = Literal["stop", "block"]
 CONFIG_SCHEMA_VERSION = 1
 
 
@@ -395,6 +396,9 @@ class TrainConfig:
     actor_push_batch_size: int = 512
     sample_queue_maxsize: int = 64
     max_drain_batches_per_loop: int = 32
+    actor_queue_full_policy: QueueFullPolicy = "stop"  # "stop" = fail fast, "block" = backpressure
+    actor_queue_put_timeout_s: float = 5.0
+    actor_queue_full_log_every: int = 12
     publish_interval_updates: int = 100
     checkpoint_every_updates: int = 5_000
     checkpoint_save_type: CheckpointSaveType = "full"
@@ -447,6 +451,21 @@ class TrainConfig:
             raise ValueError(
                 "checkpoint_save_type must be 'weight' or 'full'; "
                 f"got {self.checkpoint_save_type!r}"
+            )
+        if self.actor_queue_full_policy not in ("stop", "block"):
+            raise ValueError(
+                "actor_queue_full_policy must be 'stop' or 'block'; "
+                f"got {self.actor_queue_full_policy!r}"
+            )
+        if self.actor_queue_put_timeout_s <= 0:
+            raise ValueError(
+                "actor_queue_put_timeout_s must be > 0; "
+                f"got {self.actor_queue_put_timeout_s}"
+            )
+        if self.actor_queue_full_log_every < 1:
+            raise ValueError(
+                "actor_queue_full_log_every must be >= 1; "
+                f"got {self.actor_queue_full_log_every}"
             )
         self.opponents = _opponent_config_from_raw(self.opponents)
         self.eval = _eval_config_from_raw(self.eval)
@@ -652,6 +671,7 @@ __all__ = [
     "QNetConfig",
     "EpsilonConfig",
     "CheckpointSaveType",
+    "QueueFullPolicy",
     "EpisodeMixConfig",
     "FrozenPoolConfig",
     "HardBotConfig",

@@ -1,18 +1,22 @@
-# Dart — local MPS training (6 CPU actors, MPS learner).
-# Actor-bound. ~50% vs strategic in ~6h on M1 Pro.
+# Dart — local MPS training (4 CPU actors, MPS learner).
+# 200-update local sweep on 2026-05-26 found 4 actors × 16 lanes fastest
+# among complete runs with the current queue/drain settings.
 #
 # Launch:
 #   uv run python -m guandan.dart \
 #     --config ml/src/guandan/dart/configs/dart_mps.yaml \
 #     --updates 10000 --run-dir ml/runs/dart_mps_10k
 
-n_actors: 6
-actor_batch_lanes: 8
+n_actors: 4
+actor_batch_lanes: 16
 sync_interval_updates: 1000
 sync_jitter_updates: 250
 actor_push_batch_size: 512
-sample_queue_maxsize: 64
-max_drain_batches_per_loop: 16
+sample_queue_maxsize: 256
+max_drain_batches_per_loop: 64
+actor_queue_full_policy: block
+actor_queue_put_timeout_s: 5.0
+actor_queue_full_log_every: 12
 publish_interval_updates: 200
 checkpoint_every_updates: 2500
 checkpoint_save_type: weight

@@ -1,21 +1,27 @@
 from __future__ import annotations
 
 import errno
+import logging
+import queue
 import tempfile
+import threading
+import time
 from pathlib import Path
 
+import pytest
 from guandan.dart.config import QNetConfig
 from guandan.dart.data.returns import EpisodeTags, TrainSample
-from guandan.dart.runtime.actor import LaneConfig, all_latest_seats
-from guandan.dart.runtime.learner import publish_weights
 from guandan.dart.model.q_network import init_guanzero_nets
+from guandan.dart.runtime.actor import LaneConfig, all_latest_seats
 from guandan.dart.runtime.actor.runtime import maybe_sync_weights
 from guandan.dart.runtime.actor.samples import (
     ActorSampleAccumulator,
     QueueBatchMeta,
 )
+from guandan.dart.runtime.learner import publish_weights
 from guandan.dart.runtime.worker import (
     _is_closed_queue_error,
+    _put_sample_message,
 )
 
 
@@ -94,6 +100,56 @@ def test_queue_error_classifier_only_accepts_closed_queue_errors():
     assert _is_closed_queue_error(ValueError("Queue is closed"))
     assert not _is_closed_queue_error(OSError(errno.EIO, "I/O error"))
     assert not _is_closed_queue_error(ValueError("bad payload"))
+
+
+def test_put_sample_message_blocks_on_full_queue_backpressure():
+    sample_queue: queue.Queue[dict] = queue.Queue(maxsize=1)
+    sample_queue.put({"existing": True})
+    stop_event = threading.Event()
+
+    def drain_later() -> None:
+        time.sleep(0.05)
+        sample_queue.get_nowait()
+
+    drainer = threading.Thread(target=drain_later)
+    drainer.start()
+    try:
+        ok = _put_sample_message(
+            actor_id=0,
+            sample_queue=sample_queue,
+            msg={"batch": 1},
+            stop_event=stop_event,
+            logger=logging.getLogger("test"),
+            policy="block",
+            timeout_s=0.01,
+            log_every=2,
+        )
+    finally:
+        drainer.join(timeout=1.0)
+
+    assert ok is True
+    assert stop_event.is_set() is False
+    assert sample_queue.get_nowait() == {"batch": 1}
+
+
+def test_put_sample_message_stop_policy_fails_fast_on_full_queue():
+    sample_queue: queue.Queue[dict] = queue.Queue(maxsize=1)
+    sample_queue.put({"existing": True})
+    stop_event = threading.Event()
+
+    with pytest.raises(queue.Full):
+        _put_sample_message(
+            actor_id=0,
+            sample_queue=sample_queue,
+            msg={"batch": 1},
+            stop_event=stop_event,
+            logger=logging.getLogger("test"),
+            policy="stop",
+            timeout_s=0.01,
+            log_every=1,
+        )
+
+    assert stop_event.is_set() is True
 
 
 def test_maybe_sync_weights_no_op_when_not_newer():

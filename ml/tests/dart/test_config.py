@@ -129,6 +129,17 @@ def test_checkpoint_save_type_validation():
         TrainConfig(checkpoint_save_type="weights")
 
 
+def test_actor_queue_full_config_validation():
+    assert TrainConfig(actor_queue_full_policy="block").actor_queue_full_policy == "block"
+
+    with pytest.raises(ValueError, match="actor_queue_full_policy"):
+        TrainConfig(actor_queue_full_policy="drop")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="actor_queue_put_timeout_s"):
+        TrainConfig(actor_queue_put_timeout_s=0)
+    with pytest.raises(ValueError, match="actor_queue_full_log_every"):
+        TrainConfig(actor_queue_full_log_every=0)
+
+
 def test_eval_timeout_config_parses_and_validates():
     cfg = TrainConfig.from_flat_dict({"eval": {"enabled": True, "max_wait_s": 12.5}})
     assert cfg.eval.max_wait_s == 12.5

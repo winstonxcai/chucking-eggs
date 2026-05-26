@@ -59,6 +59,48 @@ def _is_closed_queue_error(exc: BaseException) -> bool:
     return False
 
 
+def _put_sample_message(
+    *,
+    actor_id: int,
+    sample_queue,
+    msg: dict,
+    stop_event,
+    logger,
+    policy: str,
+    timeout_s: float,
+    log_every: int,
+    queue_full_counter: mp.Value | None = None,
+) -> bool:
+    """Put one actor batch, optionally treating a full queue as backpressure."""
+    attempts = 0
+    while not stop_event.is_set():
+        try:
+            sample_queue.put(msg, timeout=timeout_s)
+            return True
+        except queue.Full as exc:
+            attempts += 1
+            if queue_full_counter is not None:
+                with queue_full_counter.get_lock():
+                    queue_full_counter.value += 1
+
+            if policy == "stop":
+                logger.error(
+                    "actor-%d: sample queue full after %.1fs; stopping to avoid "
+                    "silent sample loss: %s",
+                    actor_id, timeout_s, exc,
+                )
+                stop_event.set()
+                raise
+
+            if attempts == 1 or attempts % log_every == 0:
+                logger.warning(
+                    "actor-%d: sample queue full after %.1fs; waiting for learner "
+                    "backpressure (timeouts=%d)",
+                    actor_id, timeout_s, attempts,
+                )
+    return False
+
+
 def actor_loop(
     actor_id:     int,
     cfg_dict:     dict,
@@ -121,6 +163,9 @@ def actor_loop(
     def _push_buffered() -> None:
         nonlocal dropped_batches
         batch_size = cfg.actor_push_batch_size
+        queue_policy = cfg.actor_queue_full_policy
+        queue_timeout_s = float(cfg.actor_queue_put_timeout_s)
+        queue_log_every = int(cfg.actor_queue_full_log_every)
         while len(accumulator) >= batch_size and not stop_event.is_set():
             with prof.time("buffer_stack"):
                 msg = accumulator.pop_message(
@@ -137,19 +182,19 @@ def actor_loop(
                     return
             with prof.time("queue_put"):
                 try:
-                    sample_queue.put(msg, timeout=5)
-                except queue.Full as exc:
-                    if stop_event.is_set():
-                        return
-                    if queue_full_counter is not None:
-                        with queue_full_counter.get_lock():
-                            queue_full_counter.value += 1
-                    logger.error(
-                        "actor-%d: sample queue full after 5s; stopping to avoid "
-                        "silent sample loss: %s",
-                        actor_id, exc,
+                    _put_sample_message(
+                        actor_id=actor_id,
+                        sample_queue=sample_queue,
+                        msg=msg,
+                        stop_event=stop_event,
+                        logger=logger,
+                        policy=queue_policy,
+                        timeout_s=queue_timeout_s,
+                        log_every=queue_log_every,
+                        queue_full_counter=queue_full_counter,
                     )
-                    stop_event.set()
+                except queue.Full:
+                    # _put_sample_message owns the fail-fast logging/counter.
                     raise
                 except (BrokenPipeError, EOFError, OSError, ValueError) as exc:
                     if stop_event.is_set():

@@ -1,6 +1,6 @@
 # Dart — local MPS training (4 CPU actors, MPS learner).
-# 200-update local sweep on 2026-05-26 found 4 actors × 16 lanes fastest
-# among complete runs with the current queue/drain settings.
+# 200-update local Rust/backpressure sweep on 2026-05-27 found
+# 4 actors × 20 lanes fastest with queue=256, drain=64, batch_size=2048.
 #
 # Launch:
 #   uv run python -m guandan.dart \
@@ -8,7 +8,7 @@
 #     --updates 10000 --run-dir ml/runs/dart_mps_10k
 
 n_actors: 4
-actor_batch_lanes: 16
+actor_batch_lanes: 20
 sync_interval_updates: 1000
 sync_jitter_updates: 250
 actor_push_batch_size: 512

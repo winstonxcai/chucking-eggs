@@ -1,7 +1,8 @@
 {
-  "description": "DART matchup rows injected into the 5000-game rule-bot round-robin to derive the release Glicko table.",
+  "description": "DART matchup rows injected into the refreshed 5000-game rule-bot round-robin to derive the release Glicko table. Hard-4 rows come from eval_5k_hard4.json; remaining rows come from eval_5k_all_bots.json.",
   "source_eval": "eval_5k_all_bots.json",
-  "source_checkpoint": "ml/runs/dart_l4/release_1_25m/update_01250000.pt",
+  "source_hard4_eval": "eval_5k_hard4.json",
+  "source_checkpoint": "ml/results/release_1_25m/update_01250000.pt",
   "eval_seed": 0,
   "paired_fixed_deck": true,
   "deck_seed_range": [
@@ -84,29 +85,29 @@
     {
       "agent": "dart",
       "opponent": "yaoji",
-      "wins": 3157,
-      "losses": 1843,
+      "wins": 3137,
+      "losses": 1863,
       "n_games": 5000,
-      "winrate": 0.6314,
-      "wr_matrix_argument": "dart,yaoji,3157,5000"
+      "winrate": 0.6274,
+      "wr_matrix_argument": "dart,yaoji,3137,5000"
     },
     {
       "agent": "dart",
       "opponent": "jidan",
-      "wins": 3570,
-      "losses": 1430,
+      "wins": 3575,
+      "losses": 1425,
       "n_games": 5000,
-      "winrate": 0.714,
-      "wr_matrix_argument": "dart,jidan,3570,5000"
+      "winrate": 0.715,
+      "wr_matrix_argument": "dart,jidan,3575,5000"
     },
     {
       "agent": "dart",
       "opponent": "ez",
-      "wins": 3293,
-      "losses": 1707,
+      "wins": 3285,
+      "losses": 1715,
       "n_games": 5000,
-      "winrate": 0.6586,
-      "wr_matrix_argument": "dart,ez,3293,5000"
+      "winrate": 0.657,
+      "wr_matrix_argument": "dart,ez,3285,5000"
     },
     {
       "agent": "dart",

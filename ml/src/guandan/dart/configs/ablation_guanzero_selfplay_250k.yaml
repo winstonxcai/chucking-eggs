@@ -1,0 +1,78 @@
+# GuanZero-style self-play architecture ablation.
+# Uses the same runtime, self-play mix, and eval budget as the DART 250k
+# reference, but swaps the learner to per-seat GuanZero Q-networks.
+#
+# Launch:
+#   modal run --detach ml/scripts/modal/train_dart_modal.py \
+#     --config-path /root/ml/src/guandan/dart/configs/ablation_guanzero_selfplay_250k.yaml \
+#     --updates 250000 --run-name ablation_guanzero_selfplay_250k --seed 0
+
+n_actors: 32
+actor_batch_lanes: 64
+sync_interval_updates: 5000
+sync_jitter_updates: 1000
+actor_push_batch_size: 512
+sample_queue_maxsize: 64
+max_drain_batches_per_loop: 16
+publish_interval_updates: 200
+checkpoint_every_updates: 25000
+checkpoint_save_type: weight
+total_updates_target: 250000
+log_every_updates: 10
+
+eval:
+  enabled: true
+  opponents: [yaoji, ez, jidan, strategic]
+  n_eval_games_per_opponent: 2000
+  every_updates: 25000
+  workers: 0
+  lanes: 0
+  device: cpu
+  max_wait_s: 300.0
+
+model_type: GuanZero
+hidden_lstm: 256
+hidden_mlp: 1024
+n_mlp_layers: 6
+dropout: 0.0
+
+# GuanZero samples batch_size once per seat. 1024 x 4 seats keeps the total
+# learner sample consumption comparable to DART's 4096-row shared batch.
+target_replay_ratio: 1.0
+max_replay_ratio: 1.25
+max_throttle_sleep_s: 0.05
+
+lr: 3.0e-5
+gamma: 1.0
+batch_size: 1024
+buffer_capacity_per_player: 100000
+buffer_min_size: 8192
+
+epsilon_start: 0.05
+epsilon_final: 0.01
+epsilon_decay_updates: 150000
+is_partner_visible: true
+
+opponents:
+  latest_learner_team_odd_probability: 0.5
+  episode_mix:
+    self_play: 1.0
+    frozen_pool: 0.0
+    hard_bot: 0.0
+  frozen_pool:
+    checkpoints: []
+    epsilon: 0.0
+    sampling: uniform
+  hard_bot:
+    bots: []
+    sampling:
+      type: uniform
+      weights: {}
+
+max_forced_pass_replay_frac: 0.0
+coordination_bucket_card_threshold: 5
+coordination_bucket_final_fraction: 0.6666666667
+
+device: cuda
+use_bf16_learner: true
+compile_mode: reduce-overhead

@@ -1,0 +1,59 @@
+{
+  "checkpoint": "ml/results/release_1_25m/update_01250000.pt",
+  "opponents": [
+    "yaoji",
+    "ez",
+    "jidan",
+    "strategic"
+  ],
+  "results": {
+    "yaoji": {
+      "n_games": 5000,
+      "wins": 3137,
+      "wr": 0.6274,
+      "se": 0.0068,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 1585,
+      "wins_odd": 1552,
+      "wr_even": 0.634,
+      "wr_odd": 0.6208
+    },
+    "ez": {
+      "n_games": 5000,
+      "wins": 3285,
+      "wr": 0.657,
+      "se": 0.0067,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 1655,
+      "wins_odd": 1630,
+      "wr_even": 0.662,
+      "wr_odd": 0.652
+    },
+    "jidan": {
+      "n_games": 5000,
+      "wins": 3575,
+      "wr": 0.715,
+      "se": 0.0064,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 1807,
+      "wins_odd": 1768,
+      "wr_even": 0.7228,
+      "wr_odd": 0.7072
+    },
+    "strategic": {
+      "n_games": 5000,
+      "wins": 3878,
+      "wr": 0.7756,
+      "se": 0.0059,
+      "games_even": 2500,
+      "games_odd": 2500,
+      "wins_even": 1984,
+      "wins_odd": 1894,
+      "wr_even": 0.7936,
+      "wr_odd": 0.7576
+    }
+  }
+}

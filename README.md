@@ -17,7 +17,7 @@ competition bots are separately attributed in [NOTICE](NOTICE).
 
 ## TL;DR
 
-DART is, to our knowledge, the first open partner-visible Guan Dan RL agent with published training and evaluation code. The current checkpoint release is the **1.25M-update L4 run**. It reaches **69.32%** average win rate on the integrated 10,000-game hard-4 eval and **69.49%** on the 5000-game release eval against Yaoji, EZ, Jidan, and Strategic. In the 13-agent rule-bot benchmark, DART achieves the top Glicko-2 rating, outperforming all 12 bundled rule-based bots, including the top three from the [NJUPT 2020 Guan Dan AI Competition](http://gameai.njupt.edu.cn/gameaicompetition/) (Jidan, Yaoji, Lalala).
+DART is, to our knowledge, the first open partner-visible Guan Dan RL agent with published training and evaluation code. The current checkpoint release is the **1.25M-update L4 run**. It reaches **69.32%** average win rate on the integrated 10,000-game hard-4 eval and **69.38%** on the 5000-game release eval against Yaoji, EZ, Jidan, and Strategic. In the 13-agent rule-bot benchmark, DART achieves the top Glicko-2 rating, outperforming all 12 bundled rule-based bots, including the top three from the [NJUPT 2020 Guan Dan AI Competition](http://gameai.njupt.edu.cn/gameaicompetition/) (Jidan, Yaoji, Lalala).
 
 ## Results
 
@@ -39,8 +39,9 @@ trajectory x-axis is also a coarse wall-clock proxy after warmup.
 ### Release Checkpoint Benchmark
 
 The checkpoint release uses `update_01250000.pt` from the L4 run. The table
-below is a fresh 5000-game paired fixed-deck eval against every bundled
-rule-based bot. Standard errors are binomial standard errors over games.
+below is the curated 5000-game paired fixed-deck release eval against every
+bundled rule-based bot. Standard errors are binomial standard errors over
+games.
 
 | Opponent | Win Rate | Wins |
 |----------|---------:|-----:|
@@ -52,29 +53,29 @@ rule-based bot. Standard errors are binomial standard errors over games.
 | Lalala | 93.0% ± 0.4% | 4650/5000 |
 | Liuzha | 93.2% ± 0.4% | 4659/5000 |
 | Hulalala | 93.0% ± 0.4% | 4650/5000 |
-| Yaoji | 63.1% ± 0.7% | 3157/5000 |
-| Jidan | 71.4% ± 0.6% | 3570/5000 |
-| EZ | 65.9% ± 0.7% | 3293/5000 |
+| Yaoji | 62.7% ± 0.7% | 3137/5000 |
+| Jidan | 71.5% ± 0.6% | 3575/5000 |
+| EZ | 65.7% ± 0.7% | 3285/5000 |
 | WJSD | 88.8% ± 0.4% | 4439/5000 |
 
-Glicko-2 ratings are derived from the existing 5000-game rule-bot round-robin
-with the new 1.25M DART matchups injected; the rule-bot matrix was not rerun.
+Glicko-2 ratings are derived from a refreshed 5000-game rule-bot round-robin
+with the 1.25M DART matchups injected.
 
 | Bot | Glicko-2 | Source |
 |-----|----------|--------|
-| **DART** | **1852** | This project |
-| Jidan | 1744 | NJUPT 2020 2nd place (NUAA) |
-| Yaoji | 1742 | NJUPT 2020 3rd place (NUAA) |
-| EZ | 1667 | NJUPT 2020 3rd place (HYIT) |
-| Strategic | 1597 | Hand-written heuristic (authored by Winston Cai) |
-| XingDream | 1485 | NJUPT 2020 |
-| Heuristic | 1430 | Hand-written heuristic (authored by Winston Cai) |
-| Lalala | 1406 | NJUPT 2020 1st place (SEU) |
-| Hulalala | 1403 | NJUPT 2020 3rd place (SEU) |
-| Liuzha | 1401 | NJUPT 2020 2nd place (SEU) |
-| Greedy | 1361 | Hand-written baseline (authored by Winston Cai) |
-| WJSD | 1327 | NJUPT 2020 3rd place (SAU) |
-| Random | 1132 | |
+| **DART** | **1849** | This project |
+| Yaoji | 1740 | NJUPT 2020 3rd place (NUAA) |
+| Jidan | 1739 | NJUPT 2020 2nd place (NUAA) |
+| EZ | 1664 | NJUPT 2020 3rd place (HYIT) |
+| Strategic | 1598 | Hand-written heuristic (authored by Winston Cai) |
+| XingDream | 1491 | NJUPT 2020 |
+| Heuristic | 1428 | Hand-written heuristic (authored by Winston Cai) |
+| Hulalala | 1386 | NJUPT 2020 3rd place (SEU) |
+| Liuzha | 1384 | NJUPT 2020 2nd place (SEU) |
+| Lalala | 1384 | NJUPT 2020 1st place (SEU) |
+| Greedy | 1363 | Hand-written baseline (authored by Winston Cai) |
+| WJSD | 1328 | NJUPT 2020 3rd place (SAU) |
+| Random | 1140 | |
 
 ## Method Summary
 

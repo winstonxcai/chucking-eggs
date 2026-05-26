@@ -1,6 +1,6 @@
 {
   "release": "release_1_25m",
-  "description": "Evidence bundle for the 1.25M-update DART Guan Dan checkpoint and README leaderboard.",
+  "description": "Evidence bundle for the 1.25M-update DART Guan Dan checkpoint and refreshed README leaderboard.",
   "source_git_sha": "353a8eaab5f70d9f5685b07354fd566798893935",
   "checkpoint": {
     "path": "update_01250000.pt",
@@ -11,7 +11,7 @@
   },
   "dart_eval": {
     "path": "eval_5k_all_bots.json",
-    "sha256": "fedcdc7a462b27c060b7d6ffdc50ec13b49cfd5259fa8a0fb634523e4d24c67d",
+    "sha256": "b5e31b4ae183c6084d94fab34b6f7884b89445bf7f25aa3a67250eb07dcb2ffa",
     "games_per_opponent": 5000,
     "seed": 0,
     "paired_fixed_deck": true,
@@ -19,7 +19,8 @@
       0,
       2499
     ],
-    "command": "uv run guandan-eval-dart --checkpoint ml/runs/dart_l4/release_1_25m/update_01250000.pt --opponent random greedy heuristic strategic xingdream lalala liuzha hulalala yaoji jidan ez wjsd --games 5000 --seed 0 --out ml/runs/dart_l4/release_1_25m/eval_5k_all_bots.json"
+    "command": "uv run guandan-eval-dart --checkpoint ml/results/release_1_25m/update_01250000.pt --opponent random greedy heuristic strategic xingdream lalala liuzha hulalala yaoji jidan ez wjsd --games 5000 --seed 0 --out ml/results/release_1_25m/eval_5k_all_bots.json",
+    "note": "Hard-4 rows were refreshed after competition-adapter verification using eval_5k_hard4.json; remaining rows are from the original 5000-game all-bot release eval."
   },
   "glicko": {
     "base_rulebot_matrix": "wr_matrix_rulebots_5k.json",
@@ -29,28 +30,32 @@
     "games_per_rulebot_matchup": 5000,
     "rating_passes": 30,
     "command_template": "uv run guandan-wr-matrix --games 5000 --load-matrix ml/results/release_1_25m/wr_matrix_rulebots_5k.json --inject dart,<opponent>,<wins>,5000 ... --rating-passes 30 --output ml/results/release_1_25m",
-    "note": "glicko_results.json has total_games=0 because it was derived from a loaded rule-bot matrix plus injected DART rows, not by running new games in that command."
+    "note": "glicko_results.json has total_games=0 because it was derived from a loaded refreshed rule-bot matrix plus injected DART rows, not by running new games in that command."
   },
   "files": {
     "README.md": {
-      "size_bytes": 958,
-      "sha256": "cb34bd7011c3eee599119a1128cbc3c4c0b977d7862de857c27a036aaf497cc8"
+      "size_bytes": 1085,
+      "sha256": "873e63f9b394dfee126cd7fe318906be921c678f8004fd9382205535242a18fb"
     },
     "elos.json": {
       "size_bytes": 238,
-      "sha256": "ca912d8b1372418a7e93b2e349a6bddf32fc0da3d51b3e12ffeb2b3a613d8392"
+      "sha256": "4af6de9ddfece62ce83a3d6d0fd584a00b6d4c2ee99a083e2cf24453e89accbc"
     },
     "eval_5k_all_bots.json": {
       "size_bytes": 3321,
-      "sha256": "fedcdc7a462b27c060b7d6ffdc50ec13b49cfd5259fa8a0fb634523e4d24c67d"
+      "sha256": "b5e31b4ae183c6084d94fab34b6f7884b89445bf7f25aa3a67250eb07dcb2ffa"
+    },
+    "eval_5k_hard4.json": {
+      "size_bytes": 1166,
+      "sha256": "43bd762c16b03d1282b7194661a404c562522fc3f4007e4435c7b75137d14020"
     },
     "glicko_injections.json": {
-      "size_bytes": 2818,
-      "sha256": "96d913e52b12016499694fdc32892a2ab1c800328afaf69c322edda02caaf861"
+      "size_bytes": 2957,
+      "sha256": "ad70649d53ef22790de7f873b588d6b888f9e56c6568df7c050a24374db9936d"
     },
     "glicko_results.json": {
-      "size_bytes": 30077,
-      "sha256": "bea19966d039e9499cc88893c10e05cb50fc9e1bcd3fdc61bd5fc9d7a0cdb749"
+      "size_bytes": 30061,
+      "sha256": "06abc720f49757a62ef6106d2c022d349e425e9a537a4a778b99784a0e57fcd7"
     },
     "metrics_postprocess_summary.json": {
       "size_bytes": 4108,
@@ -73,8 +78,8 @@
       "sha256": "3d21991197e363023f99b7d21edd68f0c7c4b8779312688f171e46e7730a9bc0"
     },
     "wr_matrix_rulebots_5k.json": {
-      "size_bytes": 25819,
-      "sha256": "09b44bf447c7bf7d4d7c281150744ef924cfa9b6a0546189811049a9cbc26210"
+      "size_bytes": 25860,
+      "sha256": "64f9c280724de4b8c01bfaeec914b3b6f25d4b64932953f4f6ccf03c47cfe36a"
     }
   },
   "training_metrics": {
@@ -85,5 +90,23 @@
     "source_path": "dart/dart_v5_baseline_400k/metrics_learner.jsonl",
     "target_update": 1250000,
     "raw_metrics_not_committed_reason": "Raw learner metrics are 1.38GB and append-only across resumed Modal jobs; this release commits compact postprocessed summaries instead."
+  },
+  "dart_eval_hard4_refresh": {
+    "path": "eval_5k_hard4.json",
+    "sha256": "43bd762c16b03d1282b7194661a404c562522fc3f4007e4435c7b75137d14020",
+    "opponents": [
+      "yaoji",
+      "ez",
+      "jidan",
+      "strategic"
+    ],
+    "games_per_opponent": 5000,
+    "seed": 0,
+    "paired_fixed_deck": true,
+    "deck_seed_range": [
+      0,
+      2499
+    ],
+    "command": "uv run guandan-eval-dart --checkpoint ml/results/release_1_25m/update_01250000.pt --opponent yaoji ez jidan strategic --games 5000 --workers 8 --lanes 16 --seed 0 --out ml/results/release_1_25m/eval_5k_hard4.json"
   }
 }

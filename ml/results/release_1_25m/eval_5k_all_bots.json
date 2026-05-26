@@ -58,10 +58,10 @@
       "se": 0.0059,
       "games_even": 2500,
       "games_odd": 2500,
-      "wins_even": 1972,
-      "wins_odd": 1906,
-      "wr_even": 0.7888,
-      "wr_odd": 0.7624
+      "wins_even": 1984,
+      "wins_odd": 1894,
+      "wr_even": 0.7936,
+      "wr_odd": 0.7576
     },
     "xingdream": {
       "n_games": 5000,
@@ -113,39 +113,39 @@
     },
     "yaoji": {
       "n_games": 5000,
-      "wins": 3157,
-      "wr": 0.6314,
+      "wins": 3137,
+      "wr": 0.6274,
       "se": 0.0068,
       "games_even": 2500,
       "games_odd": 2500,
-      "wins_even": 1600,
-      "wins_odd": 1557,
-      "wr_even": 0.64,
-      "wr_odd": 0.6228
+      "wins_even": 1585,
+      "wins_odd": 1552,
+      "wr_even": 0.634,
+      "wr_odd": 0.6208
     },
     "jidan": {
       "n_games": 5000,
-      "wins": 3570,
-      "wr": 0.714,
+      "wins": 3575,
+      "wr": 0.715,
       "se": 0.0064,
       "games_even": 2500,
       "games_odd": 2500,
-      "wins_even": 1808,
-      "wins_odd": 1762,
-      "wr_even": 0.7232,
-      "wr_odd": 0.7048
+      "wins_even": 1807,
+      "wins_odd": 1768,
+      "wr_even": 0.7228,
+      "wr_odd": 0.7072
     },
     "ez": {
       "n_games": 5000,
-      "wins": 3293,
-      "wr": 0.6586,
+      "wins": 3285,
+      "wr": 0.657,
       "se": 0.0067,
       "games_even": 2500,
       "games_odd": 2500,
-      "wins_even": 1670,
-      "wins_odd": 1623,
-      "wr_even": 0.668,
-      "wr_odd": 0.6492
+      "wins_even": 1655,
+      "wins_odd": 1630,
+      "wr_even": 0.662,
+      "wr_odd": 0.652
     },
     "wjsd": {
       "n_games": 5000,

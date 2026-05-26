@@ -41,6 +41,11 @@ ml/src/guandan_rs/target/
 # Experiment runs
 runs/
 
+# Generated evaluation outputs. Keep only curated release evidence under git.
+/ml/results/*
+!/ml/results/release_1_25m/
+!/ml/results/release_1_25m/**
+
 # Personal research notes
 ml/LOGBOOK.md
 

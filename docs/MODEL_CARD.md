@@ -38,9 +38,9 @@ periodic checkpoints are faster to write but are not exact-resume artifacts.
 ## Evaluation
 
 The README reports 5000-game paired fixed-deck evaluations against rule-based
-bots. The reported Glicko-2 table reuses the existing 5000-game rule-bot
-round-robin and injects the 1.25M DART matchup results instead of rerunning the
-entire matrix. Reproduce a single matchup with:
+bots. The reported Glicko-2 table uses a refreshed 5000-game rule-bot
+round-robin and injects the 1.25M DART matchup results. Reproduce a single
+matchup with:
 
 ```bash
 uv run guandan-eval-dart \

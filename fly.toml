@@ -6,6 +6,7 @@ primary_region = 'lax'
 
 [deploy]
   strategy = "immediate"
+  max_machines = 1
 
 [env]
   APP_ENV = "production"

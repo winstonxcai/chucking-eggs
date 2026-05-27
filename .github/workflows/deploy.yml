@@ -8,6 +8,7 @@ on:
       - "web/backend/**"
       - "ml/src/**"
       - "fly.toml"
+      - ".dockerignore"
       - "docker-compose.yml"
 
 jobs:

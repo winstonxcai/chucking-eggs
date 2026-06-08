@@ -29,7 +29,7 @@ llm = ["litellm>=1.50"]
 web = [
     "fastapi>=0.104",
     "starlette>=1.0.1",
-    "uvicorn[standard]>=0.29.0",
+    "uvicorn[standard]>=0.48.0",
     "websockets>=12.0",
     "redis>=5.0",
     "motor>=3.3",
@@ -98,7 +98,7 @@ warn_unused_ignores = true
 web-server = [
     "fastapi>=0.104",
     "starlette>=1.0.1",
-    "uvicorn[standard]>=0.29.0",
+    "uvicorn[standard]>=0.48.0",
     "websockets>=12.0",
     "redis>=5.0",
     "motor>=3.3",
@@ -124,7 +124,7 @@ dev = [
     "ruff>=0.14",
     "slowapi>=0.1.9",
     "starlette>=1.0.1",
-    "uvicorn[standard]>=0.29.0",
+    "uvicorn[standard]>=0.48.0",
     "websockets>=12.0",
     "aiohttp>=3.13.4",
 ]

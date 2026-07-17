@@ -102,4 +102,3 @@ replay, learner RNG, and actor RNG state.
 - [Research note](RESEARCH.md)
 - [Reproducibility](REPRODUCIBILITY.md)
 - [Evaluation](EVALUATION.md)
-- [Development](DEVELOPMENT.md)

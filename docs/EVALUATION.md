@@ -41,7 +41,8 @@ For the released table, see `ml/results/release_1_25m/glicko_results.json` and
 ## Custom Opponents
 
 Add a bot to `AGENT_REGISTRY` first, then pass its registry key as `--opponent`.
-See [Development](DEVELOPMENT.md) for the required bot interface.
+See [Reproducibility](REPRODUCIBILITY.md) for the required bot interface and
+validation commands.
 
 ## Checkpoint Choice
 

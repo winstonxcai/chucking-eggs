@@ -98,6 +98,28 @@ The historical two-week GuanZero training run is not a controlled comparison
 to this ten-hour budget. It is useful context for compute-to-convergence
 questions, but it cannot be substituted for the equal-budget result.
 
+## Intended Use and Release Status
+
+The released checkpoint is intended for research and engineering exploration of
+partner-visible Guan Dan agents, offline evaluation against the bundled rule
+bots, and local inference through the DART runtime. It is not presented as a
+human-deployable strict hidden-information policy. The partner-visible model
+also receives `others_hand`, which is the union of the two opposing hands
+inferred by deck subtraction; it is not a per-opponent ownership oracle.
+
+Training data is generated online by self-play actors. The production release
+uses 32 actors, an L4 learner with BF16 autocast, a 400,000-sample replay
+capacity, and fixed exploration at 0.01. The selected release checkpoint is
+[`update_01250000.pt`](../ml/results/release_1_25m/update_01250000.pt), with
+its configuration, evaluation outputs, and SHA-256 manifest in the same
+directory. Full checkpoints contain optimizer, replay, and RNG state for exact
+process-level resume; weight-only checkpoints are intended for evaluation and
+inspection.
+
+The release evidence is complete for the stated single-seed, rule-bot protocol.
+Vendored competition bots remain separately attributed in [`NOTICE`](../NOTICE)
+and may have licensing conditions distinct from the repository code.
+
 ## Limitations and Open Questions
 
 - The study uses one training seed. Evaluation confidence intervals describe
@@ -122,4 +144,5 @@ runs, a parameter-matched control, and an ablation of the derived
 - [Architecture](ARCHITECTURE.md): process model, state channels, replay, and
   checkpoint invariants.
 - [Evaluation](EVALUATION.md): paired-deck protocol and confidence intervals.
-- [Model card](MODEL_CARD.md): intended use and release limitations.
+- [Reproducibility](REPRODUCIBILITY.md): environment, configurations, and
+  artifact provenance.

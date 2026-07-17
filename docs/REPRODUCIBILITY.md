@@ -33,6 +33,40 @@ For the native move generator:
 uv run maturin develop --release --manifest-path ml/src/guandan_rs/Cargo.toml
 ```
 
+## Engineering validation
+
+The repository's validation matrix is intentionally split by surface:
+
+```bash
+uv run ruff check ml/src/guandan web/backend/app examples
+uv run mypy
+uv run pytest -q ml/tests
+uv run pytest -q web/backend/tests
+```
+
+For the secondary web application:
+
+```bash
+cd web/frontend
+npm ci
+npm run lint
+npm run test:unit
+npm run build
+npm run e2e
+npm run e2e:integration
+```
+
+The ML tests cover the engine, rule bots, encoders, replay, checkpointing,
+actor–learner lifecycle, evaluation handoff, and CPU smoke. Backend and
+frontend checks protect the application surface without being prerequisites for
+the research pipeline. MongoDB- and slow-game-dependent checks are explicit
+release checks rather than hidden setup requirements.
+
+For collected logs, set `DART_TQDM=0` to disable progress-bar redraws. Set
+`DART_ACTOR_PROFILE=1` or `DART_LEARNER_PROFILE=1` to enable phase timing. The
+actor throughput benchmark is available through
+`ml/scripts/util/profile_actor_throughput.py`.
+
 ## Four-cell ablation
 
 The controlled study uses one shared L4 baseline and four minimal overrides:
@@ -123,3 +157,28 @@ When publishing a new result, record the source commit, merged config, seed,
 hardware, budget, evaluation command, raw JSON, derived table, and artifact
 hashes. If the run predates a commit, record that fact explicitly rather than
 assigning a later commit retroactively.
+
+## Development and release discipline
+
+Keep one behavioral change per commit where practical and add a focused test for
+configuration, model, runtime, or protocol changes. Preserve checkpoint
+compatibility when changing serialized fields. Do not commit raw Modal volumes,
+credentials, or generated multi-gigabyte logs; retain compact summaries and
+manifests instead.
+
+Exact resume requires a full checkpoint. Weight-only checkpoints are suitable
+for evaluation and lightweight progress inspection, but cannot restore the
+optimizer, replay, or RNG state. Before publishing a result, verify the merged
+configuration, artifact manifest, SHA-256 values, README tables, and plots. A
+release bundle should identify the source commit, checkpoint or artifact link,
+configuration, evaluation output, and known limitations.
+
+The application surface lives under `web/`. Its backend API and WebSocket
+contract are documented in the [backend README](../web/backend/README.md).
+
+### Adding a rule bot
+
+Implement `Agent.act(env, player) -> Combo`, register the bot in
+`ml/src/guandan/agents/__init__.py`, and add a legal-move smoke test. Vendored
+competition submissions remain under
+`ml/src/guandan/agents/_vendor/` with their original attribution.

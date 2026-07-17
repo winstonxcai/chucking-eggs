@@ -22,6 +22,8 @@ checkpoints/
 
 # Testing
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
@@ -68,7 +70,12 @@ web/frontend/playwright-report/
 .claude/
 CLAUDE.md
 **/CLAUDE.md
+**/AGENTS.md
 implementation-notes.html
+
+# TypeScript and frontend build metadata
+*.tsbuildinfo
+.next/
 
 # Environment variables
 .env

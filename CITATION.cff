@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use DART or this Guan Dan engine, please cite this repository."
-title: "DART: A Deep Monte Carlo RL Agent for Guan Dan"
+title: "DART: Dynamic Action-Relative Routing for Tricks"
 authors:
   - family-names: "Cai"
     given-names: "Winston"

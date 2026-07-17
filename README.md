@@ -99,7 +99,7 @@ The historical two-week GuanZero run is useful context but is not a controlled
 comparison to this ten-hour experiment. See the [research note](docs/RESEARCH.md)
 for limitations and follow-up experiments.
 
-## Method
+## Methodology
 
 DART follows the Deep Monte Carlo lineage of DouZero and GuanZero. CPU actors
 generate complete games, a learner trains Q-values from terminal team rewards,
@@ -213,8 +213,8 @@ game history. It is deployed at
 service intentionally does not load DART for cost reasons.
 
 Run the application locally with Docker Compose or consult the
-[Web API reference](docs/API.md). The application is not required for training,
-evaluation, or research reproducibility.
+[Web API reference](web/backend/README.md). The application is not required for
+training, evaluation, or research reproducibility.
 
 ## Documentation
 
@@ -226,9 +226,6 @@ evaluation, or research reproducibility.
   runtime invariants.
 - [Evaluation](docs/EVALUATION.md): paired-deck evaluation and confidence
   intervals.
-- [Model card](docs/MODEL_CARD.md): intended use and release limitations.
-- [Development](docs/DEVELOPMENT.md): tests, profiling, and contribution
-  workflow.
 
 ## Limitations
 

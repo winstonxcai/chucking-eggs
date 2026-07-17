@@ -113,6 +113,48 @@ filesystem-based weight publication, replay throttling, checkpoint evaluation,
 and full-checkpoint resume. See [Architecture](docs/ARCHITECTURE.md) for the
 process and state-flow details.
 
+### Architecture
+
+![DART system topology](docs/assets/system_topology.png)
+
+The runtime ownership boundaries are explicit. The main process handles
+lifecycle and evaluation; actors own local policy copies and batched
+environment lanes; the learner owns replay and the authoritative network; and
+the weight store provides asynchronous policy refresh.
+
+![DART distributed learning process](docs/assets/distributed_training.png)
+
+Each actor controls multiple independent environment lanes and owns a local
+Q-network copy. Actor samples flow into learner-owned replay, while learner
+updates train one global DART Q-network whose weights are periodically copied
+back to the actors.
+
+![DART actor-side inference batching](docs/assets/inference_batching.png)
+
+Actor-side batching keeps legal-action scoring local to each process. Forced or
+epsilon-random decisions bypass the network; nontrivial decisions are encoded
+as legal candidate-action rows, scored in a batched forward pass, segmented
+back by lane, and resolved by per-lane argmax.
+
+Recent Modal throughput probes motivate this design. The values below are
+post-warmup means from 1,000-update runs and report accepted fresh actor
+samples per second:
+
+| GPU | GuanZero-style `32 × 1` | DART `32 × 128` | DART speedup |
+|---|---:|---:|---:|
+| L4 | 4,640 | 19,765 | **4.3×** |
+| A10G | 4,889 | 22,383 | **4.6×** |
+
+The `32 × 1` shape is actor-limited: the learner queue stays near empty. The
+`32 × 128` shape keeps the learner supplied with work, so throughput is
+governed by learner speed and replay-ratio throttling.
+
+![DART trick-relative Q-head routing](docs/assets/model_architecture.png)
+
+State and candidate-action features enter the shared Q-network trunk. The
+trick-position id is used only by the deterministic router, which selects the
+head for leading, first responder, across from the leader, or last responder.
+
 ## Reproduction
 
 Start with the [Reproducibility guide](docs/REPRODUCIBILITY.md). It covers the

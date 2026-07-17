@@ -149,6 +149,9 @@ The `32 × 1` shape is actor-limited: the learner queue stays near empty. The
 `32 × 128` shape keeps the learner supplied with work, so throughput is
 governed by learner speed and replay-ratio throttling.
 
+See the [curated throughput evidence](ml/results/throughput/README.md) for
+measurement scope, retained configurations, and provenance.
+
 ![DART trick-relative Q-head routing](docs/assets/model_architecture.png)
 
 State and candidate-action features enter the shared Q-network trunk. The

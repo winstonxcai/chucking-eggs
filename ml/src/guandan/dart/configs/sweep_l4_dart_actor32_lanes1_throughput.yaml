@@ -1,8 +1,8 @@
-# Dart L4 throughput config for lane-count benchmarking.
-# Identical to dart_l4.yaml except actor_batch_lanes is raised to 128.
+# L4 DART throughput sweep config for 32 actors with 1 lane each.
+# Derived from dart_l4.yaml for distributed-training comparison.
 
 n_actors: 32
-actor_batch_lanes: 128
+actor_batch_lanes: 1
 sync_interval_updates: 5000
 sync_jitter_updates: 1000
 actor_push_batch_size: 512
@@ -32,7 +32,7 @@ dart_trunk_layers: 4
 dropout: 0.0
 
 target_replay_ratio: 1.0
-max_replay_ratio: 1.25
+max_replay_ratio: 1.0
 max_throttle_sleep_s: 0.05
 
 lr: 3.0e-5

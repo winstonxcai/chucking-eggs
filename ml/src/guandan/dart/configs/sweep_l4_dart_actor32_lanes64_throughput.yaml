@@ -1,4 +1,4 @@
-# Dart L4 throughput config matching dart_l4.yaml except for wider actor lanes.
+# L4 DART throughput sweep config for 32 actors with 64 lanes each.
 
 n_actors: 32
 actor_batch_lanes: 64

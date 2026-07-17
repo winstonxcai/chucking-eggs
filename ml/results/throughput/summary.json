@@ -1,0 +1,24 @@
+{
+  "scope": "post-warmup means from 1000-update throughput probes",
+  "metric": "accepted fresh actor samples per second",
+  "actor_count": 32,
+  "learner_batch_size": 4096,
+  "measurements": [
+    {"hardware": "L4", "lanes_per_actor": 1, "accepted_samples_per_sec": 4640},
+    {"hardware": "L4", "lanes_per_actor": 128, "accepted_samples_per_sec": 19765},
+    {"hardware": "A10G", "lanes_per_actor": 1, "accepted_samples_per_sec": 4889},
+    {"hardware": "A10G", "lanes_per_actor": 128, "accepted_samples_per_sec": 22383}
+  ],
+  "retained_configurations": [
+    {"hardware": "L4", "lanes_per_actor": 1, "config": "ml/src/guandan/dart/configs/sweep_l4_dart_actor32_lanes1_throughput.yaml"},
+    {"hardware": "L4", "lanes_per_actor": 64, "config": "ml/src/guandan/dart/configs/sweep_l4_dart_actor32_lanes64_throughput.yaml"},
+    {"hardware": "L4", "lanes_per_actor": 128, "config": "ml/src/guandan/dart/configs/sweep_l4_dart_actor32_lanes128_throughput.yaml"}
+  ],
+  "provenance": {
+    "raw_logs": "not committed; values were curated from Modal benchmark artifacts",
+    "benchmark_scripts": [
+      "ml/scripts/modal/bench_actor_throughput_modal.py",
+      "ml/scripts/util/bench_actor_throughput.py"
+    ]
+  }
+}

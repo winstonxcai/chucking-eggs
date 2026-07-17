@@ -1,0 +1,3 @@
+base_config: ablation_l4_common.yaml
+model_type: GuanZero
+is_partner_visible: true

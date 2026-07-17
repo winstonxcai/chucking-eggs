@@ -61,16 +61,17 @@ image = (
     gpu="L4",
     cpu=32,
     memory=20 * 1024,   # peak observed ~22.5 GB with lanes=40; Modal soft limit
-    timeout=3600 * 12,  # 12-hour cap
+    timeout=3600 * 11,  # 10-hour training budget plus startup/finalization headroom
     volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
     secrets=[modal.Secret.from_name("huggingface-token")],
 )
 def train_remote(
-    updates:     int,
     run_name:    str,
     seed:        int,
     config_path: str,
     device:      str,
+    updates:     int | None = None,
+    checkpoint_every_updates: int | None = None,
     profile:     bool = False,
     resume:      str | None = None,
 ) -> str:
@@ -80,6 +81,7 @@ def train_remote(
         seed=seed,
         config_path=config_path,
         device=device,
+        checkpoint_every_updates=checkpoint_every_updates,
         profile=profile,
         resume=resume,
     )
@@ -90,16 +92,17 @@ def train_remote(
     gpu="A10G",
     cpu=32,
     memory=20 * 1024,
-    timeout=3600 * 12,
+    timeout=3600 * 11,
     volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
     secrets=[modal.Secret.from_name("huggingface-token")],
 )
 def train_remote_a10g(
-    updates:     int,
     run_name:    str,
     seed:        int,
     config_path: str,
     device:      str,
+    updates:     int | None = None,
+    checkpoint_every_updates: int | None = None,
     profile:     bool = False,
     resume:      str | None = None,
 ) -> str:
@@ -109,6 +112,7 @@ def train_remote_a10g(
         seed=seed,
         config_path=config_path,
         device=device,
+        checkpoint_every_updates=checkpoint_every_updates,
         profile=profile,
         resume=resume,
     )
@@ -116,11 +120,12 @@ def train_remote_a10g(
 
 def _run_train_subprocess(
     *,
-    updates: int,
+    updates: int | None,
     run_name: str,
     seed: int,
     config_path: str,
     device: str,
+    checkpoint_every_updates: int | None = None,
     profile: bool = False,
     resume: str | None = None,
 ) -> str:
@@ -168,11 +173,19 @@ def _run_train_subprocess(
     cmd = [
         "python", "-m", "guandan.dart",
         "--config",  config_path,
-        "--updates", str(updates),
+    ]
+    if updates is not None:
+        cmd.extend(["--updates", str(updates)])
+    if checkpoint_every_updates is not None:
+        cmd.extend([
+            "--checkpoint-every-updates",
+            str(checkpoint_every_updates),
+        ])
+    cmd.extend([
         "--device",  device,
         "--seed",    str(seed),
         "--run-dir", run_dir,
-    ]
+    ])
     if resume:
         cmd.extend(["--resume", resume])
 
@@ -182,13 +195,89 @@ def _run_train_subprocess(
     return f"{run_dir}/checkpoints/final.pt"
 
 
+@app.function(
+    image=image,
+    cpu=32,
+    memory=20 * 1024,
+    timeout=3600 * 2,
+    volumes={RUN_VOL: vol, "/root/.cache/huggingface": hf_cache},
+    secrets=[modal.Secret.from_name("huggingface-token")],
+)
+def eval_checkpoint_remote(
+    run_name: str,
+    checkpoint_name: str = "final.pt",
+    out_name: str = "final",
+    opponents_csv: str = "yaoji,ez,jidan,strategic",
+    games: int = 1000,
+    workers: int = 32,
+    lanes: int = 64,
+    device: str = "cpu",
+    seed: int = 0,
+) -> str:
+    import os
+    import subprocess
+    from pathlib import Path
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = "/root/ml/src:" + env.get("PYTHONPATH", "")
+    env["DART_TQDM"] = "0"
+    env["PYTHONUNBUFFERED"] = "1"
+    env["OMP_NUM_THREADS"] = "1"
+    env["MKL_NUM_THREADS"] = "1"
+    env["OPENBLAS_NUM_THREADS"] = "1"
+    env["NUMEXPR_NUM_THREADS"] = "1"
+
+    run_dir = Path(RUN_VOL) / "dart" / run_name
+    checkpoint = run_dir / "checkpoints" / checkpoint_name
+    eval_dir = run_dir / "eval"
+    out_path = eval_dir / f"{out_name}.json"
+    log_path = eval_dir / f"{out_name}.log"
+    opponents = [opp.strip() for opp in opponents_csv.split(",") if opp.strip()]
+
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"missing checkpoint: {checkpoint}")
+    if not opponents:
+        raise ValueError("opponents_csv must contain at least one opponent")
+
+    cmd = [
+        "python",
+        "-m",
+        "guandan.scripts.eval.eval_dart",
+        "--checkpoint",
+        str(checkpoint),
+        "--opponent",
+        *opponents,
+        "--games",
+        str(games),
+        "--workers",
+        str(workers),
+        "--lanes",
+        str(lanes),
+        "--device",
+        device,
+        "--seed",
+        str(seed),
+        "--out",
+        str(out_path),
+    ]
+
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w") as log_file:
+        log_file.write("$ " + " ".join(cmd) + "\n\n")
+        log_file.flush()
+        subprocess.run(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT, check=True)
+    vol.commit()
+    return str(out_path)
+
+
 @app.local_entrypoint()
 def main(
-    updates: int = 1000,
+    updates: int | None = None,
     run_name: str = "dart_l4_bench",
     seed: int = 0,
     config_path: str = _DEFAULT_CONFIG_PATH,
     device: str = "cuda",
+    checkpoint_every_updates: int | None = None,
     gpu: str = "L4",
     profile: bool = False,
     resume: str | None = None,
@@ -196,12 +285,18 @@ def main(
     wait: bool = False,
 ) -> None:
     if dry_run:
-        from guandan.dart.config import load_config_from_yaml
+        from guandan.dart.config import load_config_from_cli
         local_path = _local_config_path(config_path)
-        cfg = load_config_from_yaml(local_path)
+        cfg = load_config_from_cli(
+            local_path,
+            checkpoint_every_updates=checkpoint_every_updates,
+        )
         print(
             f"Config OK: path={local_path}, model_type={cfg.model_type}, "
-            f"n_actors={cfg.n_actors}, updates={updates}"
+            f"n_actors={cfg.n_actors}, updates={updates}, "
+            f"checkpoint_every_updates={cfg.checkpoint_every_updates}, "
+            f"eval_enabled={cfg.eval.enabled}, "
+            f"max_train_seconds={cfg.max_train_seconds}"
         )
         return
 
@@ -211,6 +306,7 @@ def main(
         seed=seed,
         config_path=config_path,
         device=device,
+        checkpoint_every_updates=checkpoint_every_updates,
         profile=profile,
         resume=resume,
     )

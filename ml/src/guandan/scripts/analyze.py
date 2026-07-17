@@ -94,6 +94,12 @@ def load_metrics(metrics_path: Path) -> RunMetrics:
             vals.append(d.get(key, default) if isinstance(d, dict) else default)
         return np.asarray(vals, dtype=np.float64)
 
+    def wall_clock_col() -> np.ndarray:
+        return np.asarray(
+            [r.get("wall_clock_s", r.get("elapsed_s", float("nan"))) for r in rows],
+            dtype=np.float64,
+        )
+
     def _seat_loss(r: dict, p: int) -> float:
         d = r["loss"]
         # GuanZero logs use "0".."3"; Dart logs use "loss_trick_head_0".."..._3".
@@ -112,7 +118,7 @@ def load_metrics(metrics_path: Path) -> RunMetrics:
         queue_depth=           col("queue_depth"),
         drained_since_log=     col("drained_since_last_log"),
         fresh_samples_total=   col("fresh_samples_total"),
-        elapsed_s=             col("elapsed_s"),
+        elapsed_s=             wall_clock_col(),
         throttle_sleep_s=      col("throttle_sleep_s"),
         replay_interval=       col("replay_interval"),
         replay_cumulative=     col("replay_cumulative"),

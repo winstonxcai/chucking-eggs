@@ -1,11 +1,10 @@
-# Dart — local MPS training (4 CPU actors, MPS learner).
-# 200-update local Rust/backpressure sweep on 2026-05-27 found
-# 4 actors × 20 lanes fastest with queue=256, drain=64, batch_size=2048.
+# MPS DART partner-visible ablation config.
+# Matches the 50k local MPS run baseline: ml/runs/dart_mps_50k_0527_0028_screen.
 #
 # Launch:
 #   uv run python -m guandan.dart \
-#     --config ml/src/guandan/dart/configs/dart_mps.yaml \
-#     --updates 10000 --run-dir ml/runs/dart_mps_10k
+#     --config ml/src/guandan/dart/configs/ablation_mps_dart_partner_visible.yaml \
+#     --updates 50000 --run-dir ml/runs/ablation_mps_dart_partner_visible_50k
 
 n_actors: 4
 actor_batch_lanes: 20
@@ -26,9 +25,9 @@ eval:
   enabled: true
   opponents: [yaoji, ez, jidan, strategic]
   n_eval_games_per_opponent: 1000
-  every_updates: 0  # 0 = checkpoint_every_updates
-  workers: 0        # 0 = n_actors
-  lanes: 0          # 0 = actor_batch_lanes
+  every_updates: 0
+  workers: 0
+  lanes: 0
   device: cpu
 
 model_type: Dart

@@ -80,6 +80,7 @@ def test_train_smoke_runs_to_completion(tmp_path):
     rows = [json.loads(line) for line in metrics_path.read_text().splitlines() if line]
     assert rows, "expected at least one metrics row"
     assert all(r["_schema"] == METRICS_SCHEMA_VERSION for r in rows)
+    assert all("wall_clock_s" in r for r in rows)
     assert rows[-1]["updates"] >= 5
     assert "throttle_drained_since_last_log" in rows[-1]
     assert rows[-1]["queue_put_timeouts_total"] == 0
@@ -87,3 +88,24 @@ def test_train_smoke_runs_to_completion(tmp_path):
     train_log = (run_dir / "train.log").read_text()
     assert "Learner started" in train_log
     assert "done" in train_log.lower()
+
+
+def test_train_duration_only_smoke_writes_full_final_checkpoint(tmp_path):
+    run_dir = tmp_path / "duration_smoke"
+    cfg = _smoke_cfg(run_dir)
+    cfg.max_train_seconds = 1
+    cfg.total_updates_target = 0
+    cfg.checkpoint_every_updates = 100_000
+    cfg.publish_interval_updates = 100_000
+    cfg.log_every_updates = 100_000
+
+    train(cfg)
+
+    final_path = run_dir / "checkpoints" / "final.pt"
+    assert final_path.exists()
+    final_ckpt = torch.load(final_path, map_location="cpu", weights_only=False)
+    assert final_ckpt["checkpoint_save_type"] == "full"
+    assert "learner_state" in final_ckpt
+    assert "replay_state" in final_ckpt
+    assert (run_dir / "config.json").read_text().find('"max_train_seconds": 1') >= 0
+    assert "duration reached" in (run_dir / "learner.log").read_text()

@@ -1,11 +1,10 @@
-# Dart — local MPS training (4 CPU actors, MPS learner).
-# 200-update local Rust/backpressure sweep on 2026-05-27 found
-# 4 actors × 20 lanes fastest with queue=256, drain=64, batch_size=2048.
+# MPS GuanZero partner-visible ablation config.
+# Uses the same local MPS runtime/training/eval schedule as the DART ablations.
 #
 # Launch:
 #   uv run python -m guandan.dart \
-#     --config ml/src/guandan/dart/configs/dart_mps.yaml \
-#     --updates 10000 --run-dir ml/runs/dart_mps_10k
+#     --config ml/src/guandan/dart/configs/ablation_mps_guanzero_partner_visible.yaml \
+#     --updates 50000 --run-dir ml/runs/ablation_mps_guanzero_partner_visible_50k
 
 n_actors: 4
 actor_batch_lanes: 20
@@ -26,19 +25,20 @@ eval:
   enabled: true
   opponents: [yaoji, ez, jidan, strategic]
   n_eval_games_per_opponent: 1000
-  every_updates: 0  # 0 = checkpoint_every_updates
-  workers: 0        # 0 = n_actors
-  lanes: 0          # 0 = actor_batch_lanes
+  every_updates: 0
+  workers: 0
+  lanes: 0
   device: cpu
 
-model_type: Dart
-dart_role_d_model: 128
-dart_history_hidden: 256
-dart_global_hidden: 128
-dart_action_hidden: 128
-dart_trunk_hidden: 1024
-dart_trunk_layers: 4
+model_type: GuanZero
+hidden_lstm: 256
+hidden_mlp: 1024
+n_mlp_layers: 6
 dropout: 0.0
+history_encoder: lstm
+transformer_nhead: 4
+transformer_layers: 2
+transformer_ff_dim: 1024
 
 target_replay_ratio: 1.0
 max_replay_ratio: 1.25
@@ -47,6 +47,7 @@ max_throttle_sleep_s: 0.05
 lr: 3.0e-5
 gamma: 1.0
 batch_size: 2048
+batch_size_semantics: per_seat  # Legacy GuanZero behavior: 2048 samples per seat.
 buffer_capacity: 400000
 buffer_capacity_per_player: 100000
 buffer_min_size: 4096

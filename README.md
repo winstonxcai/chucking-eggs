@@ -104,6 +104,91 @@ deck-subtraction precomputed as a feature, not per-opponent information. It
 does not reveal which opponent holds which card. See
 [`docs/TRADEOFFS.md`](docs/TRADEOFFS.md) §10 for the full discussion.
 
+## Ablations
+
+The ablation study compares DART against GuanZero in a four-cell factorial
+design. The two experimental axes are the learning algorithm and whether the
+agent can observe its partner's hand. The central question is whether the
+canonical DART formulation performs better than the canonical GuanZero
+formulation under the same hardware class, the same 10-hour training budget,
+and the same effective number of learner samples.
+
+### Design
+
+| Algorithm | Partner visibility |
+|-----------|--------------------|
+| DART | visible / hidden |
+| GuanZero | visible / hidden |
+
+The study is intended to measure both the main algorithm effect and the effect
+of partner visibility within each algorithm. It is not intended to isolate
+parameter count or to claim parameter-matched superiority.
+
+### Fairness Controls
+
+All four runs use the same L4 hardware class, actor count, batching strategy,
+learner batch size, replay policy, optimizer, exploration rate, checkpoint
+cadence, random seed, training duration, and evaluation protocol. The learner
+batch is normalized so each update consumes 4,096 total training samples. For
+GuanZero, those samples are divided evenly across the four seat-specific
+networks.
+
+The evaluation protocol is also shared. Each final model is evaluated against
+Yaoji, EZ, Jidan, and Strategic with 1,000 paired fixed-deck games per
+opponent. The headline score is the unweighted macro-average of those four
+opponent win rates.
+
+The main remaining asymmetry is architectural capacity. DART uses one shared
+network across all four player roles, with approximately 4.7M parameters.
+GuanZero uses four independent seat networks, each with approximately 7.1M
+parameters, for approximately 28.4M total parameters. This asymmetry is a
+property of the canonical algorithms rather than a configuration accident:
+DART's parameter sharing is part of the method, while GuanZero's independent
+seat networks are part of its baseline design.
+
+### Results
+
+| Algorithm | Partner visible | Params | Macro WR | Yaoji | EZ | Jidan | Strategic | Eff. samples |
+|-----------|----------------:|-------:|---------:|------:|---:|------:|----------:|-------------:|
+| DART | yes | 4.7M | 57.7% | 49.7% | 51.0% | 59.0% | 71.1% | 536.5M |
+| DART | no | 4.7M | 58.0% | 51.9% | 51.9% | 58.2% | 70.0% | 513.0M |
+| GuanZero | yes | 28.4M | 50.0% | 37.5% | 46.1% | 48.2% | 68.3% | 296.9M |
+| GuanZero | no | 28.4M | 52.6% | 44.0% | 49.2% | 50.1% | 67.0% | 234.2M |
+
+![Macro win rate versus wall-clock time](docs/assets/ablation_l4_winrate_wallclock.png)
+
+The zero-hour point in the wall-clock plot is a visual origin, not an evaluated
+checkpoint.
+
+![Macro win rate versus effective learner samples](docs/assets/ablation_l4_winrate_effective_samples.png)
+
+![Final-time factorial contrasts](docs/assets/ablation_l4_factorial_contrasts.png)
+
+### Interpretation
+
+At the 10-hour endpoint, both DART variants outperform their corresponding
+GuanZero variants. DART leads GuanZero by 7.67 percentage points in the
+partner-visible condition and by 5.43 percentage points in the hidden-partner
+condition. The interaction term is +2.25 percentage points, indicating that the
+observed DART advantage is larger in the partner-visible setting.
+
+Partner visibility did not improve final macro win rate in this single-seed
+study. The DART visible run finished 0.30 percentage points below DART hidden,
+and the GuanZero visible run finished 2.55 percentage points below GuanZero
+hidden. This should be interpreted cautiously because the experiment measures
+one seed and a fixed 10-hour budget, not a distribution over training runs.
+
+### Limitations
+
+- The comparison is matched on hardware, wall-clock time, effective learner
+  samples, and evaluation protocol, but it is not matched on parameter count.
+- The partner-visible condition is a cooperative research setting, not a strict
+  hidden-information deployment policy.
+- Evaluation games are part of the measured wall-clock budget. This makes the
+  four runs comparable, but the budget is not pure gradient-update time.
+- The results use one seed. The confidence intervals are evaluation-game
+  uncertainty, not run-to-run training variance.
+
 ## Reproducibility Artifacts
 
 - [Model card](docs/MODEL_CARD.md): checkpoint status, intended use, evaluation protocol, and release checklist.
@@ -240,6 +325,66 @@ upd/s (~34h); later tuned L4 resumes run at ~5-6 upd/s. Extrapolating that
 post-200k rate to `update_01250000.pt`, the release checkpoint is roughly
 85-90 L4 learner-hours, or ~$215-$225 at the reference $2.50/hr Modal rate,
 excluding evaluation sweeps.
+
+### Reproducing the Ablations
+
+The four-cell DART/GuanZero ablation uses one shared base configuration and
+four minimal overrides:
+
+- Shared base: [`ablation_l4_common.yaml`](ml/src/guandan/dart/configs/ablation_l4_common.yaml)
+- DART, partner visible: [`ablation_l4_dart_partner_visible_10h.yaml`](ml/src/guandan/dart/configs/ablation_l4_dart_partner_visible_10h.yaml)
+- DART, partner hidden: [`ablation_l4_dart_partner_hidden_10h.yaml`](ml/src/guandan/dart/configs/ablation_l4_dart_partner_hidden_10h.yaml)
+- GuanZero, partner visible: [`ablation_l4_guanzero_partner_visible_10h.yaml`](ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_visible_10h.yaml)
+- GuanZero, partner hidden: [`ablation_l4_guanzero_partner_hidden_10h.yaml`](ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_hidden_10h.yaml)
+
+Launch the four runs with separate Modal profiles or workspaces if desired.
+Do not pass `--updates`; the configs stop by wall-clock duration.
+
+```bash
+MODAL_PROFILE=WORKSPACE_1 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::train_remote \
+  --run-name ablation_l4_dart_partner_visible_10h_seed0 \
+  --seed 0 \
+  --config-path /root/ml/src/guandan/dart/configs/ablation_l4_dart_partner_visible_10h.yaml \
+  --device cuda
+
+MODAL_PROFILE=WORKSPACE_2 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::train_remote \
+  --run-name ablation_l4_dart_partner_hidden_10h_seed0 \
+  --seed 0 \
+  --config-path /root/ml/src/guandan/dart/configs/ablation_l4_dart_partner_hidden_10h.yaml \
+  --device cuda
+
+MODAL_PROFILE=WORKSPACE_3 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::train_remote \
+  --run-name ablation_l4_guanzero_partner_visible_10h_seed0 \
+  --seed 0 \
+  --config-path /root/ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_visible_10h.yaml \
+  --device cuda
+
+MODAL_PROFILE=WORKSPACE_4 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::train_remote \
+  --run-name ablation_l4_guanzero_partner_hidden_10h_seed0 \
+  --seed 0 \
+  --config-path /root/ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_hidden_10h.yaml \
+  --device cuda
+```
+
+Run final posthoc evaluation in the Modal volume to avoid downloading full
+checkpoints:
+
+```bash
+MODAL_PROFILE=WORKSPACE_1 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::eval_checkpoint_remote \
+  --run-name ablation_l4_dart_partner_visible_10h_seed0 \
+  --checkpoint-name final.pt \
+  --out-name final \
+  --games 1000 \
+  --workers 32 \
+  --lanes 64 \
+  --device cpu \
+  --seed 0
+```
+
+Repeat the final-eval command for the other three run names. The analysis
+artifacts are the merged config, learner metrics, checkpoint evaluation JSONs,
+final evaluation JSON, and eval logs. Full checkpoints are not required unless
+you need local model inspection.
 
 ### Troubleshooting
 

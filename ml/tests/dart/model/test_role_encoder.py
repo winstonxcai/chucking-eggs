@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-
-from guandan.cards import ComboType
+from guandan.cards import ComboType, card_to_id
 from guandan.combos import Combo
-from guandan.game import GuanDanEnv
 from guandan.dart.model.encoding.base_encoder import StateActionEncoder
 from guandan.dart.model.encoding.role_encoder import (
     REL_PARTNER,
@@ -15,6 +13,7 @@ from guandan.dart.model.encoding.role_encoder import (
     relative_role,
     trick_head_id,
 )
+from guandan.game import GuanDanEnv
 
 
 def _fresh_env(seed: int = 0) -> GuanDanEnv:
@@ -28,6 +27,14 @@ def _non_pass_legal(env: GuanDanEnv) -> Combo:
         if combo.type != ComboType.PASS:
             return combo
     raise AssertionError("expected a non-pass legal move")
+
+
+def _hand_union(env: GuanDanEnv, seats: tuple[int, ...]) -> np.ndarray:
+    expected = np.zeros(108, dtype=np.uint8)
+    for seat in seats:
+        for card in env.hands[seat]:
+            expected[card_to_id(card)] = 1
+    return expected
 
 
 def test_relative_role_identity_and_partner():
@@ -132,12 +139,18 @@ def test_others_hand_is_union_of_two_opponents():
     legal = env.legal_moves(p)
     next_opp = (p + 1) % 4
     prev_opp = (p + 3) % 4
-    expected = np.zeros(108, dtype=np.uint8)
-    for seat in (next_opp, prev_opp):
-        for c in env.hands[seat]:
-            from guandan.cards import card_to_id
-            expected[card_to_id(c)] = 1
+    expected = _hand_union(env, (next_opp, prev_opp))
     out = RoleAwareStateActionEncoder(is_partner_visible=True).encode_all(env, p, legal)[0]
+    assert np.array_equal(out["others_hand"], expected)
+
+
+def test_others_hand_includes_partner_when_partner_hidden():
+    env = _fresh_env(seed=5)
+    p = env.current_player
+    legal = env.legal_moves(p)
+    expected = _hand_union(env, tuple(seat for seat in range(4) if seat != p))
+    out = RoleAwareStateActionEncoder(is_partner_visible=False).encode_all(env, p, legal)[0]
+    assert int(out["partner_hand"].sum()) == 0
     assert np.array_equal(out["others_hand"], expected)
 
 

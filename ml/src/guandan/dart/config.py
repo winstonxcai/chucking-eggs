@@ -20,11 +20,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from .constants import NUM_PLAYERS
+
 ModelType = Literal["GuanZero", "Dart"]
 MODEL_TYPE_GUANZERO: ModelType = "GuanZero"
 MODEL_TYPE_DART: ModelType = "Dart"
 CheckpointSaveType = Literal["weight", "full"]
 QueueFullPolicy = Literal["stop", "block"]
+BatchSizeSemantics = Literal["total", "per_seat"]
 CONFIG_SCHEMA_VERSION = 1
 
 
@@ -367,6 +370,10 @@ class TrainConfig:
     seed: int = 0
     gamma: float = 1.0
     batch_size: int = 512
+    # DART has one shared learner batch. GuanZero historically interpreted
+    # this as a per-seat batch; keep that behavior by default for old configs
+    # and opt into total-batch semantics explicitly for fair comparisons.
+    batch_size_semantics: BatchSizeSemantics = "per_seat"
     lr: float = 1e-4
     max_grad_norm: float = 10.0
 
@@ -403,6 +410,7 @@ class TrainConfig:
     checkpoint_every_updates: int = 5_000
     checkpoint_save_type: CheckpointSaveType = "full"
     total_updates_target: int = 0   # 0 = run until stopped; >0 = stop after this many
+    max_train_seconds: int = 0      # 0 = no duration limit; >0 = stop after this many seconds
     log_every_updates: int = 200
 
     # ── CUDA throughput knobs ────────────────────────────────
@@ -443,6 +451,22 @@ class TrainConfig:
                 f"Unknown model_type {self.model_type!r}; expected "
                 f"{MODEL_TYPE_GUANZERO!r} or {MODEL_TYPE_DART!r}"
             )
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1; got {self.batch_size}")
+        if self.batch_size_semantics not in ("total", "per_seat"):
+            raise ValueError(
+                "batch_size_semantics must be 'total' or 'per_seat'; "
+                f"got {self.batch_size_semantics!r}"
+            )
+        if (
+            self.model_type == MODEL_TYPE_GUANZERO
+            and self.batch_size_semantics == "total"
+            and self.batch_size % NUM_PLAYERS != 0
+        ):
+            raise ValueError(
+                "GuanZero total batch_size must be divisible by the number of seats "
+                f"({NUM_PLAYERS}); got {self.batch_size}"
+            )
         if self.actor_batch_lanes < 1:
             raise ValueError(
                 f"actor_batch_lanes must be >= 1; got {self.actor_batch_lanes}"
@@ -466,6 +490,10 @@ class TrainConfig:
             raise ValueError(
                 "actor_queue_full_log_every must be >= 1; "
                 f"got {self.actor_queue_full_log_every}"
+            )
+        if self.max_train_seconds < 0:
+            raise ValueError(
+                f"max_train_seconds must be >= 0; got {self.max_train_seconds}"
             )
         self.opponents = _opponent_config_from_raw(self.opponents)
         self.eval = _eval_config_from_raw(self.eval)
@@ -496,6 +524,27 @@ class TrainConfig:
                 "coordination_bucket_final_fraction must be in [0, 1]; "
                 f"got {self.coordination_bucket_final_fraction}"
             )
+
+    @property
+    def batch_size_per_seat(self) -> int:
+        """Number of examples sampled for each GuanZero seat update.
+
+        DART uses a single shared batch, so this property returns ``batch_size``
+        for DART and is only used by the per-seat GuanZero learner.
+        """
+        if self.model_type == MODEL_TYPE_GUANZERO and self.batch_size_semantics == "total":
+            return self.batch_size // NUM_PLAYERS
+        return self.batch_size
+
+    @property
+    def learner_samples_per_update(self) -> int:
+        """Total learner examples consumed by one optimizer update."""
+        if (
+            self.model_type == MODEL_TYPE_GUANZERO
+            and self.batch_size_semantics == "per_seat"
+        ):
+            return NUM_PLAYERS * self.batch_size
+        return self.batch_size
 
     @property
     def resolved_run_dir(self) -> str:
@@ -629,9 +678,48 @@ def load_config_from_yaml(path: str | Path) -> TrainConfig:
 
     CLI flags should be applied on top of this via ``dataclasses.replace``.
     """
+    return TrainConfig.from_flat_dict(_load_yaml_dict(path))
+
+
+def _merge_yaml_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge config mappings, with ``override`` taking precedence."""
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _merge_yaml_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_yaml_dict(path: str | Path, *, _stack: tuple[Path, ...] = ()) -> dict[str, Any]:
+    """Load a YAML mapping, recursively resolving relative ``base_config`` refs."""
     import yaml
-    raw = yaml.safe_load(Path(path).read_text()) or {}
-    return TrainConfig.from_flat_dict(raw)
+
+    resolved = Path(path).resolve()
+    if resolved in _stack:
+        chain = " -> ".join(str(item) for item in (*_stack, resolved))
+        raise ValueError(f"base_config cycle detected: {chain}")
+    if not resolved.exists():
+        raise FileNotFoundError(f"config file does not exist: {resolved}")
+
+    raw = yaml.safe_load(resolved.read_text()) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"config YAML must contain a mapping: {resolved}")
+
+    raw = dict(raw)
+    base_ref = raw.pop("base_config", None)
+    if base_ref is None:
+        return raw
+    if not isinstance(base_ref, str) or not base_ref.strip():
+        raise ValueError(f"base_config must be a non-empty relative path: {resolved}")
+
+    base_path = Path(base_ref)
+    if base_path.is_absolute():
+        raise ValueError(f"base_config must be a relative path: {resolved}")
+    base_path = resolved.parent / base_path
+    base = _load_yaml_dict(base_path, _stack=(*_stack, resolved))
+    return _merge_yaml_dicts(base, raw)
 
 
 def dart_qnet_config(cfg: TrainConfig):
@@ -660,8 +748,7 @@ def load_config_from_cli(
     """
     raw: dict[str, Any] = {}
     if yaml_path:
-        import yaml
-        raw.update(yaml.safe_load(Path(yaml_path).read_text()) or {})
+        raw.update(_load_yaml_dict(yaml_path))
     raw.update({k: v for k, v in cli_overrides.items() if v is not None})
     return TrainConfig.from_flat_dict(raw)
 
@@ -672,6 +759,7 @@ __all__ = [
     "EpsilonConfig",
     "CheckpointSaveType",
     "QueueFullPolicy",
+    "BatchSizeSemantics",
     "EpisodeMixConfig",
     "FrozenPoolConfig",
     "HardBotConfig",

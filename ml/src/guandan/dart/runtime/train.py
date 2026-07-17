@@ -277,6 +277,8 @@ def _spawn_learner(
     eval_request_queue=None,
     eval_done_event=None,
     queue_full_counter=None,
+    training_start_event=None,
+    training_start_time=None,
 ):
     proc = ctx.Process(
         target=learner_loop,
@@ -288,6 +290,8 @@ def _spawn_learner(
             "eval_request_queue": eval_request_queue,
             "eval_done_event": eval_done_event,
             "queue_full_counter": queue_full_counter,
+            "training_start_event": training_start_event,
+            "training_start_time": training_start_time,
         },
         daemon=True,
         name="learner",
@@ -352,7 +356,7 @@ def _run_progress_loop(
     cfg: TrainConfig,
     layout: RunLayout,
     update_counter,
-    target_updates: int,
+    target_updates: int | None,
     batch_size: int,
     learner_proc,
     actor_procs: list,
@@ -364,7 +368,7 @@ def _run_progress_loop(
     """Drive the tqdm bar and watch for crashes. Returns abort_reason or None."""
     resume_updates = int(update_counter.value)
     bar = tqdm(
-        total=target_updates * batch_size,
+        total=(target_updates * batch_size) if target_updates is not None else None,
         initial=resume_updates * batch_size,
         desc="learner", unit="samp", unit_scale=True, dynamic_ncols=True,
         disable=_tqdm_disabled(),
@@ -375,7 +379,9 @@ def _run_progress_loop(
         while not stop_event.is_set():
             time.sleep(_WATCHER_POLL_INTERVAL_S)
             count = int(update_counter.value)
-            delta = min(count - last_count, target_updates - last_count)
+            delta = count - last_count
+            if target_updates is not None:
+                delta = min(delta, target_updates - last_count)
             bar.update(delta * batch_size)
             last_count = count
             if eval_request_queue is not None and eval_done_event is not None:
@@ -397,13 +403,13 @@ def _run_progress_loop(
                         pause_event.clear()
                     eval_done_event.set()
             if not learner_proc.is_alive():
-                if count >= target_updates and learner_proc.exitcode == 0:
+                if learner_proc.exitcode == 0:
                     return None
                 return f"Learner exited (code={learner_proc.exitcode})"
             for ap in actor_procs:
                 if not ap.is_alive() and ap.exitcode not in (0, None):
                     return f"{ap.name} died (code={ap.exitcode})"
-            if count >= target_updates:
+            if target_updates is not None and count >= target_updates:
                 if cfg.eval.enabled and learner_proc.is_alive():
                     continue
                 return None
@@ -451,6 +457,8 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     pause_event    = ctx.Event()
     weights_ready  = ctx.Event()
     update_counter = ctx.Value("q", 0)   # int64; learner advances per gradient step
+    training_start_event = ctx.Event()
+    training_start_time = ctx.Value("d", 0.0)
     queue_full_counter = ctx.Value("q", 0)
     eval_request_queue = ctx.Queue() if cfg.eval.enabled else None
     eval_done_event = ctx.Event() if cfg.eval.enabled else None
@@ -466,6 +474,8 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
         eval_request_queue=eval_request_queue,
         eval_done_event=eval_done_event,
         queue_full_counter=queue_full_counter,
+        training_start_event=training_start_event,
+        training_start_time=training_start_time,
     )
     logger.info("Learner started (pid=%d)", learner_proc.pid)
     logger.info("Waiting for initial weights → %s", weight_dir)
@@ -483,15 +493,18 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
         actor_rng_states=actor_rng_states,
         queue_full_counter=queue_full_counter,
     )
+    training_start_time.value = time.monotonic()
+    training_start_event.set()
 
     logger.info("Dart | %d actors + 1 learner", cfg.n_actors)
     logger.info("log → %s", log_path)
 
-    target_updates = cfg.total_updates_target or cfg.checkpoint_every_updates
+    target_updates = cfg.total_updates_target or None
     abort_reason: str | None = None
     try:
         abort_reason = _run_progress_loop(
-            cfg, layout, update_counter, target_updates, cfg.batch_size,
+            cfg, layout, update_counter, target_updates,
+            cfg.learner_samples_per_update,
             learner_proc, actor_procs, stop_event,
             pause_event=pause_event,
             eval_request_queue=eval_request_queue,
@@ -517,6 +530,11 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
                    help="Path to YAML config; CLI flags override.")
     p.add_argument("--n-actors", type=int)
     p.add_argument("--updates", type=int, help="Target learner updates.")
+    p.add_argument(
+        "--checkpoint-every-updates",
+        type=int,
+        help="Override the periodic checkpoint interval for this run.",
+    )
     p.add_argument("--device", type=str)
     p.add_argument("--seed", type=int)
     p.add_argument("--run-dir", type=str)
@@ -536,6 +554,7 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
         args.config,
         n_actors=args.n_actors,
         total_updates_target=args.updates,
+        checkpoint_every_updates=args.checkpoint_every_updates,
         device=args.device,
         seed=args.seed,
         run_dir=run_dir,

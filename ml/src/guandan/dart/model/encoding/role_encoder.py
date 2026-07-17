@@ -212,10 +212,16 @@ class RoleAwareStateActionEncoder:
         else:
             partner_hand = np.zeros(CARD_ID_DIM, dtype=np.uint8)
 
-        # The 2 opponents only (partner is decomposed separately in partner_hand).
+        # When the partner hand is visible it is decomposed into the dedicated
+        # partner_hand channel. When hidden, it remains part of the unknown
+        # non-self hand union carried by others_hand.
         next_opp_seat = (player + 1) % NUM_PLAYERS
         prev_opp_seat = (player - 1) % NUM_PLAYERS
-        others_hand = env.hand_multihot[next_opp_seat] | env.hand_multihot[prev_opp_seat]
+        others_hand = (
+            env.hand_multihot[next_opp_seat] | env.hand_multihot[prev_opp_seat]
+        ).copy()
+        if not self.is_partner_visible:
+            others_hand |= env.hand_multihot[partner_seat]
 
         behavior = compute_state_behavior_flags(env, player, legal_moves).astype(
             np.uint8,

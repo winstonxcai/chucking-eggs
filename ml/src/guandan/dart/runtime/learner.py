@@ -189,7 +189,7 @@ class _SeatAdapter:
         cfg = self._cfg
         for net in self._learner.q_nets.values():
             net.train()
-        losses = self._learner.update(self._buffer, cfg.batch_size)
+        losses = self._learner.update(self._buffer, cfg.batch_size_per_seat)
         if not losses:
             return None
         return StepResult(loss={str(p): v for p, v in losses.items()}, phase={})
@@ -239,6 +239,7 @@ class _SeatAdapter:
         upd_per_sec = interval_upd / interval_dt if interval_dt > 0 else 0.0
         session_upd = upd - timing["session_start_updates"]
         elapsed = timing["elapsed_s"]
+        wall_clock = timing.get("wall_clock_s", elapsed)
         return {
             "updates":                 upd,
             "version":                 timing["version"],
@@ -248,8 +249,11 @@ class _SeatAdapter:
             },
             "loss":                    {k: float(v) for k, v in result.loss.items()},
             "elapsed_s":               round(elapsed, 1),
+            "wall_clock_s":            round(wall_clock, 1),
             "upd_per_sec":             round(upd_per_sec, 3),
-            "samples_per_sec":         round(upd_per_sec * cfg.batch_size, 1),
+            "samples_per_sec":         round(upd_per_sec * cfg.learner_samples_per_update, 1),
+            "learner_samples_per_update": cfg.learner_samples_per_update,
+            "learner_samples_total": upd * cfg.learner_samples_per_update,
             "cum_upd_per_sec":         round(session_upd / elapsed if elapsed > 0 else 0.0, 3),
             "queue_depth":             timing["queue_depth"],
             "queue_put_timeouts_total": timing["queue_put_timeouts_total"],
@@ -275,7 +279,7 @@ class _SeatAdapter:
         interval_dt = timing["interval_dt"]
         interval_upd = timing["interval_upd"]
         upd_per_sec = interval_upd / interval_dt if interval_dt > 0 else 0.0
-        samp_per_sec = upd_per_sec * cfg.batch_size
+        samp_per_sec = upd_per_sec * cfg.learner_samples_per_update
         ir = timing["interval_replay"]
         cr = timing["cum_replay"]
         target = cfg.total_updates_target or cfg.checkpoint_every_updates
@@ -428,8 +432,17 @@ class _DartAdapter:
             "loss":                    result.loss,
             "phase":                   result.phase,
             "elapsed_s":               round(timing["elapsed_s"], 1),
+            "wall_clock_s":            round(
+                timing.get("wall_clock_s", timing["elapsed_s"]), 1
+            ),
             "upd_per_sec":             round(upd_per_sec, 3),
-            "samples_per_sec":         round(upd_per_sec * self._cfg.batch_size, 1),
+            "samples_per_sec":         round(
+                upd_per_sec * self._cfg.learner_samples_per_update, 1
+            ),
+            "learner_samples_per_update": self._cfg.learner_samples_per_update,
+            "learner_samples_total": (
+                timing["updates"] * self._cfg.learner_samples_per_update
+            ),
             "queue_depth":             timing["queue_depth"],
             "queue_put_timeouts_total": timing["queue_put_timeouts_total"],
             "drained_since_last_log":  timing["drained_since_log"],
@@ -527,6 +540,8 @@ def learner_loop(
     eval_request_queue: mp.Queue | None = None,
     eval_done_event:   mp.Event | None = None,
     queue_full_counter: mp.Value | None = None,
+    training_start_event: mp.Event | None = None,
+    training_start_time: mp.Value | None = None,
 ) -> None:
     """Central learner process for faithful persistent actor-learner DMC.
 
@@ -571,6 +586,17 @@ def learner_loop(
     if weights_ready is not None:
         weights_ready.set()
 
+    if cfg.max_train_seconds > 0 and training_start_event is not None:
+        training_start_event.wait()
+    training_start = (
+        float(training_start_time.value)
+        if training_start_time is not None and training_start_time.value > 0
+        else time.monotonic()
+    )
+    deadline = (
+        training_start + cfg.max_train_seconds
+        if cfg.max_train_seconds > 0 else None
+    )
     t0 = time.time()
     session_start_updates = total_updates
     last_result: StepResult | None = None
@@ -589,6 +615,14 @@ def learner_loop(
     actor_stats: dict[int, dict[str, int]] = {}
 
     while not stop_event.is_set():
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.info(
+                "duration reached: %.0f seconds; stopping after %d updates",
+                cfg.max_train_seconds,
+                total_updates,
+            )
+            stop_event.set()
+            break
         # 1. Drain sample queue into replay buffer
         drained, drained_samples = _drain_sample_queue(
             sample_queue, adapter, cfg.max_drain_batches_per_loop,
@@ -604,7 +638,9 @@ def learner_loop(
             and total_updates > session_start_updates
             and fresh_samples_total > 0
         ):
-            session_uses = (total_updates - session_start_updates) * cfg.batch_size
+            session_uses = (
+                total_updates - session_start_updates
+            ) * cfg.learner_samples_per_update
             cum_replay = session_uses / max(fresh_samples_total, 1)
             if cum_replay > cfg.max_replay_ratio:
                 throttle_drained, throttle_samples = _drain_sample_queue(
@@ -711,12 +747,19 @@ def learner_loop(
             interval_unique = fresh_samples_total - last_log_fresh_samples
 
             interval_replay: float | None = (
-                round((interval_upd * cfg.batch_size) / interval_unique, 2)
+                round(
+                    (interval_upd * cfg.learner_samples_per_update) / interval_unique,
+                    2,
+                )
                 if interval_unique > 0 else None
             )
             session_updates = total_updates - session_start_updates
             cum_replay: float | None = (
-                round((session_updates * cfg.batch_size) / fresh_samples_total, 2)
+                round(
+                    (session_updates * cfg.learner_samples_per_update)
+                    / fresh_samples_total,
+                    2,
+                )
                 if fresh_samples_total > 0 else None
             )
 
@@ -754,6 +797,7 @@ def learner_loop(
                 "updates":               total_updates,
                 "version":               version,
                 "elapsed_s":             elapsed,
+                "wall_clock_s":          time.monotonic() - training_start,
                 "interval_dt":           interval_dt,
                 "interval_upd":          interval_upd,
                 "queue_depth":           queue_depth,
@@ -797,14 +841,13 @@ def learner_loop(
             logger.info("target updates reached: %d", total_updates)
             break
 
-    # Final checkpoint on clean shutdown
-    if total_updates > 0:
-        adapter.checkpoint(
-            layout.final_checkpoint,
-            total_updates,
-            save_type="full",
-            actor_rng_states=actor_rng_states,
-        )
+    # Final checkpoint on clean shutdown, including zero-update duration smokes.
+    adapter.checkpoint(
+        layout.final_checkpoint,
+        total_updates,
+        save_type="full",
+        actor_rng_states=actor_rng_states,
+    )
     logger.info("learner stopped after %d updates", total_updates)
     metrics_writer.close()
 

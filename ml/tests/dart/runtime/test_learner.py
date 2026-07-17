@@ -7,10 +7,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-
+from guandan.dart.config import MODEL_TYPE_GUANZERO, QNetConfig, TrainConfig
 from guandan.dart.data.buffer import RoleAwareReplayBuffer
-from guandan.dart.config import QNetConfig
 from guandan.dart.model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_SHAPES
+from guandan.dart.model.q_network import DartQNet, DartQNetConfig, init_guanzero_nets
+from guandan.dart.runtime.actor.runtime import maybe_sync_weights
+from guandan.dart.runtime.learner import StepResult, _SeatAdapter
 from guandan.dart.runtime.learners.dart import DartLearner
 from guandan.dart.runtime.learners.loss_bucket_schema import (
     LOSS_BUCKET_GRIDS,
@@ -23,8 +25,6 @@ from guandan.dart.runtime.weights import (
     publish_weights_dart,
     read_latest_metadata,
 )
-from guandan.dart.model.q_network import DartQNet, DartQNetConfig, init_guanzero_nets
-from guandan.dart.runtime.actor.runtime import maybe_sync_weights
 
 
 def _small_dart_cfg() -> DartQNetConfig:
@@ -80,6 +80,68 @@ def _full_tags(n: int) -> dict:
         "latest_team":       np.asarray([i % 2 for i in range(n)], dtype=np.int8),
         "terminal_reward":   np.asarray([float((i % 7) - 3) for i in range(n)], dtype=np.float32),
     }
+
+
+def test_guanzero_total_batch_adapter_samples_per_seat(monkeypatch):
+    cfg = TrainConfig(
+        model_type=MODEL_TYPE_GUANZERO,
+        qnet=QNetConfig(hidden_lstm=8, hidden_mlp=16, n_mlp_layers=1),
+        batch_size=4096,
+        batch_size_semantics="total",
+        device="cpu",
+    )
+    adapter = _SeatAdapter(cfg)
+    observed: list[int] = []
+
+    def fake_update(_buffer, batch_size):
+        observed.append(batch_size)
+        return {0: 0.0}
+
+    monkeypatch.setattr(adapter._learner, "update", fake_update)
+    assert adapter.step() is not None
+    assert observed == [1024]
+
+
+def test_effective_batch_size_drives_learner_sample_metrics():
+    cfg = TrainConfig(
+        model_type=MODEL_TYPE_GUANZERO,
+        qnet=QNetConfig(hidden_lstm=8, hidden_mlp=16, n_mlp_layers=1),
+        batch_size=4096,
+        batch_size_semantics="total",
+        device="cpu",
+    )
+    adapter = _SeatAdapter(cfg)
+    timing = {
+        "updates": 2,
+        "version": 0,
+        "interval_dt": 1.0,
+        "interval_upd": 2,
+        "session_start_updates": 0,
+        "elapsed_s": 1.0,
+        "queue_depth": 0,
+        "queue_put_timeouts_total": 0,
+        "gpu_mem_gb": None,
+        "drained_since_log": 0,
+        "throttle_drained_since_log": 0,
+        "cumulative_drained": 8192,
+        "fresh_samples_total": 8192,
+        "ema_actor_rate": 8192.0,
+        "interval_replay": 1.0,
+        "cum_replay": 1.0,
+        "n_throttle_sleeps": 0,
+        "throttle_sleep_total_s": 0.0,
+        "actor_update_lag": {},
+        "actor_update_lag_max": None,
+        "actor_update_lag_mean": None,
+        "actor_version_lag": {},
+        "actor_version_lag_max": None,
+    }
+    row = adapter.format_log_row(StepResult(loss={"0": 0.0}, phase={}), timing)
+
+    assert row["learner_samples_per_update"] == 4096
+    assert row["learner_samples_total"] == 8192
+    assert row["samples_per_sec"] == 8192.0
+    assert row["wall_clock_s"] == 1.0
 
 
 def test_publish_and_load_weights():

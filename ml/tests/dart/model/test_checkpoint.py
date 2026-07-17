@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-import torch
-
 import numpy as np
-
+import torch
+from guandan.dart.config import (
+    MODEL_TYPE_DART,
+    MODEL_TYPE_GUANZERO,
+    QNetConfig,
+    TrainConfig,
+)
 from guandan.dart.data.buffer import RoleAwareReplayBuffer
-from guandan.dart.model.checkpoint import load_checkpoint, save_checkpoint, save_checkpoint_dart
-from guandan.dart.config import MODEL_TYPE_DART, MODEL_TYPE_GUANZERO, QNetConfig, TrainConfig
+from guandan.dart.model.checkpoint import (
+    load_checkpoint,
+    save_checkpoint,
+    save_checkpoint_dart,
+)
 from guandan.dart.model.encoding.role_encoder import ROLE_ENCODE_CHANNEL_SHAPES
 from guandan.dart.model.q_network import DartQNet, DartQNetConfig, init_guanzero_nets
 from guandan.dart.runtime.learners.dart import DartLearner
@@ -16,6 +23,8 @@ def test_checkpoint_roundtrip_saves_config_and_all_seat_weights(tmp_path):
     cfg = TrainConfig(
         model_type=MODEL_TYPE_GUANZERO,
         qnet=QNetConfig(hidden_lstm=16, hidden_mlp=32, n_mlp_layers=2),
+        batch_size=4096,
+        batch_size_semantics="total",
     )
     q_nets = init_guanzero_nets(cfg.qnet)
     for param in q_nets[0].parameters():
@@ -27,6 +36,7 @@ def test_checkpoint_roundtrip_saves_config_and_all_seat_weights(tmp_path):
     ckpt = load_checkpoint(path)
     assert ckpt["episode"] == 12
     assert ckpt["config"]["qnet"]["hidden_lstm"] == 16
+    assert ckpt["config"]["batch_size_semantics"] == "total"
     assert set(ckpt["q_nets"]) == {0, 1, 2, 3}
 
     loaded = init_guanzero_nets(cfg.qnet)

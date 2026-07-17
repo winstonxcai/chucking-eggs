@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import glob
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from guandan.dart.config import (
     load_config_from_yaml,
 )
 from guandan.dart.model.q_network import DartQNetConfig
+from guandan.dart.runtime.train import _parse_args
 
 
 def test_from_flat_dict_accepts_nested_dicts_and_dataclass_instances():
@@ -65,6 +67,98 @@ def test_yaml_and_cli_loading_apply_precedence(tmp_path):
     assert cfg.qnet.hidden_lstm == 16
     assert cfg.epsilon.start == 0.5
     assert cfg.n_actors == 2
+
+
+def test_cli_checkpoint_interval_override(tmp_path, monkeypatch):
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump({"checkpoint_every_updates": 25_000}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "guandan.dart",
+            "--config",
+            str(path),
+            "--checkpoint-every-updates",
+            "1000",
+        ],
+    )
+
+    cfg, resume = _parse_args()
+
+    assert cfg.checkpoint_every_updates == 1000
+    assert resume is None
+
+
+def test_yaml_base_config_deep_merges_and_child_wins(tmp_path):
+    base = tmp_path / "base.yaml"
+    base.write_text(yaml.safe_dump({
+        "n_actors": 4,
+        "device": "cpu",
+        "eval": {"enabled": False, "n_eval_games_per_opponent": 1000},
+        "opponents": {"episode_mix": {"self_play": 0.5}},
+    }))
+    child = tmp_path / "child.yaml"
+    child.write_text(yaml.safe_dump({
+        "base_config": "base.yaml",
+        "n_actors": 2,
+        "eval": {"n_eval_games_per_opponent": 2000},
+        "opponents": {"episode_mix": {"hard_bot": 0.5}},
+    }))
+
+    cfg = load_config_from_yaml(child)
+
+    assert cfg.n_actors == 2
+    assert cfg.device == "cpu"
+    assert cfg.eval.enabled is False
+    assert cfg.eval.n_eval_games_per_opponent == 2000
+    assert cfg.opponents.episode_mix.self_play == 0.5
+    assert cfg.opponents.episode_mix.hard_bot == 0.5
+
+
+def test_yaml_base_config_rejects_missing_base(tmp_path):
+    child = tmp_path / "child.yaml"
+    child.write_text("base_config: missing.yaml\n")
+
+    with pytest.raises(FileNotFoundError, match="config file does not exist"):
+        load_config_from_yaml(child)
+
+
+def test_yaml_base_config_rejects_cycles(tmp_path):
+    first = tmp_path / "first.yaml"
+    second = tmp_path / "second.yaml"
+    first.write_text("base_config: second.yaml\n")
+    second.write_text("base_config: first.yaml\n")
+
+    with pytest.raises(ValueError, match="base_config cycle detected"):
+        load_config_from_yaml(first)
+
+
+def test_l4_ablation_configs_share_all_non_experimental_settings():
+    paths = [
+        Path("ml/src/guandan/dart/configs/ablation_l4_dart_partner_visible_10h.yaml"),
+        Path("ml/src/guandan/dart/configs/ablation_l4_dart_partner_hidden_10h.yaml"),
+        Path("ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_visible_10h.yaml"),
+        Path("ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_hidden_10h.yaml"),
+    ]
+    configs = [load_config_from_yaml(path) for path in paths]
+
+    assert {cfg.model_type for cfg in configs} == {MODEL_TYPE_DART, MODEL_TYPE_GUANZERO}
+    assert {cfg.qnet.is_partner_visible for cfg in configs} == {True, False}
+    assert all(cfg.learner_samples_per_update == 4096 for cfg in configs)
+    assert all(cfg.eval.enabled for cfg in configs)
+    assert all(cfg.eval.n_eval_games_per_opponent == 1000 for cfg in configs)
+
+    def shared_config(cfg):
+        raw = dataclasses.asdict(cfg)
+        raw.pop("model_type")
+        raw["qnet"].pop("is_partner_visible")
+        return raw
+
+    assert all(shared_config(cfg) == shared_config(configs[0]) for cfg in configs[1:])
+
+    serialized = dataclasses.asdict(configs[0])
+    assert "base_config" not in serialized
 
 
 def test_cpu_smoke_config_is_tiny_and_portable():
@@ -121,6 +215,50 @@ def test_model_type_default_and_invalid():
         raise AssertionError("invalid model_type should raise")
 
 
+def test_batch_semantics_normalize_learner_samples():
+    dart = TrainConfig(model_type=MODEL_TYPE_DART, batch_size=4096)
+    assert dart.batch_size_per_seat == 4096
+    assert dart.learner_samples_per_update == 4096
+
+    guanzero_total = TrainConfig(
+        model_type=MODEL_TYPE_GUANZERO,
+        batch_size=4096,
+        batch_size_semantics="total",
+    )
+    assert guanzero_total.batch_size_per_seat == 1024
+    assert guanzero_total.learner_samples_per_update == 4096
+
+    guanzero_legacy = TrainConfig(
+        model_type=MODEL_TYPE_GUANZERO,
+        batch_size=4096,
+        batch_size_semantics="per_seat",
+    )
+    assert guanzero_legacy.batch_size_per_seat == 4096
+    assert guanzero_legacy.learner_samples_per_update == 16384
+
+
+def test_guanzero_total_batch_must_be_divisible_by_four():
+    with pytest.raises(ValueError, match="divisible by the number of seats"):
+        TrainConfig(
+            model_type=MODEL_TYPE_GUANZERO,
+            batch_size=4095,
+            batch_size_semantics="total",
+        )
+
+
+def test_batch_semantics_roundtrip_through_nested_config():
+    cfg = TrainConfig(
+        model_type=MODEL_TYPE_GUANZERO,
+        batch_size=4096,
+        batch_size_semantics="total",
+    )
+
+    roundtripped = TrainConfig.from_flat_dict(dataclasses.asdict(cfg))
+    assert roundtripped.batch_size_semantics == "total"
+    assert roundtripped.batch_size_per_seat == 1024
+    assert roundtripped.learner_samples_per_update == 4096
+
+
 def test_checkpoint_save_type_validation():
     assert TrainConfig(checkpoint_save_type="weight").checkpoint_save_type == "weight"
     assert TrainConfig(checkpoint_save_type="full").checkpoint_save_type == "full"
@@ -146,6 +284,14 @@ def test_eval_timeout_config_parses_and_validates():
 
     with pytest.raises(ValueError, match="eval.max_wait_s"):
         TrainConfig.from_flat_dict({"eval": {"max_wait_s": 0}})
+
+
+def test_max_train_seconds_parses_and_validates():
+    cfg = TrainConfig.from_flat_dict({"max_train_seconds": 36000})
+    assert cfg.max_train_seconds == 36000
+
+    with pytest.raises(ValueError, match="max_train_seconds must be >= 0"):
+        TrainConfig(max_train_seconds=-1)
 
 
 def test_model_type_dart_loads_and_factory(tmp_path):

@@ -1,0 +1,415 @@
+{
+  "opponents": [
+    "yaoji",
+    "ez",
+    "jidan",
+    "strategic"
+  ],
+  "provenance_note": "Modal runs were launched from the working tree before commit 7638c6e; 7638c6e records the secured equivalent ablation implementation.",
+  "runs": {
+    "dart_hidden": {
+      "average_samples_per_sec": 14250.58749673613,
+      "final_macro_win_rate": 0.58,
+      "final_results": {
+        "ez": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0158,
+          "wins": 519,
+          "wins_even": 271,
+          "wins_odd": 248,
+          "wr": 0.519,
+          "wr_even": 0.542,
+          "wr_odd": 0.496
+        },
+        "jidan": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0156,
+          "wins": 582,
+          "wins_even": 302,
+          "wins_odd": 280,
+          "wr": 0.582,
+          "wr_even": 0.604,
+          "wr_odd": 0.56
+        },
+        "strategic": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0145,
+          "wins": 700,
+          "wins_even": 368,
+          "wins_odd": 332,
+          "wr": 0.7,
+          "wr_even": 0.736,
+          "wr_odd": 0.664
+        },
+        "yaoji": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0158,
+          "wins": 519,
+          "wins_even": 276,
+          "wins_odd": 243,
+          "wr": 0.519,
+          "wr_even": 0.552,
+          "wr_odd": 0.486
+        }
+      },
+      "is_partner_visible": false,
+      "learner_samples_total": 513024000,
+      "learner_updates": 125250,
+      "model_type": "Dart",
+      "parameter_count": 4723716,
+      "samples_per_sec": 13304.9,
+      "seed": 0,
+      "trajectory": [
+        {
+          "eval_file": "update_00025000.json",
+          "learner_samples_total": 102400000,
+          "macro_win_rate": 0.475,
+          "samples_per_sec": 1846.1,
+          "updates": 25000,
+          "wall_clock_s": 6740.8
+        },
+        {
+          "eval_file": "update_00050000.json",
+          "learner_samples_total": 204800000,
+          "macro_win_rate": 0.53125,
+          "samples_per_sec": 1866.1,
+          "updates": 50000,
+          "wall_clock_s": 13702.7
+        },
+        {
+          "eval_file": "update_00075000.json",
+          "learner_samples_total": 307200000,
+          "macro_win_rate": 0.5445,
+          "samples_per_sec": 1673.2,
+          "updates": 75000,
+          "wall_clock_s": 20856.9
+        },
+        {
+          "eval_file": "update_00100000.json",
+          "learner_samples_total": 409600000,
+          "macro_win_rate": 0.58025,
+          "samples_per_sec": 1765.2,
+          "updates": 100000,
+          "wall_clock_s": 27937.7
+        },
+        {
+          "eval_file": "update_00125000.json",
+          "learner_samples_total": 512000000,
+          "macro_win_rate": 0.5725,
+          "samples_per_sec": 1615.7,
+          "updates": 125000,
+          "wall_clock_s": 35942.4
+        },
+        {
+          "eval_file": "final.json",
+          "learner_samples_total": 513024000,
+          "macro_win_rate": 0.58,
+          "samples_per_sec": 13304.9,
+          "updates": 125250,
+          "wall_clock_s": 36000.2
+        }
+      ],
+      "wall_clock_s": 36000.2
+    },
+    "dart_visible": {
+      "average_samples_per_sec": 14901.806706815709,
+      "final_macro_win_rate": 0.577,
+      "final_results": {
+        "ez": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0158,
+          "wins": 510,
+          "wins_even": 274,
+          "wins_odd": 236,
+          "wr": 0.51,
+          "wr_even": 0.548,
+          "wr_odd": 0.472
+        },
+        "jidan": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0156,
+          "wins": 590,
+          "wins_even": 312,
+          "wins_odd": 278,
+          "wr": 0.59,
+          "wr_even": 0.624,
+          "wr_odd": 0.556
+        },
+        "strategic": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0143,
+          "wins": 711,
+          "wins_even": 374,
+          "wins_odd": 337,
+          "wr": 0.711,
+          "wr_even": 0.748,
+          "wr_odd": 0.674
+        },
+        "yaoji": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0158,
+          "wins": 497,
+          "wins_even": 274,
+          "wins_odd": 223,
+          "wr": 0.497,
+          "wr_even": 0.548,
+          "wr_odd": 0.446
+        }
+      },
+      "is_partner_visible": true,
+      "learner_samples_total": 536453120,
+      "learner_updates": 130970,
+      "model_type": "Dart",
+      "parameter_count": 4723716,
+      "samples_per_sec": 12313.5,
+      "seed": 0,
+      "trajectory": [
+        {
+          "eval_file": "update_00025000.json",
+          "learner_samples_total": 102400000,
+          "macro_win_rate": 0.489,
+          "samples_per_sec": 1759.2,
+          "updates": 25000,
+          "wall_clock_s": 6520.5
+        },
+        {
+          "eval_file": "update_00050000.json",
+          "learner_samples_total": 204800000,
+          "macro_win_rate": 0.51575,
+          "samples_per_sec": 1975.1,
+          "updates": 50000,
+          "wall_clock_s": 12222.5
+        },
+        {
+          "eval_file": "update_00075000.json",
+          "learner_samples_total": 307200000,
+          "macro_win_rate": 0.5625,
+          "samples_per_sec": 1827.6,
+          "updates": 75000,
+          "wall_clock_s": 18013.3
+        },
+        {
+          "eval_file": "update_00100000.json",
+          "learner_samples_total": 409600000,
+          "macro_win_rate": 0.57625,
+          "samples_per_sec": 1576.8,
+          "updates": 100000,
+          "wall_clock_s": 25740.8
+        },
+        {
+          "eval_file": "update_00125000.json",
+          "learner_samples_total": 512000000,
+          "macro_win_rate": 0.57775,
+          "samples_per_sec": 1602.6,
+          "updates": 125000,
+          "wall_clock_s": 34098.9
+        },
+        {
+          "eval_file": "final.json",
+          "learner_samples_total": 536453120,
+          "macro_win_rate": 0.577,
+          "samples_per_sec": 12313.5,
+          "updates": 130970,
+          "wall_clock_s": 35999.2
+        }
+      ],
+      "wall_clock_s": 35999.2
+    },
+    "guanzero_hidden": {
+      "average_samples_per_sec": 6506.355529627469,
+      "final_macro_win_rate": 0.52575,
+      "final_results": {
+        "ez": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0158,
+          "wins": 492,
+          "wins_even": 244,
+          "wins_odd": 248,
+          "wr": 0.492,
+          "wr_even": 0.488,
+          "wr_odd": 0.496
+        },
+        "jidan": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0158,
+          "wins": 501,
+          "wins_even": 265,
+          "wins_odd": 236,
+          "wr": 0.501,
+          "wr_even": 0.53,
+          "wr_odd": 0.472
+        },
+        "strategic": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0149,
+          "wins": 670,
+          "wins_even": 345,
+          "wins_odd": 325,
+          "wr": 0.67,
+          "wr_even": 0.69,
+          "wr_odd": 0.65
+        },
+        "yaoji": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0157,
+          "wins": 440,
+          "wins_even": 217,
+          "wins_odd": 223,
+          "wr": 0.44,
+          "wr_even": 0.434,
+          "wr_odd": 0.446
+        }
+      },
+      "is_partner_visible": false,
+      "learner_samples_total": 234209280,
+      "learner_updates": 57180,
+      "model_type": "GuanZero",
+      "parameter_count": 28393476,
+      "samples_per_sec": 5500.3,
+      "seed": 0,
+      "trajectory": [
+        {
+          "eval_file": "update_00025000.json",
+          "learner_samples_total": 102400000,
+          "macro_win_rate": 0.462,
+          "samples_per_sec": 1224.6,
+          "updates": 25000,
+          "wall_clock_s": 15790.1
+        },
+        {
+          "eval_file": "update_00050000.json",
+          "learner_samples_total": 204800000,
+          "macro_win_rate": 0.4975,
+          "samples_per_sec": 1202.1,
+          "updates": 50000,
+          "wall_clock_s": 31606.4
+        },
+        {
+          "eval_file": "final.json",
+          "learner_samples_total": 234209280,
+          "macro_win_rate": 0.52575,
+          "samples_per_sec": 5500.3,
+          "updates": 57180,
+          "wall_clock_s": 35997.0
+        }
+      ],
+      "wall_clock_s": 35997.0
+    },
+    "guanzero_visible": {
+      "average_samples_per_sec": 8246.727871220433,
+      "final_macro_win_rate": 0.50025,
+      "final_results": {
+        "ez": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0158,
+          "wins": 461,
+          "wins_even": 234,
+          "wins_odd": 227,
+          "wr": 0.461,
+          "wr_even": 0.468,
+          "wr_odd": 0.454
+        },
+        "jidan": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0158,
+          "wins": 482,
+          "wins_even": 247,
+          "wins_odd": 235,
+          "wr": 0.482,
+          "wr_even": 0.494,
+          "wr_odd": 0.47
+        },
+        "strategic": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0147,
+          "wins": 683,
+          "wins_even": 353,
+          "wins_odd": 330,
+          "wr": 0.683,
+          "wr_even": 0.706,
+          "wr_odd": 0.66
+        },
+        "yaoji": {
+          "games_even": 500,
+          "games_odd": 500,
+          "n_games": 1000,
+          "se": 0.0153,
+          "wins": 375,
+          "wins_even": 190,
+          "wins_odd": 185,
+          "wr": 0.375,
+          "wr_even": 0.38,
+          "wr_odd": 0.37
+        }
+      },
+      "is_partner_visible": true,
+      "learner_samples_total": 296878080,
+      "learner_updates": 72480,
+      "model_type": "GuanZero",
+      "parameter_count": 28393476,
+      "samples_per_sec": 9046.3,
+      "seed": 0,
+      "trajectory": [
+        {
+          "eval_file": "update_00025000.json",
+          "learner_samples_total": 102400000,
+          "macro_win_rate": 0.43125,
+          "samples_per_sec": 1304.6,
+          "updates": 25000,
+          "wall_clock_s": 13121.2
+        },
+        {
+          "eval_file": "update_00050000.json",
+          "learner_samples_total": 204800000,
+          "macro_win_rate": 0.47875,
+          "samples_per_sec": 1325.5,
+          "updates": 50000,
+          "wall_clock_s": 24929.4
+        },
+        {
+          "eval_file": "final.json",
+          "learner_samples_total": 296878080,
+          "macro_win_rate": 0.50025,
+          "samples_per_sec": 9046.3,
+          "updates": 72480,
+          "wall_clock_s": 35999.5
+        }
+      ],
+      "wall_clock_s": 35999.5
+    }
+  },
+  "seed": 0,
+  "source_commit": null,
+  "study": "ablation_l4_10h",
+  "training_budget_s": 36000
+}

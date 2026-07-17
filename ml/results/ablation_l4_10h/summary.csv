@@ -1,0 +1,5 @@
+cell,model_type,is_partner_visible,parameter_count,final_macro_win_rate,learner_updates,wall_clock_s,learner_samples_total,average_samples_per_sec
+dart_visible,Dart,True,4723716,0.577,130970,35999.2,536453120,14901.806706815709
+dart_hidden,Dart,False,4723716,0.58,125250,36000.2,513024000,14250.58749673613
+guanzero_visible,GuanZero,True,28393476,0.50025,72480,35999.5,296878080,8246.727871220433
+guanzero_hidden,GuanZero,False,28393476,0.52575,57180,35997.0,234209280,6506.355529627469

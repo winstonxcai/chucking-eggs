@@ -1,0 +1,130 @@
+{
+  "artifact_commit": "7638c6e",
+  "provenance_note": "Modal runs were launched from the working tree before commit 7638c6e; 7638c6e records the secured equivalent ablation implementation.",
+  "runs": {
+    "dart_hidden": {
+      "artifacts": {
+        "dart_hidden/config.json": "f60159277e7e1341a3baf63d0e3ce3036512cb8742077e933307ecd8af2a001e",
+        "dart_hidden/final.json": "5f9cac83b12221037a72cde5c40aba0998d5baed0e95de40b6827f9ce2cebd8e",
+        "dart_hidden/metrics_summary.json": "7d909317facb4af9c3904cccf8f71f68c3e6968da137b7180ca4aba7734ce8ec",
+        "dart_hidden/update_00025000.json": "d7f9fc3dc8c0df1d54030fe844c6ba408b183d1d2019371067a958feada71748",
+        "dart_hidden/update_00050000.json": "5195b775d14a6f8fdb0fc09b04c38d98afbe0a004dc8317d3210bd787320ddd7",
+        "dart_hidden/update_00075000.json": "b26e654296e6358da9c21626ea9cf83d22f3ec69227a729d63b7d8f337e6d897",
+        "dart_hidden/update_00100000.json": "cb327f34a4d197857c88e80ced7ebfff9ea88e3d49c236c89ec8975df0d0105d",
+        "dart_hidden/update_00125000.json": "b918a16038175a7db004e7ef447941cdbaf89f1496d5018aeea925f654f67478"
+      },
+      "average_samples_per_sec": 14250.58749673613,
+      "evaluation": {
+        "games_per_opponent": 1000,
+        "opponents": [
+          "yaoji",
+          "ez",
+          "jidan",
+          "strategic"
+        ]
+      },
+      "hardware": "Modal L4 + 32 vCPU actors",
+      "is_partner_visible": false,
+      "learner_samples_total": 513024000,
+      "learner_updates": 125250,
+      "model_type": "Dart",
+      "seed": 0,
+      "training_budget_s": 36000,
+      "wall_clock_s": 36000.2
+    },
+    "dart_visible": {
+      "artifacts": {
+        "dart_visible/config.json": "748fc362ca92212dfcb97c139ec9420ca979486b7ad91cc1f149bb4c781277bc",
+        "dart_visible/final.json": "fe11e9d5e45cd3645c20077645f71f28c14ab56d278e4527dc1288f30c55677c",
+        "dart_visible/metrics_summary.json": "ca4f36fe663270b4678a0472935960c76c2b2ade72fa1dd41cdc420b7796984b",
+        "dart_visible/update_00025000.json": "1bff2dfa63dbee6baf27757e8d17fabdea253b099826409b5435e9a78b8d7ebe",
+        "dart_visible/update_00050000.json": "d14b5a942674a01fa9ca237a78b489e77562322da7987a574be1663da3046d43",
+        "dart_visible/update_00075000.json": "ef01c0c39cf7e45b47d14a48d98931ca119312b1ef9ae083fda72b315c8f3e93",
+        "dart_visible/update_00100000.json": "761fb812c48034892eec5508f840afe5af7c2f946084825b495ed321f8cdd461",
+        "dart_visible/update_00125000.json": "9270d2c831f880f003154bd4c3dc2af7cd96e7f4510e3aa6b5285a23b9eb8ae8"
+      },
+      "average_samples_per_sec": 14901.806706815709,
+      "evaluation": {
+        "games_per_opponent": 1000,
+        "opponents": [
+          "yaoji",
+          "ez",
+          "jidan",
+          "strategic"
+        ]
+      },
+      "hardware": "Modal L4 + 32 vCPU actors",
+      "is_partner_visible": true,
+      "learner_samples_total": 536453120,
+      "learner_updates": 130970,
+      "model_type": "Dart",
+      "seed": 0,
+      "training_budget_s": 36000,
+      "wall_clock_s": 35999.2
+    },
+    "guanzero_hidden": {
+      "artifacts": {
+        "guanzero_hidden/config.json": "9fa149ab68cb69a1d378663711f35c9ae7735b9d328e1fdd5d5faea5161c541a",
+        "guanzero_hidden/final.json": "a358f0d0434053685ad6a2ca2743313de43fe01cf1d3b591e98dea69b614ba76",
+        "guanzero_hidden/metrics_summary.json": "f6ae54d745d05f5fffbe9320b4b12359ee5c44ed249fc72882a9534883b20c7c",
+        "guanzero_hidden/update_00025000.json": "b4dc5d44476fabcb67f550ee328cdc0843603483f3aadaf5f15f7db20bf3a3b8",
+        "guanzero_hidden/update_00050000.json": "fb97bb36438d275ba9cca7e83a2bfec57c2384579521e7215a6ae2ee6debf64f"
+      },
+      "average_samples_per_sec": 6506.355529627469,
+      "evaluation": {
+        "games_per_opponent": 1000,
+        "opponents": [
+          "yaoji",
+          "ez",
+          "jidan",
+          "strategic"
+        ]
+      },
+      "hardware": "Modal L4 + 32 vCPU actors",
+      "is_partner_visible": false,
+      "learner_samples_total": 234209280,
+      "learner_updates": 57180,
+      "model_type": "GuanZero",
+      "seed": 0,
+      "training_budget_s": 36000,
+      "wall_clock_s": 35997.0
+    },
+    "guanzero_visible": {
+      "artifacts": {
+        "guanzero_visible/config.json": "e053c0465296c47e54e25a9e3c7b807003bc0e4a8c3660d00df19d21789bb50f",
+        "guanzero_visible/final.json": "ce68ef082a9170360c52633d49d966f20025130580ab3cc7d7d6d220f45ae36a",
+        "guanzero_visible/metrics_summary.json": "d15efe1983a064f889b027418158ff7708dcd7c49daf9c97952593dd6ea367e3",
+        "guanzero_visible/update_00025000.json": "753a24604eceba248bb8669f0fedd701b2debd828e141cd08726307999dcb3b2",
+        "guanzero_visible/update_00050000.json": "1b03884c66d594a400e09a5be94aac0721769fe36c63c185a1e67e1cf365de9d"
+      },
+      "average_samples_per_sec": 8246.727871220433,
+      "evaluation": {
+        "games_per_opponent": 1000,
+        "opponents": [
+          "yaoji",
+          "ez",
+          "jidan",
+          "strategic"
+        ]
+      },
+      "hardware": "Modal L4 + 32 vCPU actors",
+      "is_partner_visible": true,
+      "learner_samples_total": 296878080,
+      "learner_updates": 72480,
+      "model_type": "GuanZero",
+      "seed": 0,
+      "training_budget_s": 36000,
+      "wall_clock_s": 35999.5
+    }
+  },
+  "source_commit": null,
+  "study": "ablation_l4_10h",
+  "top_level_artifacts": {
+    "README.md": "65eb58ee26e88b53f60009a957eaf43dd4aabeeca615cbe774e39692a846e45a",
+    "docs/assets/ablation_l4_factorial_contrasts.png": "b855e9304044a54c2a8c05187194beebb2d58d1ef3bb271924b1569dc2c36bda",
+    "docs/assets/ablation_l4_winrate_effective_samples.png": "ac9f68dd35524bf3585319a96d0aa05ce91954de65f26d9fe42b399f0a89e780",
+    "docs/assets/ablation_l4_winrate_wallclock.png": "852161e0dfe2345e57eafe340d15500169b1aab622cb11659b9a11c956ade371",
+    "summary.csv": "7e5a42bc85622ead071ec94a55a6c93b0381f49d25f7543e915357269596a07a",
+    "summary.json": "f07a2c3f495f5ba2a1595bf86439bba14f95df9170252f475a5b89628de50ec7"
+  }
+}

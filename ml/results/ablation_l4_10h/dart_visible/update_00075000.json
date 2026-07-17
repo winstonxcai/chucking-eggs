@@ -1,0 +1,59 @@
+{
+  "checkpoint": "/runs/dart/ablation_l4_dart_partner_visible_10h_seed0/checkpoints/update_00075000.pt",
+  "opponents": [
+    "yaoji",
+    "ez",
+    "jidan",
+    "strategic"
+  ],
+  "results": {
+    "yaoji": {
+      "n_games": 1000,
+      "wins": 471,
+      "wr": 0.471,
+      "se": 0.0158,
+      "games_even": 500,
+      "games_odd": 500,
+      "wins_even": 241,
+      "wins_odd": 230,
+      "wr_even": 0.482,
+      "wr_odd": 0.46
+    },
+    "ez": {
+      "n_games": 1000,
+      "wins": 508,
+      "wr": 0.508,
+      "se": 0.0158,
+      "games_even": 500,
+      "games_odd": 500,
+      "wins_even": 260,
+      "wins_odd": 248,
+      "wr_even": 0.52,
+      "wr_odd": 0.496
+    },
+    "jidan": {
+      "n_games": 1000,
+      "wins": 571,
+      "wr": 0.571,
+      "se": 0.0157,
+      "games_even": 500,
+      "games_odd": 500,
+      "wins_even": 302,
+      "wins_odd": 269,
+      "wr_even": 0.604,
+      "wr_odd": 0.538
+    },
+    "strategic": {
+      "n_games": 1000,
+      "wins": 700,
+      "wr": 0.7,
+      "se": 0.0145,
+      "games_even": 500,
+      "games_odd": 500,
+      "wins_even": 364,
+      "wins_odd": 336,
+      "wr_even": 0.728,
+      "wr_odd": 0.672
+    }
+  }
+}

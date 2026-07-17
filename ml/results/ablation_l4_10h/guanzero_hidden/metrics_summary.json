@@ -1,0 +1,29 @@
+{
+  "cell": "guanzero_hidden",
+  "trajectory": [
+    {
+      "eval_file": "update_00025000.json",
+      "learner_samples_total": 102400000,
+      "macro_win_rate": 0.462,
+      "samples_per_sec": 1224.6,
+      "updates": 25000,
+      "wall_clock_s": 15790.1
+    },
+    {
+      "eval_file": "update_00050000.json",
+      "learner_samples_total": 204800000,
+      "macro_win_rate": 0.4975,
+      "samples_per_sec": 1202.1,
+      "updates": 50000,
+      "wall_clock_s": 31606.4
+    },
+    {
+      "eval_file": "final.json",
+      "learner_samples_total": 234209280,
+      "macro_win_rate": 0.52575,
+      "samples_per_sec": 5500.3,
+      "updates": 57180,
+      "wall_clock_s": 35997.0
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 # DART Model Card
 
-This model card describes the 1.25M-update DART checkpoint referenced by the
-README. The checkpoint and release evaluation evidence are stored in
-`ml/results/release_1_25m/`.
+**DART** means **Dynamic Action-Relative Routing for Tricks**. This model card
+describes the 1.25M-update checkpoint referenced by the README. The checkpoint
+and release evaluation evidence are stored in `ml/results/release_1_25m/`.
 
 ## Model
 
@@ -21,8 +21,8 @@ rule-based bots and for local inference through `DartBot.load()`.
 It is not a human-deployable hidden-information policy. The reported checkpoint
 uses partner-visible state and includes an `others_hand` channel that holds
 the *union* of the two opponent hands — i.e., the deck-complement of own +
-partner, not per-opponent oracle information. See
-[TRADEOFFS.md](TRADEOFFS.md) §10 for the full discussion.
+partner, not per-opponent oracle information. See the [research note](RESEARCH.md)
+for the information-setting discussion.
 
 ## Training Data and Procedure
 
@@ -57,7 +57,7 @@ uv run guandan-eval-dart \
   openly released learned partner-visible Guan Dan agent.
 - Partner-visible observation with a deck-complement `others_hand` feature;
   not strict hidden information, but also not per-opponent oracle. See
-  [TRADEOFFS.md](TRADEOFFS.md) §10.
+  [RESEARCH.md](RESEARCH.md).
 - Vendored competition bots need original-author license confirmation before a
   broad public release.
 

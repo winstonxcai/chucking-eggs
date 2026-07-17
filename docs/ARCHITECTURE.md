@@ -1,10 +1,10 @@
 # Architecture
 
-DART is the production training path. New training configs should use
-`model_type: Dart`, the role-aware encoder, and batched local actor inference.
-Centralized GPU inference-server variants were tested, including cross-actor
-lane batching, but local actor-side batching was faster for this model because
-it amortizes Q-forward work without IPC.
+**DART** is **Dynamic Action-Relative Routing for Tricks**. The production
+training path uses a role-aware encoder and batched local actor inference.
+Centralized GPU inference-server variants were tested, but local actor-side
+batching was faster for this model because it amortizes Q-forward work without
+IPC.
 
 Key entry points:
 
@@ -84,7 +84,22 @@ seat. Periodic checkpoints may be weight-only for storage efficiency; clean
 shutdown writes `final.pt` as a full resume checkpoint including optimizer,
 replay, learner RNG, and actor RNG state.
 
-## Supporting Docs
+## Operational invariants
 
-- [Debugging](DEBUGGING.md)
-- [Profiling](PROFILING.md)
+- The bounded actor queue never silently drops samples; a persistent full
+  queue stops the run.
+- The learner owns the authoritative model, optimizer, replay, and checkpoint
+  state.
+- `batch_size` is interpreted through the persisted batch-size semantics. The
+  ablation protocol compares effective learner samples, not raw update count.
+- A duration-only run exits through the same clean-shutdown path as an
+  update-limited run and writes a full `final.pt`.
+- Checkpoint evaluation uses a bounded handoff with a timeout, so evaluation
+  cannot deadlock training indefinitely.
+
+## Supporting documents
+
+- [Research note](RESEARCH.md)
+- [Reproducibility](REPRODUCIBILITY.md)
+- [Evaluation](EVALUATION.md)
+- [Development](DEVELOPMENT.md)

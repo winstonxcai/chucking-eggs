@@ -1,0 +1,53 @@
+{
+  "cell": "dart_visible",
+  "trajectory": [
+    {
+      "eval_file": "update_00025000.json",
+      "learner_samples_total": 102400000,
+      "macro_win_rate": 0.489,
+      "samples_per_sec": 1759.2,
+      "updates": 25000,
+      "wall_clock_s": 6520.5
+    },
+    {
+      "eval_file": "update_00050000.json",
+      "learner_samples_total": 204800000,
+      "macro_win_rate": 0.51575,
+      "samples_per_sec": 1975.1,
+      "updates": 50000,
+      "wall_clock_s": 12222.5
+    },
+    {
+      "eval_file": "update_00075000.json",
+      "learner_samples_total": 307200000,
+      "macro_win_rate": 0.5625,
+      "samples_per_sec": 1827.6,
+      "updates": 75000,
+      "wall_clock_s": 18013.3
+    },
+    {
+      "eval_file": "update_00100000.json",
+      "learner_samples_total": 409600000,
+      "macro_win_rate": 0.57625,
+      "samples_per_sec": 1576.8,
+      "updates": 100000,
+      "wall_clock_s": 25740.8
+    },
+    {
+      "eval_file": "update_00125000.json",
+      "learner_samples_total": 512000000,
+      "macro_win_rate": 0.57775,
+      "samples_per_sec": 1602.6,
+      "updates": 125000,
+      "wall_clock_s": 34098.9
+    },
+    {
+      "eval_file": "final.json",
+      "learner_samples_total": 536453120,
+      "macro_win_rate": 0.577,
+      "samples_per_sec": 12313.5,
+      "updates": 130970,
+      "wall_clock_s": 35999.2
+    }
+  ]
+}

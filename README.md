@@ -1,575 +1,210 @@
-# DART — Partner-Visible Guan Dan RL Agent
+# DART — Dynamic Action-Relative Routing for Tricks
 
 [![CI](https://github.com/winstonxcai/chucking-eggs/actions/workflows/ci.yml/badge.svg)](https://github.com/winstonxcai/chucking-eggs/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**DART** (Dynamic Action-Relative Routing for Tricks) is a distributed partner-visible Deep Monte Carlo RL agent for **Guan Dan (掼蛋)**, a 4-player, 2v2 team trick-taking card game played with a 108-card double deck.
+DART is a distributed Deep Monte Carlo reinforcement-learning agent for
+cooperative **Guan Dan (掼蛋)**. Guan Dan is a four-player, two-team game with a
+108-card double deck, changing wild cards, large legal-action sets, and sparse
+team-level outcomes. DART studies whether routing decisions by relative trick
+role can provide a compact representation for cooperative play.
 
-Guan Dan is harder than it looks: **108 cards** (vs 52 for most card games), **wild cards that change every round** (the "level card" shifts which rank is wild each hand, making suit relationships non-stationary), and **2v2 team play** where the optimal move often means sacrificing your own position to set up your partner. Standard single-agent RL does not handle this cleanly. DART trains a shared Q-network across 32 parallel actors with trick-position-relative heads, routing each decision by the actor's role in the current trick (leading, 1st responder, across, last) rather than absolute seat.
+This repository is a research artifact first. It contains the training system,
+evaluation protocol, controlled ablations, release evidence, and a playable
+web application as a secondary demonstration surface.
 
-**Author**: Winston Cai · **License**: MIT for original project code; vendored
-competition bots are separately attributed in [NOTICE](NOTICE).
+## Research at a glance
 
-<p align="center">
-  <img src="docs/assets/demo.png" alt="Chucking Eggs gameplay demo" width="760">
-</p>
+The central architectural hypothesis is simple: leading, responding across
+from a partner, and closing a trick are different tactical roles even when the
+absolute seat changes. DART therefore uses one shared Q-network trunk with four
+small trick-position heads. A deterministic router selects the head for the
+acting player's current role.
 
-## TL;DR
+The primary study compares canonical DART and GuanZero under matched Modal L4
+hardware, a ten-hour wall-clock budget, 4,096 effective learner samples per
+update, seed, replay policy, and evaluation protocol. The study is not
+parameter-matched: DART shares its network while GuanZero uses one network per
+seat.
 
-DART is, to our knowledge, the first open partner-visible Guan Dan RL agent with published training and evaluation code. The current checkpoint release is the **1.25M-update L4 run**. It reaches **69.32%** average win rate on the integrated 10,000-game hard-4 eval and **69.49%** on the 5000-game release eval against Yaoji, EZ, Jidan, and Strategic. In the 13-agent rule-bot benchmark, DART achieves the top Glicko-2 rating, outperforming all 12 bundled rule-based bots, including the top three from the [NJUPT 2020 Guan Dan AI Competition](http://gameai.njupt.edu.cn/gameaicompetition/) (Jidan, Yaoji, Lalala).
+## Headline evidence
 
-## Results
+The larger 1.25M-update DART release reaches **69.32%** on the 10,000-game
+hard-4 evaluation and **69.49%** on the 5,000-game release evaluation against
+Yaoji, EZ, Jidan, and Strategic. The complete release evidence is under
+[`ml/results/release_1_25m`](ml/results/release_1_25m).
 
-### Hard-4 Training Run
+The controlled ten-hour ablation is the primary algorithm comparison:
 
-![DART hard-4 win rate trajectory](docs/assets/training_wr.png)
+| Checkpoint | Yaoji | EZ | Jidan | Strategic | Macro average |
+|---|---:|---:|---:|---:|---:|
+| DART, 1.25M updates | 62.65% | 66.25% | 71.43% | 76.95% | **69.32%** |
+| DART, 1.35M updates | 62.74% | 66.16% | 71.45% | 76.69% | 69.26% |
 
-The hard-4 slice is the strongest public rule-bot evaluation set used during
-long runs: Yaoji, EZ, Jidan, and Strategic. Integrated checkpoint evals use
-10,000 paired fixed-deck games per opponent. On tuned Modal L4 resumes,
-roughly 500k learner updates corresponds to one day of training, so the
-trajectory x-axis is also a coarse wall-clock proxy after warmup.
-
-| Checkpoint | Yaoji | EZ | Jidan | Strategic | Hard-4 Avg |
-|------------|------:|---:|------:|----------:|-----------:|
-| 1.25M updates | 62.65% | 66.25% | 71.43% | 76.95% | **69.32%** |
-| 1.35M updates | 62.74% | 66.16% | 71.45% | 76.69% | 69.26% |
-
-### Release Checkpoint Benchmark
-
-The checkpoint release uses `update_01250000.pt` from the L4 run. The table
-below is a fresh 5000-game paired fixed-deck eval against every bundled
-rule-based bot. Standard errors are binomial standard errors over games.
-
-| Opponent | Win Rate | Wins |
-|----------|---------:|-----:|
-| Random | 99.9% ± 0.1% | 4993/5000 |
-| Greedy | 99.1% ± 0.1% | 4953/5000 |
-| Heuristic | 93.0% ± 0.4% | 4649/5000 |
-| Strategic | 77.6% ± 0.6% | 3878/5000 |
-| XingDream | 95.6% ± 0.3% | 4779/5000 |
-| Lalala | 93.0% ± 0.4% | 4650/5000 |
-| Liuzha | 93.2% ± 0.4% | 4659/5000 |
-| Hulalala | 93.0% ± 0.4% | 4650/5000 |
-| Yaoji | 63.1% ± 0.7% | 3157/5000 |
-| Jidan | 71.4% ± 0.6% | 3570/5000 |
-| EZ | 65.9% ± 0.7% | 3293/5000 |
-| WJSD | 88.8% ± 0.4% | 4439/5000 |
-
-Glicko-2 ratings are derived from the existing 5000-game rule-bot round-robin
-with the new 1.25M DART matchups injected; the rule-bot matrix was not rerun.
-
-| Bot | Glicko-2 | Source |
-|-----|----------|--------|
-| **DART** | **1852** | This project |
-| Jidan | 1744 | NJUPT 2020 2nd place (NUAA) |
-| Yaoji | 1742 | NJUPT 2020 3rd place (NUAA) |
-| EZ | 1667 | NJUPT 2020 3rd place (HYIT) |
-| Strategic | 1597 | Hand-written heuristic (authored by Winston Cai) |
-| XingDream | 1485 | NJUPT 2020 |
-| Heuristic | 1430 | Hand-written heuristic (authored by Winston Cai) |
-| Lalala | 1406 | NJUPT 2020 1st place (SEU) |
-| Hulalala | 1403 | NJUPT 2020 3rd place (SEU) |
-| Liuzha | 1401 | NJUPT 2020 2nd place (SEU) |
-| Greedy | 1361 | Hand-written baseline (authored by Winston Cai) |
-| WJSD | 1327 | NJUPT 2020 3rd place (SAU) |
-| Random | 1132 | |
-
-## Method Summary
-
-DART follows the DouZero-style Deep Monte Carlo pattern: actors generate complete games, the learner trains Q-values from terminal returns, and the model scores legal actions directly rather than learning a separate policy head. The learning objective is mean squared error, `MSE(Q(s_t, a_t), G_t)`, where `G_t` is the Monte Carlo return assigned after the game ends. The key architectural choice is action-relative routing: one shared network body feeds four Q-heads keyed by the player's role in the current trick (leading / 1st responder / across / last responder), which makes the model's output space align with how control actually changes during Guan Dan tricks. This is a lightweight MoE-inspired routing pattern at the output-head level: the router is deterministic, and the specialized modules are small Q-heads rather than full learned experts.
-
-The state encoder is role-normalized and partner-visible. It includes the acting player's hand, the partner hand, public trick and round state, and move history through a shallow LSTM. This intentionally studies cooperative team play with direct partner-card access instead of forcing the model to spend most of its capacity inferring its teammate's private hand.
-
-### Why Partner-Visible?
-
-The intended DART setting is **partner-visible, not full perfect-information**.
-Guan Dan is a partnership game: many strong moves are only strong because they
-help the other seat on your team finish, preserve their control, or avoid
-blocking their hand shape. The purpose of exposing the partner hand is to make
-that coordination target unambiguous and learnable, instead of forcing the
-model to spend most of its capacity inferring its own teammate's private cards.
-In that sense, partner visibility is a research assumption for studying
-cooperative play, not a claim that the policy is directly human-deployable under
-strict hidden-information rules.
-
-This is deliberately different from perfect-information play. The encoder
-does include an `others_hand` channel, but it is the *union* of the two
-opponent hands — the complement of `own_hand + partner_hand` in the 108-card
-deck. A normal player already knows their own hand and therefore the
-collective deck-complement; with partner visibility, that complement narrows
-to exactly the cards held by the opposing team. `others_hand` is that
-deck-subtraction precomputed as a feature, not per-opponent information. It
-does not reveal which opponent holds which card. See
-[`docs/TRADEOFFS.md`](docs/TRADEOFFS.md) §10 for the full discussion.
+See the [research note](docs/RESEARCH.md) for the scientific framing and
+[reproducibility guide](docs/REPRODUCIBILITY.md) for the exact artifact path.
 
 ## Ablations
 
-The ablation study compares DART against GuanZero in a four-cell factorial
-design. The two experimental axes are the learning algorithm and whether the
-agent can observe its partner's hand. The central question is whether the
-canonical DART formulation performs better than the canonical GuanZero
-formulation under the same hardware class, the same 10-hour training budget,
-and the same effective number of learner samples.
-
 ### Design
 
+The controlled study is a 2×2 factorial design:
+
 | Algorithm | Partner visibility |
-|-----------|--------------------|
+|---|---|
 | DART | visible / hidden |
 | GuanZero | visible / hidden |
 
-The study is intended to measure both the main algorithm effect and the effect
-of partner visibility within each algorithm. It is not intended to isolate
-parameter count or to claim parameter-matched superiority.
-
-### Fairness Controls
-
-All four runs use the same L4 hardware class, actor count, batching strategy,
-learner batch size, replay policy, optimizer, exploration rate, checkpoint
-cadence, random seed, training duration, and evaluation protocol. The learner
-batch is normalized so each update consumes 4,096 total training samples. For
-GuanZero, those samples are divided evenly across the four seat-specific
-networks.
-
-The evaluation protocol is also shared. Each final model is evaluated against
-Yaoji, EZ, Jidan, and Strategic with 1,000 paired fixed-deck games per
-opponent. The headline score is the unweighted macro-average of those four
-opponent win rates.
-
-The main remaining asymmetry is architectural capacity. DART uses one shared
-network across all four player roles, with approximately 4.7M parameters.
-GuanZero uses four independent seat networks, each with approximately 7.1M
-parameters, for approximately 28.4M total parameters. This asymmetry is a
-property of the canonical algorithms rather than a configuration accident:
-DART's parameter sharing is part of the method, while GuanZero's independent
-seat networks are part of its baseline design.
+The question is which canonical formulation performs better under equal
+hardware, time, and effective learner samples. Partner visibility is a separate
+information-setting axis, not a claim about deployment under strict
+hidden-information play.
 
 ### Results
 
-| Algorithm | Partner visible | Params | Macro WR | Yaoji | EZ | Jidan | Strategic | Eff. samples |
-|-----------|----------------:|-------:|---------:|------:|---:|------:|----------:|-------------:|
-| DART | yes | 4.7M | 57.7% | 49.7% | 51.0% | 59.0% | 71.1% | 536.5M |
-| DART | no | 4.7M | 58.0% | 51.9% | 51.9% | 58.2% | 70.0% | 513.0M |
-| GuanZero | yes | 28.4M | 50.0% | 37.5% | 46.1% | 48.2% | 68.3% | 296.9M |
-| GuanZero | no | 28.4M | 52.6% | 44.0% | 49.2% | 50.1% | 67.0% | 234.2M |
+Each final checkpoint was evaluated against Yaoji, EZ, Jidan, and Strategic
+with 1,000 paired fixed-deck games per opponent. Macro win rate is the
+unweighted mean of those four rates. Values are generated from the curated
+[ablation artifact](ml/results/ablation_l4_10h/summary.json).
+
+| Algorithm | Partner | Parameters | Macro WR | Yaoji | EZ | Jidan | Strategic | Effective samples | Updates |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| DART | visible | 4.7M | **57.7%** | 49.7% | 51.0% | 59.0% | 71.1% | 536.5M | 130,970 |
+| DART | hidden | 4.7M | **58.0%** | 51.9% | 51.9% | 58.2% | 70.0% | 513.0M | 125,250 |
+| GuanZero | visible | 28.4M | **50.0%** | 37.5% | 46.1% | 48.2% | 68.3% | 296.9M | 72,480 |
+| GuanZero | hidden | 28.4M | **52.6%** | 44.0% | 49.2% | 50.1% | 67.0% | 234.2M | 57,180 |
+
+DART's approximately 4.7M parameters are shared across roles. GuanZero has
+four independent approximately 7.1M seat networks, approximately 28.4M total.
+This is an intentional algorithmic asymmetry, so the result is an equal-
+hardware, equal-time, equal-effective-sample comparison—not a parameter-
+matched comparison.
 
 ![Macro win rate versus wall-clock time](docs/assets/ablation_l4_winrate_wallclock.png)
 
-The zero-hour point in the wall-clock plot is a visual origin, not an evaluated
-checkpoint.
+The zero-hour marker is a visual origin, not an evaluated checkpoint.
 
 ![Macro win rate versus effective learner samples](docs/assets/ablation_l4_winrate_effective_samples.png)
 
 ![Final-time factorial contrasts](docs/assets/ablation_l4_factorial_contrasts.png)
 
-### Interpretation
+At the ten-hour endpoint, DART leads GuanZero by 7.67 percentage points with
+partner visibility and 5.43 points without it. Partner visibility itself does
+not improve the endpoint score in this single-seed study: the visible-minus-
+hidden effect is −0.30 points for DART and −2.55 points for GuanZero. These are
+finite-budget observations, not claims about converged training.
 
-At the 10-hour endpoint, both DART variants outperform their corresponding
-GuanZero variants. DART leads GuanZero by 7.67 percentage points in the
-partner-visible condition and by 5.43 percentage points in the hidden-partner
-condition. The interaction term is +2.25 percentage points, indicating that the
-observed DART advantage is larger in the partner-visible setting.
+The historical two-week GuanZero run is useful context but is not a controlled
+comparison to this ten-hour experiment. See the [research note](docs/RESEARCH.md)
+for limitations and follow-up experiments.
 
-Partner visibility did not improve final macro win rate in this single-seed
-study. The DART visible run finished 0.30 percentage points below DART hidden,
-and the GuanZero visible run finished 2.55 percentage points below GuanZero
-hidden. This should be interpreted cautiously because the experiment measures
-one seed and a fixed 10-hour budget, not a distribution over training runs.
+## Method
 
-### Limitations
+DART follows the Deep Monte Carlo lineage of DouZero and GuanZero. CPU actors
+generate complete games, a learner trains Q-values from terminal team rewards,
+and legal actions are scored directly. The encoder is role-normalized and can
+expose the partner hand as an explicit research assumption. A derived
+`others_hand` channel represents the collective opposing hand by deck
+subtraction; it does not reveal per-opponent ownership.
 
-- The comparison is matched on hardware, wall-clock time, effective learner
-  samples, and evaluation protocol, but it is not matched on parameter count.
-- The partner-visible condition is a cooperative research setting, not a strict
-  hidden-information deployment policy.
-- Evaluation games are part of the measured wall-clock budget. This makes the
-  four runs comparable, but the budget is not pure gradient-update time.
-- The results use one seed. The confidence intervals are evaluation-game
-  uncertainty, not run-to-run training variance.
+The runtime is a persistent actor–learner system with bounded queues,
+filesystem-based weight publication, replay throttling, checkpoint evaluation,
+and full-checkpoint resume. See [Architecture](docs/ARCHITECTURE.md) for the
+process and state-flow details.
 
-## Reproducibility Artifacts
+## Reproduction
 
-- [Model card](docs/MODEL_CARD.md): checkpoint status, intended use, evaluation protocol, and release checklist.
-- [Evaluation guide](docs/EVALUATION.md): commands for win-rate, matrix, and leaderboard runs.
-- [Research overview](docs/RESEARCH.md): longer discussion of the DART formulation and benchmark setup.
-- Release evidence: [`ml/results/release_1_25m`](ml/results/release_1_25m) contains the checkpoint, raw eval JSON, Glicko injection inputs, derived leaderboard, checksums, and manifest.
+Start with the [Reproducibility guide](docs/REPRODUCIBILITY.md). It covers the
+locked environment, CPU smoke, four ablation configurations, Modal launch
+pattern, effective learner-sample semantics, artifact manifest, evaluation
+protocol, and limitations of exact CUDA determinism.
 
-Evaluation commands:
+The four-cell configurations are:
 
-```bash
-# Win rate vs a specific opponent (paired fixed-deck)
-uv run guandan-eval-dart \
-    --checkpoint ml/results/release_1_25m/update_01250000.pt \
-    --opponent strategic --games 5000 --out results.json
+- [shared L4 baseline](ml/src/guandan/dart/configs/ablation_l4_common.yaml);
+- [DART visible](ml/src/guandan/dart/configs/ablation_l4_dart_partner_visible_10h.yaml);
+- [DART hidden](ml/src/guandan/dart/configs/ablation_l4_dart_partner_hidden_10h.yaml);
+- [GuanZero visible](ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_visible_10h.yaml);
+- [GuanZero hidden](ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_hidden_10h.yaml).
 
-# Release-style all-bot eval
-uv run guandan-eval-dart \
-    --checkpoint ml/results/release_1_25m/update_01250000.pt \
-    --opponent random greedy heuristic strategic xingdream lalala \
-               liuzha hulalala yaoji jidan ez wjsd \
-    --games 5000 --out ml/results/release_1_25m/eval_5k_all_bots.json
-```
-
-Exact bitwise training reproducibility is not guaranteed across CUDA/cuDNN kernels. Checkpoints restore learner RNG and actor RNG state for process-level resume consistency, but deterministic CUDA algorithms are not forced by default because they can reduce throughput or reject supported kernels.
-
-## Quick Start
+## Quick start
 
 ```bash
-# Install (Python 3.10+, requires uv: https://docs.astral.sh/uv/getting-started/installation/)
-git clone https://github.com/winstonxcai/chucking-eggs && cd chucking-eggs
+git clone https://github.com/winstonxcai/chucking-eggs
+cd chucking-eggs
 uv sync --group dev
-
-# Run tests
-uv run pytest -q
+uv run pytest -q ml/tests
 ```
 
-Run the web app locally and play against the released 1.25M-update DART model:
+Run the full CPU actor–learner smoke:
 
 ```bash
-# Terminal 1: backend API + WebSocket server
-USE_MOCK_DB=true \
-DART_WEB_ENABLED=true \
-DART_CHECKPOINT=ml/results/release_1_25m/update_01250000.pt \
-uv run uvicorn app.main:app --app-dir web/backend --host 127.0.0.1 --port 8000
-
-# Terminal 2: frontend
-cd web/frontend
-nvm use
-npm ci
-NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 npm run dev
+uv run python -m guandan.dart \
+  --config ml/src/guandan/dart/configs/dart_cpu_smoke.yaml \
+  --updates 5 --run-dir ml/runs/cpu_smoke
 ```
 
-The frontend uses Node 22; `web/frontend/.nvmrc` is checked in for `nvm use`.
-Open `http://localhost:3000/game?difficulty=dart` to start a solo game directly
-against DART, or open `http://localhost:3000`, choose **Play Solo**, then select
-**DART**.
-
-The legal-move engine works out of the box via a pure-Python `guandan_rs`
-fallback. For faster local move generation, optionally build the native Rust
-extension:
+The native Rust move generator is optional for correctness and local play:
 
 ```bash
 uv run maturin develop --release --manifest-path ml/src/guandan_rs/Cargo.toml
 ```
 
-`maturin develop` installs `_guandan_rs`, which the Python `guandan_rs` package
-uses automatically when present. If you re-run `uv sync`, re-run the maturin
-step to restore native acceleration.
-
-## Training
-
-### Local CPU Smoke
-
-Every contributor should be able to run the tiny CPU smoke. It checks the full
-actor -> learner -> checkpoint path without requiring CUDA or Apple MPS.
+Evaluate the released checkpoint against one opponent:
 
 ```bash
-uv run python -m guandan.dart \
-    --config ml/src/guandan/dart/configs/dart_cpu_smoke.yaml \
-    --updates 5 --run-dir ml/runs/cpu_smoke
+uv run guandan-eval-dart \
+  --checkpoint ml/results/release_1_25m/update_01250000.pt \
+  --opponent strategic --games 5000 --out results.json
 ```
 
-CUDA configs fail fast on machines without CUDA. Use the CPU smoke for setup
-checks, `dart_mps.yaml` for Apple Silicon, and the L4 configs only on GPU
-hardware or Modal.
-
-### Local MPS
-
-DART is the production training path. We tested centralized GPU inference-server
-variants, including cross-actor lane batching, and local batched actor inference
-was faster for this model because it avoids IPC while still batching Q-forwards.
-
-Runs 6 CPU actor processes + 1 MPS learner. Meaningful results (~50% vs strategic) in ~6h on an M1 Pro.
-
-```bash
-uv run python -m guandan.dart \
-    --config ml/src/guandan/dart/configs/dart_mps.yaml \
-    --updates 10000 --run-dir ml/runs/my_run
-```
-
-Outputs go to `ml/runs/my_run/` — `train.log`, `metrics_learner.jsonl`, `checkpoints/`.
-
-### Modal GPU
-
-L4 learner + 32 vCPU actors costs roughly $2.50/hr.
-
-1. [Create a Modal account](https://modal.com) and install the CLI: `pip install modal && modal setup`
-2. Create a volume for run outputs: `modal volume create dart-runs`
-3. Launch:
-
-```bash
-# Dry-run — validates the config locally without launching training
-modal run ml/scripts/modal/train_dart_modal.py --dry-run \
-    --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml
-
-# Example 50k shard (~8h from cold start; later resumed shards run faster)
-modal run --detach ml/scripts/modal/train_dart_modal.py \
-    --updates 50000 --run-name my_run \
-    --config-path /root/ml/src/guandan/dart/configs/dart_l4.yaml
-```
-
-Download the checkpoint when done:
-
-```bash
-modal volume get dart-runs dart/my_run/checkpoints/update_00050000.pt .
-```
-
-Set `DART_MODAL_VOL=<volume-name>` or `DART_HF_CACHE=<volume-name>` before
-`modal run` if you want to use existing Modal volumes instead of the defaults.
-
-**Reference cost for the 1.25M-update release run:** logged learner metrics
-cover the first 548k updates. The 0→200k actor-limited phase ran at ~1.6
-upd/s (~34h); later tuned L4 resumes run at ~5-6 upd/s. Extrapolating that
-post-200k rate to `update_01250000.pt`, the release checkpoint is roughly
-85-90 L4 learner-hours, or ~$215-$225 at the reference $2.50/hr Modal rate,
-excluding evaluation sweeps.
-
-### Reproducing the Ablations
-
-The four-cell DART/GuanZero ablation uses one shared base configuration and
-four minimal overrides:
-
-- Shared base: [`ablation_l4_common.yaml`](ml/src/guandan/dart/configs/ablation_l4_common.yaml)
-- DART, partner visible: [`ablation_l4_dart_partner_visible_10h.yaml`](ml/src/guandan/dart/configs/ablation_l4_dart_partner_visible_10h.yaml)
-- DART, partner hidden: [`ablation_l4_dart_partner_hidden_10h.yaml`](ml/src/guandan/dart/configs/ablation_l4_dart_partner_hidden_10h.yaml)
-- GuanZero, partner visible: [`ablation_l4_guanzero_partner_visible_10h.yaml`](ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_visible_10h.yaml)
-- GuanZero, partner hidden: [`ablation_l4_guanzero_partner_hidden_10h.yaml`](ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_hidden_10h.yaml)
-
-Launch the four runs with separate Modal profiles or workspaces if desired.
-Do not pass `--updates`; the configs stop by wall-clock duration.
-
-```bash
-MODAL_PROFILE=WORKSPACE_1 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::train_remote \
-  --run-name ablation_l4_dart_partner_visible_10h_seed0 \
-  --seed 0 \
-  --config-path /root/ml/src/guandan/dart/configs/ablation_l4_dart_partner_visible_10h.yaml \
-  --device cuda
-
-MODAL_PROFILE=WORKSPACE_2 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::train_remote \
-  --run-name ablation_l4_dart_partner_hidden_10h_seed0 \
-  --seed 0 \
-  --config-path /root/ml/src/guandan/dart/configs/ablation_l4_dart_partner_hidden_10h.yaml \
-  --device cuda
-
-MODAL_PROFILE=WORKSPACE_3 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::train_remote \
-  --run-name ablation_l4_guanzero_partner_visible_10h_seed0 \
-  --seed 0 \
-  --config-path /root/ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_visible_10h.yaml \
-  --device cuda
-
-MODAL_PROFILE=WORKSPACE_4 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::train_remote \
-  --run-name ablation_l4_guanzero_partner_hidden_10h_seed0 \
-  --seed 0 \
-  --config-path /root/ml/src/guandan/dart/configs/ablation_l4_guanzero_partner_hidden_10h.yaml \
-  --device cuda
-```
-
-Run final posthoc evaluation in the Modal volume to avoid downloading full
-checkpoints:
-
-```bash
-MODAL_PROFILE=WORKSPACE_1 .venv/bin/modal run --detach ml/scripts/modal/train_dart_modal.py::eval_checkpoint_remote \
-  --run-name ablation_l4_dart_partner_visible_10h_seed0 \
-  --checkpoint-name final.pt \
-  --out-name final \
-  --games 1000 \
-  --workers 32 \
-  --lanes 64 \
-  --device cpu \
-  --seed 0
-```
-
-Repeat the final-eval command for the other three run names. The analysis
-artifacts are the merged config, learner metrics, checkpoint evaluation JSONs,
-final evaluation JSON, and eval logs. Full checkpoints are not required unless
-you need local model inspection.
-
-### Troubleshooting
-
-- If `_guandan_rs` is missing, the pure-Python fallback keeps tests and local play working but is slower. Rebuild with `uv run maturin develop --release --manifest-path ml/src/guandan_rs/Cargo.toml`.
-- If `uv sync` appears to remove the native extension, rerun the `maturin develop` command.
-- For Modal log noise, use `DART_TQDM=0`; the launcher sets this automatically.
-
-## Web App
-
-Live app: [chucking-eggs.vercel.app](https://chucking-eggs.vercel.app) — solo, duo, and quad multiplayer with Elo ratings and leaderboard. Frontend is deployed on Vercel; backend is deployed on Fly.io. The hosted app intentionally does not serve DART for cost reasons; use the local quick start above to play against the released checkpoint.
-
-Run it locally:
-
-```bash
-# Copy and fill in your MongoDB connection string
-cp .env.example .env
-
-# Start everything with Docker Compose
-docker compose up
-# Frontend: http://localhost:3000  Backend: http://localhost:8000
-```
-
-Or run services separately:
-
-```bash
-# Backend (FastAPI + game engine) — from repo root
-uv pip install -e ".[web]"
-uv run uvicorn app.main:app --reload --app-dir web/backend
-
-# Frontend (Next.js) — in a separate terminal
-cd web/frontend && npm install && npm run dev
-```
-
-## Architecture
-
-![DART system topology](docs/assets/system_topology.png)
-
-This figure shows the runtime ownership boundaries. The main process handles
-lifecycle and evaluation; actors own local policy copies and batched
-environment lanes; the learner owns replay and the authoritative network; the
-weight store provides asynchronous policy refresh.
-
-**DART** (**D**ynamic **A**ction-**R**elative routing for **T**ricks) uses 4 shared Q-heads, one per trick position: leading / 1st responder / across / last responder. It combines an LSTM over move history, role-normalized state encoding, partner hand visibility during training, and distributed actor-learner execution. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map.
-
-![DART distributed learning process](docs/assets/distributed_training.png)
-
-This figure isolates the distributed learning loop. Each actor owns one local
-Q-network copy and controls multiple independent environment lanes. Actor
-samples flow into learner-owned replay; learner updates train one global DART
-Q-network, whose weights are periodically copied back to the actors.
-
-![DART actor-side inference batching](docs/assets/inference_batching.png)
-
-This figure explains why actors run several lanes at once. Forced or
-epsilon-random decisions bypass the network; nontrivial decisions are encoded
-as legal candidate-action rows, scored by the local Q-network in a batched
-forward pass, segmented back by lane, and resolved by per-lane argmax.
-
-Recent Modal throughput probes show why DART uses intra-actor lane batching.
-Numbers below are post-warmup means from 1000-update runs and report accepted
-fresh actor samples/sec in `metrics_learner.jsonl`:
-
-| GPU | GuanZero-style `32 x 1` | DART `32 x 128` | DART speedup |
-|---|---:|---:|---:|
-| L4 | 4,640 | 19,765 | **4.3x** |
-| A10G | 4,889 | 22,383 | **4.6x** |
-
-The `32 x 1` shape is actor-limited: the learner queue stays near empty. The
-`32 x 128` shape is no longer actor-limited in these smokes: the learner queue
-is mostly full and throughput is governed by learner speed and replay-ratio
-throttling.
-
-![DART trick-relative Q-head routing](docs/assets/model_architecture.png)
-
-This figure shows the model's action-relative output layer. State and candidate
-action features enter the shared Q-network trunk; the trick-position id is used
-only by the deterministic router, which selects the Q-head for leading a new
-trick, first responder, across from leader, or last responder.
-
-## Documentation Index
-
-- [Development setup](docs/DEVELOPMENT.md)
-- [Configuration guide](docs/CONFIG.md)
-- [Model card](docs/MODEL_CARD.md)
-- [Research overview](docs/RESEARCH.md)
-- [Terminology](docs/TERMINOLOGY.md)
-- [Evaluation guide](docs/EVALUATION.md)
-- [Architecture map](docs/ARCHITECTURE.md)
-- [Tradeoffs and design decisions](docs/TRADEOFFS.md)
-- [Debugging](docs/DEBUGGING.md)
-- [Profiling](docs/PROFILING.md)
-- [Backend API and WebSocket protocol](docs/API.md)
-- [Release process](docs/RELEASE.md)
-- [Contributing](docs/CONTRIBUTING.md)
-
-## Examples and Extensibility
-
-Runnable examples:
-
-- `examples/dart_inference.py`
-- `examples/eval_single_bot.py`
-- `examples/play_rule_bot_hand.py`
-
-### Adding Your Own Bot
-
-Any `Agent` subclass with a single `act(env, player) -> Combo` method works:
-
-```python
-from guandan.agents.base import Agent
-from guandan.game import GuanDanEnv
-from guandan.combos import Combo
-
-class MyBot(Agent):
-    def act(self, env: GuanDanEnv, player: int) -> Combo:
-        moves = env.legal_moves()
-        return moves[0]  # replace with your logic
-```
-
-Register it in `ml/src/guandan/agents/__init__.py`:
-
-```python
-from .my_bot import MyBot
-AGENT_REGISTRY["mybot"] = MyBot
-```
-
-Then use it anywhere:
-
-```bash
-uv run guandan-wr-matrix --agents mybot,strategic,jidan
-```
-
-Or add it to the training config under `opponents.hard_bot.bots` and give
-`opponents.episode_mix.hard_bot` a nonzero weight to train against it.
-
-## Related Work
-
-This project builds on the DouZero / DanZero / GuanZero line of Deep Monte Carlo self-play agents for large-action Chinese card games. **DouZero** [1] showed that state-action Q-value scoring with Monte Carlo returns and parallel actors can work surprisingly well for DouDizhu; **DanZero** [2] and **GuanZero** [3] adapted this style of training to Guan Dan, with GuanZero adding behavior-aware encodings for cooperation, assisting, and dwarfing. DART diverges from GuanZero by using an explicit partner-visible state representation, role-normalized encodings, and trick-leader-relative shared heads rather than absolute-seat heads.
-
-The broader lineage comes from **DQN** [4] (deep value-based RL) and **A3C** [5] (distributed asynchronous actor-learner). Card-game RL benchmarks and reference implementations are well-served by **RLCard** [6] and **OpenSpiel** [7], though neither includes Guan Dan as a first-class environment; the engine in this repo is a from-scratch implementation.
+## Application demo
+
+The web app is a secondary demonstration of the shared game engine. The live
+application supports solo, duo, and quad play with Elo ratings and a reviewable
+game history. It is deployed at
+[chucking-eggs.vercel.app](https://chucking-eggs.vercel.app), while the hosted
+service intentionally does not load DART for cost reasons.
+
+Run the application locally with Docker Compose or consult the
+[Web API reference](docs/API.md). The application is not required for training,
+evaluation, or research reproducibility.
+
+## Documentation
+
+- [Research note](docs/RESEARCH.md): problem, method, study design, findings,
+  limitations, and open questions.
+- [Reproducibility](docs/REPRODUCIBILITY.md): environments, configs, artifacts,
+  and reproduction protocol.
+- [Architecture](docs/ARCHITECTURE.md): process model, data flow, replay, and
+  runtime invariants.
+- [Evaluation](docs/EVALUATION.md): paired-deck evaluation and confidence
+  intervals.
+- [Model card](docs/MODEL_CARD.md): intended use and release limitations.
+- [Development](docs/DEVELOPMENT.md): tests, profiling, and contribution
+  workflow.
 
 ## Limitations
 
-DART's hardest matchup remains Yaoji: the latest 1.35M checkpoint reaches
-62.74% in the 10,000-game hard-4 eval, below the other hard opponents. The
-reported model is **partner-visible** and should not be read as a strict
-hidden-information policy: the partner hand is exposed in the state encoding.
-The encoder also carries an `others_hand` channel that is the *union* of the
-two opponent hands; this is a precomputed deck-complement (`full_deck −
-own − partner`), not per-opponent oracle information — see
-[`docs/TRADEOFFS.md`](docs/TRADEOFFS.md) §10. Training is **single-seed**:
-there are no error bars across runs, only across eval games. Only the **L4 + M1
-Pro** training paths are validated end-to-end. Evaluation is exclusively
-head-to-head against rule-based bots; no human evaluation, and no comparison
-against other learned agents because we are not aware of an openly released
-partner-visible Guan Dan agent to benchmark against. Finally, the LSTM history
-module is shallow, so there is likely room left at the ceiling.
+The released model and the ablation study use a single training seed and
+rule-based evaluation opponents. The controlled study is not parameter
+matched, does not establish convergence, and includes evaluation overhead in
+its wall-clock lifecycle. Partner-visible observation is a research setting,
+not strict hidden-information deployment. The native Rust and pure-Python
+move generators are both maintained, but the primary large-run throughput path
+uses the native extension.
 
-## Citations
-
-If you use this code or build on it, please cite the repo and the prior work it depends on:
+## Citation and attribution
 
 ```bibtex
 @software{cai2026dart,
   author = {Cai, Winston},
-  title = {DART: A Deep Monte Carlo RL Agent for Guan Dan},
+  title = {DART: Dynamic Action-Relative Routing for Tricks},
   year = {2026},
   url = {https://github.com/winstonxcai/chucking-eggs}
 }
 ```
 
-References:
-
-1. Zha, D. et al. *DouZero: Mastering DouDizhu with Self-Play Deep Reinforcement Learning.* ICML 2021. [arXiv:2106.06135](https://arxiv.org/abs/2106.06135)
-2. Lu, Y. et al. *DanZero: Mastering GuanDan Game with Reinforcement Learning.* IEEE CoG 2022. [arXiv:2210.17087](https://arxiv.org/abs/2210.17087)
-3. Zhao, Y. et al. *GuanZero: A behavior-aware Deep Monte Carlo agent for Guan Dan.*
-4. Mnih, V. et al. *Human-level control through deep reinforcement learning.* Nature 2015. [arXiv:1312.5602](https://arxiv.org/abs/1312.5602)
-5. Mnih, V. et al. *Asynchronous Methods for Deep Reinforcement Learning.* ICML 2016. [arXiv:1602.01783](https://arxiv.org/abs/1602.01783)
-6. Zha, D. et al. *RLCard: A Toolkit for Reinforcement Learning in Card Games.* IJCAI 2020 (Demo). [arXiv:1910.04376](https://arxiv.org/abs/1910.04376)
-7. Lanctot, M. et al. *OpenSpiel: A Framework for Reinforcement Learning in Games.* 2019. [arXiv:1908.09453](https://arxiv.org/abs/1908.09453)
-
-## Acknowledgments
-
-The rule-based bot pool is the backbone of evaluation. The vendored competition bots — Jidan, Yaoji, Lalala, Liuzha, Hulalala, WJSD, EZ, and NoAI — originate from the [NJUPT 2020 Guan Dan AI Competition](http://gameai.njupt.edu.cn/gameaicompetition/), with student authors at NUAA, SEU, Fudan, SAU, and HYIT. Credit and gratitude to those teams — the entire evaluation track of this project is downstream of their work.
-
-- **Vendored bots** (Jidan, Yaoji, Lalala, Liuzha, Hulalala, WJSD, EZ, NoAI) live under `ml/src/guandan/agents/_vendor/<bot>/` with the original team attribution preserved in each `__init__.py`. Changes were limited to import-path fixes and a thin adapter (`_vendor/adapter.py`) so each entry conforms to the `Agent.act(env, player) -> Combo` interface.
-- **XingDream** (`xingdream_bot.py`) is a hand-written re-implementation of the strategy from the [xingdream/guandan](https://github.com/xingdream/guandan) repo, not a verbatim port.
-- **License note for vendored code:** the MIT license applies to this repository except for vendored competition bot code under `ml/src/guandan/agents/_vendor/`. The original competition submissions did not ship with an explicit open-source license. We include them in good faith as research/evaluation artifacts unless and until original-author permission is obtained. If you are an original author and would prefer your code be removed or relicensed, please open an issue.
-- See [NOTICE](NOTICE) for the vendored-bot attribution and license-audit note.
+The original project code is MIT licensed. Competition bots are separately
+attributed in [NOTICE](NOTICE) and may have distinct licensing status.

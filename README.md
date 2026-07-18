@@ -30,12 +30,43 @@ seat.
 
 ## Headline evidence
 
-The larger 1.25M-update DART release reaches **69.32%** on the 10,000-game
-hard-4 evaluation and **69.49%** on the 5,000-game release evaluation against
-Yaoji, EZ, Jidan, and Strategic. The complete release evidence is under
+The larger DART release reaches **69.32%** on the 10,000-game hard-4 evaluation
+and **69.49%** on the 5,000-game release evaluation against Yaoji, EZ, Jidan,
+and Strategic after roughly **2.3 days** of logged training. That checkpoint
+totals **1.25M learner updates**; as a rough calibration for this run, 225k
+updates is approximately 12 hours of training. We use days of training as the
+primary time metric and retain update counts mainly to identify checkpoints and
+artifacts. The complete release evidence is under
 [`ml/results/release_1_25m`](ml/results/release_1_25m).
 
-The controlled ten-hour ablation is the primary algorithm comparison:
+![Hard-4 win rate over DART training, including the 1.25M-update release checkpoint](docs/assets/training_wr.png)
+
+The plot shows the per-opponent and hard-4 average win rates throughout the
+run, including the 1.25M-update release checkpoint. Its horizontal axis retains
+learner updates because that is how the underlying training artifact is indexed;
+the headline duration above is the more useful cross-run comparison.
+
+### Historical GuanZero reference
+
+The GuanZero training curve is useful historical context, but it is a rough
+apples-to-oranges comparison with DART. The GuanZero work is available as an
+arXiv submission rather than a peer-reviewed journal publication, so we treat
+its reported curve as an informative reference point rather than a directly
+comparable benchmark. Its final model is reported at **82% average win rate
+against hard-4 (CGAIC)** after **14 days** of training.
+
+![GuanZero win rate over training](docs/assets/guanzero_wr.png)
+
+The two plots should not be read as a like-for-like speed comparison: the
+training setups, hardware, evaluation details, and metric provenance are not
+established as identical. Under the tentative assumption that the GuanZero
+plot tracks a comparable win-rate-versus-hard-4 quantity, DART's current curve
+appears ahead of the trajectory shown at a similar number of training days.
+That observation is suggestive, not a claim that DART has matched GuanZero's
+14-day endpoint or established a controlled training-efficiency advantage.
+
+The controlled roughly 0.4-day (ten-hour) ablation is the primary algorithm
+comparison:
 
 | Checkpoint | Yaoji | EZ | Jidan | Strategic | Macro average |
 |---|---:|---:|---:|---:|---:|
@@ -94,10 +125,6 @@ partner visibility and 5.43 points without it. Partner visibility itself does
 not improve the endpoint score in this single-seed study: the visible-minus-
 hidden effect is −0.30 points for DART and −2.55 points for GuanZero. These are
 finite-budget observations, not claims about converged training.
-
-The historical two-week GuanZero run is useful context but is not a controlled
-comparison to this ten-hour experiment. See the [research note](docs/RESEARCH.md)
-for limitations and follow-up experiments.
 
 ## Methodology
 

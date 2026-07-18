@@ -82,7 +82,7 @@ jobs:
       - name: Install backend dependencies for E2E
         run: uv sync --group dev
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: web/frontend/.nvmrc
           cache: npm

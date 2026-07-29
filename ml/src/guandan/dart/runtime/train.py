@@ -529,6 +529,11 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
     p.add_argument("--config", type=str, default=None,
                    help="Path to YAML config; CLI flags override.")
     p.add_argument("--n-actors", type=int)
+    p.add_argument(
+        "--actor-batch-lanes",
+        type=int,
+        help="Override the number of batched self-play lanes per actor.",
+    )
     p.add_argument("--updates", type=int, help="Target learner updates.")
     p.add_argument(
         "--checkpoint-every-updates",
@@ -553,6 +558,7 @@ def _parse_args() -> tuple[TrainConfig, Path | None]:
     cfg = load_config_from_cli(
         args.config,
         n_actors=args.n_actors,
+        actor_batch_lanes=args.actor_batch_lanes,
         total_updates_target=args.updates,
         checkpoint_every_updates=args.checkpoint_every_updates,
         device=args.device,

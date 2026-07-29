@@ -118,6 +118,160 @@ fixed-deck games per opponent. The final checkpoint is evaluated separately
 from periodic checkpoint evaluation so the training and analysis stages are
 unambiguous.
 
+## Local Docker training on A800-SXM4-80GB
+
+The dedicated training image targets a Docker-enabled Linux x86-64 host with
+one visible `NVIDIA A800-SXM4-80GB`. It installs the environment from the root
+`pyproject.toml` and `uv.lock`, builds the native Rust move generator, and pins
+PyTorch 2.10.0 with its CUDA 12.8 runtime. A host driver that advertises CUDA
+13.0 is expected to run this older container runtime through NVIDIA's driver
+backward compatibility; the container deliberately does not replace the
+locked PyTorch build with a CUDA 13 build.
+
+These commands are for a standalone Docker host. They do not submit Slurm jobs
+and should not be run on a shared login node.
+
+Prepare a writable run directory and preserve host ownership of artifacts:
+
+```bash
+mkdir -p ml/runs
+export TRAIN_UID="$(id -u)"
+export TRAIN_GID="$(id -g)"
+export TRAIN_COMPOSE="docker-compose.training.yml"
+```
+
+Build the image and run the exact-hardware preflight:
+
+```bash
+docker compose -f "$TRAIN_COMPOSE" build
+docker compose -f "$TRAIN_COMPOSE" run --rm \
+  --entrypoint python dart-train \
+  /workspace/ml/scripts/util/check_a800_training.py
+```
+
+The preflight requires one visible CUDA device at index 0, an
+`A800-SXM4-80GB` with at least 80,000 MiB, compute capability 8.0 or newer,
+BF16, driver 580.65.06 or newer, persistence mode, default compute mode, MIG
+disabled, 128 CPUs, 128 GiB RAM, native `guandan_rs`, and a writable `/runs`.
+It prints the complete detected report before returning success or failure.
+
+Run the ML test suite inside the built image:
+
+```bash
+docker compose -f "$TRAIN_COMPOSE" run --rm \
+  --entrypoint python dart-train -m pytest -q ml/tests
+```
+
+Run the portable actor–learner smoke on CPU:
+
+```bash
+docker compose -f "$TRAIN_COMPOSE" run --rm dart-train \
+  --config /workspace/ml/src/guandan/dart/configs/dart_cpu_smoke.yaml \
+  --device cpu --updates 5 --run-dir /runs/docker_cpu_smoke
+```
+
+Then run 100 learner updates through CUDA. The final checkpoint is always a
+full checkpoint even though periodic checkpoints use the lighter weight-only
+format:
+
+```bash
+docker compose -f "$TRAIN_COMPOSE" run --rm dart-train \
+  --config /workspace/ml/src/guandan/dart/configs/dart_a800.yaml \
+  --updates 100 --run-dir /runs/a800_cuda_smoke --seed 0
+```
+
+### Host calibration
+
+The checked-in A800 default is 112 actors with 32 lanes per actor. Before a
+long run, measure the four candidate shapes in separate run directories:
+
+```bash
+docker compose -f "$TRAIN_COMPOSE" run --rm dart-train \
+  --config /workspace/ml/src/guandan/dart/configs/dart_a800.yaml \
+  --n-actors 64 --actor-batch-lanes 32 --updates 2000 \
+  --run-dir /runs/probe_64x32 --seed 0
+
+docker compose -f "$TRAIN_COMPOSE" run --rm dart-train \
+  --config /workspace/ml/src/guandan/dart/configs/dart_a800.yaml \
+  --n-actors 96 --actor-batch-lanes 32 --updates 2000 \
+  --run-dir /runs/probe_96x32 --seed 0
+
+docker compose -f "$TRAIN_COMPOSE" run --rm dart-train \
+  --config /workspace/ml/src/guandan/dart/configs/dart_a800.yaml \
+  --n-actors 112 --actor-batch-lanes 32 --updates 2000 \
+  --run-dir /runs/probe_112x32 --seed 0
+
+docker compose -f "$TRAIN_COMPOSE" run --rm dart-train \
+  --config /workspace/ml/src/guandan/dart/configs/dart_a800.yaml \
+  --n-actors 112 --actor-batch-lanes 64 --updates 2000 \
+  --run-dir /runs/probe_112x64 --seed 0
+```
+
+Compare the post-warmup `samples_per_sec`, `actor_rate_samp_per_sec`, replay
+ratio, queue depth, and GPU allocation in each `metrics_learner.jsonl`. Use the
+fastest shape with no actor failure or OOM, cumulative replay near 1.0, and at
+least 20% host RAM free. Do not infer a problem from low VRAM use alone: this
+small learner can remain limited by CPU self-play.
+
+### Scratch, warm-start, and full resume
+
+`--updates` is an **absolute total update target**, including updates loaded
+from a checkpoint. It is not a number of additional updates.
+
+Start a fresh 250,000-update run with the default Compose command:
+
+```bash
+DART_RUN_NAME=a800_scratch_250k DART_UPDATES=250000 \
+  docker compose -f "$TRAIN_COMPOSE" up dart-train
+```
+
+Warm-start the packaged 1.25M weights and train to 1.50M total updates. This
+performs 250,000 new updates, but optimizer, replay, and actor RNG state start
+fresh because the packaged checkpoint is weight-only:
+
+```bash
+docker compose -f "$TRAIN_COMPOSE" run --rm --name dart-a800-warm dart-train \
+  --config /workspace/ml/src/guandan/dart/configs/dart_a800.yaml \
+  --resume /workspace/ml/results/release_1_25m/update_01250000.pt \
+  --updates 1500000 --run-dir /runs/a800_warm_1500k --seed 0
+```
+
+Resume a locally produced full checkpoint in place and raise the absolute
+target, for example from 250k to 500k:
+
+```bash
+docker compose -f "$TRAIN_COMPOSE" run --rm --name dart-a800-resume dart-train \
+  --config /workspace/ml/src/guandan/dart/configs/dart_a800.yaml \
+  --resume /runs/a800_scratch_250k/checkpoints/final.pt \
+  --updates 500000 --run-dir /runs/a800_scratch_250k --seed 0
+```
+
+Use Ctrl-C for an attached run or allow the Compose service's ten-minute stop
+grace period when stopping a detached run. SIGINT and SIGTERM both enter the
+same clean shutdown path and write `checkpoints/final.pt` with model,
+optimizer, replay, and RNG state.
+
+Monitor the run from separate terminals:
+
+```bash
+nvidia-smi -l 2
+docker stats
+tail -f ml/runs/a800_scratch_250k/learner.log
+tail -f ml/runs/a800_scratch_250k/metrics_learner.jsonl
+```
+
+Evaluate a final checkpoint with 1,000 paired fixed-deck games per opponent:
+
+```bash
+docker compose -f "$TRAIN_COMPOSE" run --rm \
+  --entrypoint python dart-train \
+  -m guandan.scripts.eval.eval_dart \
+  --checkpoint /runs/a800_scratch_250k/checkpoints/final.pt \
+  --opponent yaoji ez jidan strategic --games 1000 \
+  --workers 32 --lanes 64 --device cpu --seed 0 \
+  --out /runs/a800_scratch_250k/eval/final_1k.json
+```
+
 ## Artifacts
 
 The curated [ablation artifact directory](../ml/results/ablation_l4_10h/)

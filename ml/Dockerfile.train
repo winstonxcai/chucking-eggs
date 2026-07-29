@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1.7
+
+FROM python:3.11-slim-bookworm AS builder
+
+ARG RUST_VERSION=1.94.0
+ENV CARGO_HOME=/opt/cargo \
+    RUSTUP_HOME=/opt/rustup \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy
+
+COPY --from=ghcr.io/astral-sh/uv:0.8.9 /uv /uvx /usr/local/bin/
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        libssl-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain "${RUST_VERSION}" --profile minimal
+
+ENV PATH=/opt/cargo/bin:/opt/venv/bin:${PATH}
+WORKDIR /workspace
+
+# Install locked third-party dependencies before copying the repository so this
+# expensive CUDA layer remains cacheable across source-only changes.
+COPY pyproject.toml uv.lock .python-version ./
+RUN uv sync --frozen --group dev --no-install-project
+
+COPY . .
+RUN uv sync --frozen --group dev \
+    && uv run maturin build --release --interpreter python3 \
+        --manifest-path ml/src/guandan_rs/Cargo.toml \
+        --out /tmp/guandan-wheels \
+    && uv pip install --python /opt/venv/bin/python /tmp/guandan-wheels/*.whl \
+    && uv run python -c \
+        "import guandan_rs, torch; assert torch.__version__.split('+')[0] == '2.10.0', torch.__version__; assert torch.version.cuda == '12.8', torch.version.cuda; assert guandan_rs.HAS_NATIVE"
+
+
+FROM python:3.11-slim-bookworm AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        gcc \
+        g++ \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PATH=/opt/venv/bin:${PATH} \
+    PYTHONPATH=/workspace/ml/src \
+    PYTHONUNBUFFERED=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_PYTHON_DOWNLOADS=never
+
+COPY --from=builder /opt/venv /opt/venv
+COPY . /workspace
+
+WORKDIR /workspace
+
+RUN python -c \
+    "import guandan_rs, torch; assert torch.__version__.split('+')[0] == '2.10.0', torch.__version__; assert torch.version.cuda == '12.8', torch.version.cuda; assert guandan_rs.HAS_NATIVE"
+
+ENTRYPOINT ["python", "-m", "guandan.dart"]
+CMD ["--help"]

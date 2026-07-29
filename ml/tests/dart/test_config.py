@@ -90,6 +90,27 @@ def test_cli_checkpoint_interval_override(tmp_path, monkeypatch):
     assert resume is None
 
 
+def test_cli_actor_batch_lanes_override(tmp_path, monkeypatch):
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump({"actor_batch_lanes": 32}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "guandan.dart",
+            "--config",
+            str(path),
+            "--actor-batch-lanes",
+            "64",
+        ],
+    )
+
+    cfg, resume = _parse_args()
+
+    assert cfg.actor_batch_lanes == 64
+    assert resume is None
+
+
 def test_yaml_base_config_deep_merges_and_child_wins(tmp_path):
     base = tmp_path / "base.yaml"
     base.write_text(yaml.safe_dump({
@@ -173,6 +194,27 @@ def test_cpu_smoke_config_is_tiny_and_portable():
     assert cfg.buffer_min_size == 16
     assert cfg.checkpoint_every_updates == 5
     assert cfg.eval.enabled is False
+
+
+def test_a800_config_preserves_learning_recipe_and_scales_runtime():
+    cfg = load_config_from_yaml(
+        Path("ml/src/guandan/dart/configs/dart_a800.yaml")
+    )
+
+    assert cfg.device == "cuda"
+    assert cfg.n_actors == 112
+    assert cfg.actor_batch_lanes == 32
+    assert cfg.batch_size == 4096
+    assert cfg.lr == pytest.approx(3.0e-5)
+    assert cfg.buffer_capacity == 400_000
+    assert cfg.target_replay_ratio == 1.0
+    assert cfg.use_bf16_learner is True
+    assert cfg.compile_mode == "reduce-overhead"
+    assert cfg.checkpoint_save_type == "weight"
+    assert cfg.eval.enabled is True
+    assert cfg.eval.workers == 32
+    assert cfg.eval.lanes == 64
+    assert cfg.eval.n_eval_games_per_opponent == 1000
 
 
 def test_unknown_flat_config_key_fails_fast():

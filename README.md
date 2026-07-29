@@ -217,6 +217,13 @@ uv run python -m guandan.dart \
   --updates 5 --run-dir ml/runs/cpu_smoke
 ```
 
+For a dedicated NVIDIA A800-SXM4-80GB host, use the locked CUDA 12.8
+training image and A800 runtime recipe in the
+[Docker A800 reproducibility guide](docs/REPRODUCIBILITY.md#local-docker-training-on-a800-sxm4-80gb).
+The guide includes hardware preflight, image tests, CPU/CUDA smoke runs,
+actor-lane calibration, scratch training, warm-start, full resume, monitoring,
+and paired evaluation commands.
+
 The native Rust move generator is optional for correctness and local play:
 
 ```bash

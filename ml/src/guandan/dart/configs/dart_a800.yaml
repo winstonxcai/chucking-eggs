@@ -1,0 +1,23 @@
+# DART — single NVIDIA A800-SXM4-80GB with up to 128 host CPUs.
+#
+# This inherits the released L4 learning recipe and changes only host-runtime
+# concurrency and evaluation fan-out. Keep batch_size=4096 when comparing with
+# or warm-starting from the released model.
+base_config: dart_l4.yaml
+
+n_actors: 112
+actor_batch_lanes: 32
+
+eval:
+  enabled: true
+  opponents: [yaoji, ez, jidan, strategic]
+  n_eval_games_per_opponent: 1000
+  every_updates: 0
+  workers: 32
+  lanes: 64
+  device: cpu
+  max_wait_s: 300.0
+
+device: cuda
+use_bf16_learner: true
+compile_mode: reduce-overhead

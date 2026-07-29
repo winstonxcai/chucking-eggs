@@ -1,0 +1,43 @@
+services:
+  dart-train:
+    platform: linux/amd64
+    image: chucking-eggs/dart-train:a800-cu128
+    build:
+      context: .
+      dockerfile: ml/Dockerfile.train
+    init: true
+    user: "${TRAIN_UID:-1000}:${TRAIN_GID:-1000}"
+    working_dir: /workspace
+    shm_size: "8gb"
+    stop_grace_period: 10m
+    environment:
+      DART_STREAM_LOGS: "1"
+      DART_TQDM: "0"
+      DART_WEIGHT_DIR: /dev/shm/dart_weights
+      HOME: /tmp
+      MKL_NUM_THREADS: "1"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      NVIDIA_VISIBLE_DEVICES: "0"
+      NUMEXPR_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      PYTHONUNBUFFERED: "1"
+      TORCHINDUCTOR_CACHE_DIR: /tmp/torchinductor
+    volumes:
+      - ./ml/runs:/runs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    command:
+      - --config
+      - /workspace/ml/src/guandan/dart/configs/dart_a800.yaml
+      - --updates
+      - "${DART_UPDATES:-250000}"
+      - --seed
+      - "${DART_SEED:-0}"
+      - --run-dir
+      - "/runs/${DART_RUN_NAME:-a800_scratch}"

@@ -1,4 +1,5 @@
 .git
+.github
 .venv
 __pycache__/
 *.py[cod]
@@ -7,6 +8,9 @@ __pycache__/
 .mypy_cache/
 .coverage
 .DS_Store
+.agents/
+.codex/
+.claude/
 
 data/
 ml/runs/
@@ -18,5 +22,9 @@ web/frontend/node_modules/
 web/frontend/.next/
 web/frontend/.next-*/
 web/frontend/test-results/
+web/frontend/playwright-report/
 web/frontend/.vercel/
 web/frontend/tsconfig.tsbuildinfo
+
+test-results/
+playwright-report/

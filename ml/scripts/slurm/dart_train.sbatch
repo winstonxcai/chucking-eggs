@@ -42,6 +42,10 @@ export NUMEXPR_NUM_THREADS=1
 export PYTHONUNBUFFERED=1
 export DART_TQDM=0
 export DART_STREAM_LOGS=1
+# Some Slurm nodes isolate POSIX named semaphores in a way that breaks Python's
+# spawn context while actors are being created. Fork is safe here because the
+# parent has not created a CUDA context; the learner initializes CUDA itself.
+export DART_MP_START_METHOD="${DART_MP_START_METHOD:-fork}"
 
 DART_JOB_SCRATCH="${DART_JOB_SCRATCH:-${SLURM_TMPDIR:-${TMPDIR:-/tmp}/${USER}/dart-${SLURM_JOB_ID}}}"
 export DART_WEIGHT_DIR="${DART_WEIGHT_DIR:-$DART_JOB_SCRATCH/weights}"

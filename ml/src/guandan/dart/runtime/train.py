@@ -451,7 +451,15 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     if resume_checkpoint:
         logger.info("resuming from checkpoint: %s", resume_checkpoint)
 
-    ctx            = mp.get_context("spawn")
+    start_method = os.environ.get("DART_MP_START_METHOD", "spawn")
+    if start_method not in mp.get_all_start_methods():
+        available = ", ".join(mp.get_all_start_methods())
+        raise ValueError(
+            f"DART_MP_START_METHOD={start_method!r} is unsupported; "
+            f"available methods: {available}"
+        )
+    ctx            = mp.get_context(start_method)
+    logger.info("multiprocessing start method: %s", start_method)
     sample_queue   = ctx.Queue(maxsize=cfg.sample_queue_maxsize)
     stop_event     = ctx.Event()
     pause_event    = ctx.Event()

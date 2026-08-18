@@ -43,9 +43,10 @@ export PYTHONUNBUFFERED=1
 export DART_TQDM=0
 export DART_STREAM_LOGS=1
 # Some Slurm nodes isolate POSIX named semaphores in a way that breaks Python's
-# spawn context while actors are being created. Forkserver avoids that issue
-# without inheriting the parent's CUDA state into the learner process.
-export DART_MP_START_METHOD="${DART_MP_START_METHOD:-forkserver}"
+# spawn context while actors are being created. The learner must use spawn for
+# CUDA; CPU-only actors use fork and inherit the already-created IPC objects.
+export DART_LEARNER_MP_START_METHOD="${DART_LEARNER_MP_START_METHOD:-spawn}"
+export DART_ACTOR_MP_START_METHOD="${DART_ACTOR_MP_START_METHOD:-fork}"
 
 DART_JOB_SCRATCH="${DART_JOB_SCRATCH:-${SLURM_TMPDIR:-${TMPDIR:-/tmp}/${USER}/dart-${SLURM_JOB_ID}}}"
 export DART_WEIGHT_DIR="${DART_WEIGHT_DIR:-$DART_JOB_SCRATCH/weights}"

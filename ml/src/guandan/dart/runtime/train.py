@@ -451,32 +451,49 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     if resume_checkpoint:
         logger.info("resuming from checkpoint: %s", resume_checkpoint)
 
-    start_method = os.environ.get("DART_MP_START_METHOD", "spawn")
-    if start_method not in mp.get_all_start_methods():
+    default_start_method = os.environ.get("DART_MP_START_METHOD", "spawn")
+    learner_start_method = os.environ.get(
+        "DART_LEARNER_MP_START_METHOD", default_start_method
+    )
+    actor_start_method = os.environ.get(
+        "DART_ACTOR_MP_START_METHOD", default_start_method
+    )
+    available_methods = mp.get_all_start_methods()
+    invalid_methods = [
+        method
+        for method in (learner_start_method, actor_start_method)
+        if method not in available_methods
+    ]
+    if invalid_methods:
         available = ", ".join(mp.get_all_start_methods())
         raise ValueError(
-            f"DART_MP_START_METHOD={start_method!r} is unsupported; "
+            f"unsupported multiprocessing start method(s): {invalid_methods}; "
             f"available methods: {available}"
         )
-    ctx            = mp.get_context(start_method)
-    logger.info("multiprocessing start method: %s", start_method)
-    sample_queue   = ctx.Queue(maxsize=cfg.sample_queue_maxsize)
-    stop_event     = ctx.Event()
-    pause_event    = ctx.Event()
-    weights_ready  = ctx.Event()
-    update_counter = ctx.Value("q", 0)   # int64; learner advances per gradient step
-    training_start_event = ctx.Event()
-    training_start_time = ctx.Value("d", 0.0)
-    queue_full_counter = ctx.Value("q", 0)
-    eval_request_queue = ctx.Queue() if cfg.eval.enabled else None
-    eval_done_event = ctx.Event() if cfg.eval.enabled else None
+    learner_ctx    = mp.get_context(learner_start_method)
+    actor_ctx      = mp.get_context(actor_start_method)
+    logger.info(
+        "multiprocessing start methods: learner=%s actors=%s",
+        learner_start_method,
+        actor_start_method,
+    )
+    sample_queue   = learner_ctx.Queue(maxsize=cfg.sample_queue_maxsize)
+    stop_event     = learner_ctx.Event()
+    pause_event    = learner_ctx.Event()
+    weights_ready  = learner_ctx.Event()
+    update_counter = learner_ctx.Value("q", 0)   # int64; learner advances per gradient step
+    training_start_event = learner_ctx.Event()
+    training_start_time = learner_ctx.Value("d", 0.0)
+    queue_full_counter = learner_ctx.Value("q", 0)
+    eval_request_queue = learner_ctx.Queue() if cfg.eval.enabled else None
+    eval_done_event = learner_ctx.Event() if cfg.eval.enabled else None
     cfg_dict       = dataclasses.asdict(cfg)
     actor_rng_states = _load_actor_rng_states(resume_checkpoint, logger)
 
     _install_signal_handlers(stop_event)
 
     learner_proc = _spawn_learner(
-        ctx, cfg_dict, sample_queue, stop_event,
+        learner_ctx, cfg_dict, sample_queue, stop_event,
         weight_dir, layout, update_counter, weights_ready, resume_checkpoint,
         pause_event=pause_event,
         eval_request_queue=eval_request_queue,
@@ -496,7 +513,7 @@ def train(cfg: TrainConfig, resume_checkpoint: Path | None = None) -> None:
     logger.info("Initial weights ready — starting actors")
 
     actor_procs = _spawn_actors(
-        ctx, cfg, cfg_dict, sample_queue, stop_event,
+        actor_ctx, cfg, cfg_dict, sample_queue, stop_event,
         weight_dir, layout, pause_event=pause_event,
         actor_rng_states=actor_rng_states,
         queue_full_counter=queue_full_counter,

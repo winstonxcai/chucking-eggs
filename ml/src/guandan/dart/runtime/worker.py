@@ -120,7 +120,7 @@ def actor_loop(
 
     cfg = TrainConfig.from_flat_dict(cfg_dict)
     actor_seed = cfg.seed + actor_id * 10_000
-    seed_everything(actor_seed)
+    seed_everything(actor_seed, include_cuda=False)
     log_run_dir = Path(run_dir) if run_dir is not None else Path("/tmp/dart_actor_logs")
     logger, _ = setup_run_logging(
         log_run_dir,

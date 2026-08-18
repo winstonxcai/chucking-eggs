@@ -11,19 +11,19 @@ import torch
 _NP_SEED_MOD = 2**32
 
 
-def seed_everything(seed: int) -> None:
+def seed_everything(seed: int, *, include_cuda: bool = True) -> None:
     """Seed Python, NumPy, and Torch RNGs in the current process."""
     random.seed(seed)
     np.random.seed(seed % _NP_SEED_MOD)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    if include_cuda and torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
 
-def capture_torch_rng_state() -> dict[str, Any]:
+def capture_torch_rng_state(*, include_cuda: bool = True) -> dict[str, Any]:
     """Capture Torch RNG state for exact learner resume."""
     state: dict[str, Any] = {"cpu": torch.get_rng_state()}
-    if torch.cuda.is_available():
+    if include_cuda and torch.cuda.is_available():
         state["cuda"] = torch.cuda.get_rng_state_all()
     return state
 
@@ -34,11 +34,17 @@ def capture_actor_rng_state(rng: random.Random) -> dict[str, Any]:
         "actor_random": rng.getstate(),
         "python_random": random.getstate(),
         "numpy": np.random.get_state(),
-        "torch": capture_torch_rng_state(),
+        # Actors run CPU-only rollout inference. In particular, forked Slurm
+        # actors must not touch the learner's inherited CUDA state.
+        "torch": capture_torch_rng_state(include_cuda=False),
     }
 
 
-def restore_torch_rng_state(state: dict[str, Any] | None) -> None:
+def restore_torch_rng_state(
+    state: dict[str, Any] | None,
+    *,
+    include_cuda: bool = True,
+) -> None:
     """Restore a state produced by ``capture_torch_rng_state``."""
     if not state:
         return
@@ -46,7 +52,7 @@ def restore_torch_rng_state(state: dict[str, Any] | None) -> None:
     if cpu is not None:
         torch.set_rng_state(cpu)
     cuda = state.get("cuda")
-    if cuda is not None and torch.cuda.is_available():
+    if include_cuda and cuda is not None and torch.cuda.is_available():
         torch.cuda.set_rng_state_all(cuda)
 
 
@@ -63,7 +69,7 @@ def restore_actor_rng_state(rng: random.Random, state: dict[str, Any] | None) ->
     numpy_state = state.get("numpy")
     if numpy_state is not None:
         np.random.set_state(numpy_state)
-    restore_torch_rng_state(state.get("torch"))
+    restore_torch_rng_state(state.get("torch"), include_cuda=False)
 
 
 __all__ = [

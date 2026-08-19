@@ -1,0 +1,7 @@
+# Throughput-only A800 calibration. Inherit the production recipe while
+# suppressing checkpoint evaluation, which would otherwise pause training and
+# make CPU/actor/lane measurements incomparable.
+base_config: dart_a800.yaml
+
+eval:
+  enabled: false
